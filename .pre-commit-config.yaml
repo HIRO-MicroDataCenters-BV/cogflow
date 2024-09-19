@@ -30,7 +30,6 @@ repos:
         - --rcfile=.pylintrc
         exclude: ^(examples|wrapper|venv|pvenv)/
 
-
 -   repo: local
     hooks:
     -   id: pytest
