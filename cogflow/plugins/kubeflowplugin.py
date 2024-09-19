@@ -7,7 +7,7 @@ import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Mapping
 import kfp
-from kfp import dsl, v2
+from kfp import dsl
 from kserve import (
     KServeClient,
     V1beta1InferenceService,

@@ -83,23 +83,6 @@ class TestKubeflowPlugin(unittest.TestCase):
         mock_load_component.assert_called_once_with(url)
         mock_plugin_activation.assert_called_once()
 
-    @patch("kfp.components.InputPath")
-    @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
-    def test_input_path(self, mock_plugin_activation, mock_input):
-        """Test InputPath functionality."""
-
-        mock_input.assert_called_once()
-        mock_plugin_activation.assert_called_once()
-
-    @patch("kfp.components.OutputPath")
-    @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
-    def test_output_path(self, mock_plugin_activation, mock_output):
-        """Test OutputPath functionality."""
-        # Define a sample label for the input path
-
-        mock_output.assert_called_once()
-        mock_plugin_activation.assert_called_once()
-
     @patch.dict(
         os.environ,
         {
@@ -204,10 +187,15 @@ class TestKubeflowPlugin(unittest.TestCase):
         """Test deleting a pipeline."""
         # Arrange
         mock_env.side_effect = lambda x: {
+            "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
+            "AWS_ACCESS_KEY_ID": "minio",
+            "AWS_SECRET_ACCESS_KEY": "minio123",
             "API_BASEPATH": "http://randomn",
-            "COGFLOW_CONFIG_FILE_PATH": "/path",
-            "TIMER_IN_SEC": "300",
-            "JUPYTER_USER_ID": "1",
+            "TIMER_IN_SEC": "10",
+            "JUPYTER_USER_ID": "2",
+            "MLFLOW_TRACKING_URI": "http://mlflow",
+            "ML_TOOL": "ml_flow",
+            "COGFLOW_CONFIG_FILE_PATH": "/path/to/config",
         }[x]
         mock_request_get.return_value.status_code = 200
         mock_request_delete.return_value.status_code = 200

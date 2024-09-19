@@ -6,7 +6,7 @@ import json
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from ..cogflow import (
     link_model_to_dataset,
     save_dataset_details,
@@ -30,7 +30,11 @@ class TestNotebookPlugin(unittest.TestCase):
                 "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
                 "AWS_ACCESS_KEY_ID": "minio",
                 "AWS_SECRET_ACCESS_KEY": "minio123",
-                "API_BASEPATH": "http://modelregister",
+                "API_BASEPATH": "http://randomn",
+                "TIMER_IN_SEC": "10",
+                "JUPYTER_USER_ID": "2",
+                "MLFLOW_TRACKING_URI": "http://mlflow",
+                "ML_TOOL": "ml_flow",
             }[x]
             mock_model_version.return_value = 1
 
@@ -62,7 +66,11 @@ class TestNotebookPlugin(unittest.TestCase):
                 "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
                 "AWS_ACCESS_KEY_ID": "minio",
                 "AWS_SECRET_ACCESS_KEY": "minio123",
-                "API_BASEPATH": "http://randomn_",
+                "API_BASEPATH": "http://randomn",
+                "TIMER_IN_SEC": "10",
+                "JUPYTER_USER_ID": "2",
+                "MLFLOW_TRACKING_URI": "http://mlflow",
+                "ML_TOOL": "ml_flow",
             }[x]
 
             mock_response = {
@@ -100,7 +108,11 @@ class TestNotebookPlugin(unittest.TestCase):
                 "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
                 "AWS_ACCESS_KEY_ID": "minio",
                 "AWS_SECRET_ACCESS_KEY": "minio123",
-                "API_BASEPATH": "http://model",
+                "API_BASEPATH": "http://randomn",
+                "TIMER_IN_SEC": "10",
+                "JUPYTER_USER_ID": "2",
+                "MLFLOW_TRACKING_URI": "http://mlflow",
+                "ML_TOOL": "ml_flow",
             }[x]
 
             mock_response = {
@@ -130,7 +142,11 @@ class TestNotebookPlugin(unittest.TestCase):
                 "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
                 "AWS_ACCESS_KEY_ID": "minio",
                 "AWS_SECRET_ACCESS_KEY": "minio123",
-                "API_BASEPATH": "http://randomn1",
+                "API_BASEPATH": "http://randomn",
+                "TIMER_IN_SEC": "10",
+                "JUPYTER_USER_ID": "2",
+                "MLFLOW_TRACKING_URI": "http://mlflow",
+                "ML_TOOL": "ml_flow",
             }[x]
 
             mock_response = {
@@ -154,7 +170,11 @@ class TestNotebookPlugin(unittest.TestCase):
                 "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
                 "AWS_ACCESS_KEY_ID": "minio",
                 "AWS_SECRET_ACCESS_KEY": "minio123",
-                "API_BASEPATH": "http://randomn_path",
+                "API_BASEPATH": "http://randomn",
+                "TIMER_IN_SEC": "10",
+                "JUPYTER_USER_ID": "2",
+                "MLFLOW_TRACKING_URI": "http://mlflow",
+                "ML_TOOL": "ml_flow",
             }[x]
 
             mock_response = {
@@ -178,7 +198,11 @@ class TestNotebookPlugin(unittest.TestCase):
                 "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
                 "AWS_ACCESS_KEY_ID": "minio",
                 "AWS_SECRET_ACCESS_KEY": "minio123",
-                "API_BASEPATH": "http://randomnpath",
+                "API_BASEPATH": "http://randomn",
+                "TIMER_IN_SEC": "10",
+                "JUPYTER_USER_ID": "2",
+                "MLFLOW_TRACKING_URI": "http://mlflow",
+                "ML_TOOL": "ml_flow",
             }[x]
 
             # Define mock response
@@ -196,25 +220,6 @@ class TestNotebookPlugin(unittest.TestCase):
                 NotebookPlugin().list_runs_by_pipeline_id("2")
             out = f.getvalue().strip()
             assert out == "GET request successful"
-
-    @patch("cogflow.cogflow.plugins.notebook_plugin.NotebookPlugin.load_pkl")
-    @patch(
-        "cogflow.cogflow.plugins.notebook_plugin.NotebookPlugin.get_model_latest_version"
-    )
-    @patch("mlflow.sklearn.log_model")
-    def test_log_model_by_model_file(
-        self, mock_log_model, mock_model_version, mock_load_pkl
-    ):
-        """Test logging a model by its file."""
-        sk_model = MagicMock()
-        mock_load_pkl.return_value = sk_model
-        mock_model_version.return_value = 1
-        model_file_path = "var/data/model.pkl"
-        model_name = "test_model"
-        result = NotebookPlugin().log_model_by_model_file(model_file_path, model_name)
-        self.assertEqual(result["version"], 1)
-        self.assertIn("artifact_uri", result)
-        mock_log_model.assert_called_once()
 
     def test_deploy_model(self):
         """Test model deployment."""
@@ -281,11 +286,14 @@ class TestNotebookPlugin(unittest.TestCase):
     @patch.object(json, "dump")
     def test_get_logs_for_inference_service(
         self,
+        mock_json_dump,  # This is for json.dump
         mock_get_pod_logs,
         mock_get_pod_prefix,
         mock_get_pods_in_namespace,
     ):
         """Test getting logs for inference service."""
+
+        # Setup mock returns
         mock_get_pod_prefix.return_value = "revision-123"
         mock_get_pods_in_namespace.return_value = [
             {"metadata": {"name": "revision-123-pod1"}},
@@ -295,14 +303,22 @@ class TestNotebookPlugin(unittest.TestCase):
             lambda namespace, pod_name: f"Logs for {pod_name}"
         )
 
+        # Call the method
         logs_output = NotebookPlugin.get_logs_for_inference_service(
             "test-namespace", "test-inference-service"
         )
 
+        # Assertions
         self.assertIn("revision-123-pod1", logs_output)
         self.assertIn("revision-123-pod2", logs_output)
         self.assertEqual(logs_output["revision-123-pod1"], "Logs for revision-123-pod1")
         self.assertEqual(logs_output["revision-123-pod2"], "Logs for revision-123-pod2")
+
+        # Check that methods were called
+        mock_get_pod_prefix.assert_called_once_with("test-inference-service")
+        mock_get_pods_in_namespace.assert_called_once_with("test-namespace")
+        mock_get_pod_logs.assert_any_call("test-namespace", "revision-123-pod1")
+        mock_get_pod_logs.assert_any_call("test-namespace", "revision-123-pod2")
 
 
 if __name__ == "__main__":

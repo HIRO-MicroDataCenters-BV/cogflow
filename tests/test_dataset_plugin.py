@@ -362,6 +362,10 @@ class TestDatasetPlugin(unittest.TestCase):
                                 "AWS_ACCESS_KEY_ID": "minio",
                                 "AWS_SECRET_ACCESS_KEY": "minio123",
                                 "API_BASEPATH": "http://randomn",
+                                "TIMER_IN_SEC": "10",
+                                "JUPYTER_USER_ID": "2",
+                                "MLFLOW_TRACKING_URI": "http://mlflow",
+                                "ML_TOOL": "ml_flow",
                             }[x]
 
                             mock_response = {
@@ -411,6 +415,10 @@ class TestDatasetPlugin(unittest.TestCase):
             "AWS_ACCESS_KEY_ID": "minio",
             "AWS_SECRET_ACCESS_KEY": "minio123",
             "API_BASEPATH": "http://randomn",
+            "TIMER_IN_SEC": "10",
+            "JUPYTER_USER_ID": "1",
+            "MLFLOW_TRACKING_URI": "http://mlflow_server",
+            "ML_TOOL": "mlflow",
         }[x]
 
         mock_response = {

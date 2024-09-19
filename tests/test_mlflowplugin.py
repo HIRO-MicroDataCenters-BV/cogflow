@@ -173,7 +173,7 @@ class TestMlflowPlugin(unittest.TestCase):
             create_model_version("model_name", "source")
         mock_plugin_activation.assert_called_once()
 
-    @patch("mlflow.tracking.client.MlflowClient")
+    @patch("cogflow.cogflow.plugins.mlflowplugin.MlflowClient")
     @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
     def test_create_registered_model_exception(
         self, mock_plugin_activation, mock_client
@@ -186,12 +186,12 @@ class TestMlflowPlugin(unittest.TestCase):
         # Define the exception to be raised
         exception_to_raise = MlflowException("API request failed")
 
-        # Mocking the client method to raise the exception
-        mock_client.return_value.create_registered_model.side_effect = (
-            exception_to_raise
-        )
+        mock_client_instance = mock_client.return_value
 
-        self.mlflow_plugin.create_registered_model("model_name_4")
+        mock_client_instance.create_registered_model.side_effect = exception_to_raise
+
+        with self.assertRaises(MlflowException):
+            self.mlflow_plugin.create_registered_model("model_name_5")
         mock_plugin_activation.assert_called_once()
 
     @patch("mlflow.tracking.client.MlflowClient.create_registered_model")

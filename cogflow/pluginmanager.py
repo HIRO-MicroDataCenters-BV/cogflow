@@ -13,6 +13,7 @@ import configparser
 import pandas as pd
 from sqlalchemy import create_engine, Column, FLOAT, BIGINT, String
 from sqlalchemy.orm import declarative_base
+
 from . import plugin_config
 
 Base = declarative_base()

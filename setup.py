@@ -14,7 +14,8 @@ Attributes:
     install_requires (List[str]): A list of required dependencies for the package.
     classifiers (List[str]): A list of classifiers for the package.
     python_requires (str): The version of Python required by the package.
-
+    package_data (dict): A dictionary specifying additional files to include in the package distribution,
+                         such as configuration files and license files.
 """
 
 from setuptools import setup, find_packages
@@ -22,6 +23,10 @@ from setuptools import setup, find_packages
 # Read the content of your README file
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
+
+# Read the content of your LICENSE file
+with open("LICENSE.md", "r", encoding="utf-8") as fh:
+    license_text = fh.read()
 
 setup(
     name="cogflow",
@@ -55,6 +60,6 @@ setup(
     ],
     python_requires=">=3.6",
     package_data={
-        "cogflow": ["cogflow_config.ini", "plugins/*"],
+        "cogflow": ["cogflow_config.ini", "plugins/*", "LICENSE.md"],
     },
 )
