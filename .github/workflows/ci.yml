@@ -1,0 +1,45 @@
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.8
+
+      - name: Upgrade pip
+        run: pip install --upgrade pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Black
+        run: black --check .
+
+      - name: Run PEP8
+        run: pycodestyle --max-line-length=120  .
+
+      - name: Run Pylint
+        run: |
+          find . -name '*.py' | xargs pylint --rcfile=./.pylintrc --max-line-length=120
+        continue-on-error: false  # Continue running other steps even if Pylint finds issues
+
+      - name: Run mypy
+        run: mypy --config-file=mypy.ini .
+
+#      - name: Run tests
+#        run: pytest tests/
