@@ -3,4 +3,4 @@ black==24.8.0
 pytest==7.1.2
 pytest-asyncio==0.18.3
 pylint==2.15.0
-pycodes==2.12.1
+pycodestyle==2.12.1
