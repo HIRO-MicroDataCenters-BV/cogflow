@@ -250,27 +250,24 @@ class PluginManager:
         config = configparser.ConfigParser()
         config.read(self.config_file_path)
 
-        # Set environment variables from the config file
-        os.environ["API_BASEPATH"] = config.get(
-            "settings", "API_BASEPATH", fallback="http://model-register-service/cogapi"
+        # Helper function to set env variable only if it's not already set
+        def set_env_if_not_exists(var_name, value):
+            if not os.getenv(var_name):
+                os.environ[var_name] = value
+
+        # Set environment variables from the config file if not already set
+        set_env_if_not_exists("API_BASEPATH", config.get("settings", "API_BASEPATH"))
+        set_env_if_not_exists("TIMER_IN_SEC", config.get("settings", "TIMER_IN_SEC"))
+        set_env_if_not_exists(
+            "JUPYTER_USER_ID", config.get("settings", "JUPYTER_USER_ID")
         )
-        os.environ["TIMER_IN_SEC"] = config.get(
-            "settings", "TIMER_IN_SEC", fallback="10"
+        set_env_if_not_exists(
+            "MLFLOW_TRACKING_URI", config.get("settings", "MLFLOW_TRACKING_URI")
         )
-        os.environ["JUPYTER_USER_ID"] = config.get(
-            "settings", "JUPYTER_USER_ID", fallback="0"
+        set_env_if_not_exists(
+            "MLFLOW_S3_ENDPOINT_URL", config.get("settings", "MLFLOW_S3_ENDPOINT_URL")
         )
-        os.environ["MLFLOW_TRACKING_URI"] = config.get(
-            "settings",
-            "MLFLOW_TRACKING_URI",
-            fallback="http://mlflow-server.kubeflow.svc.cluster.local:5000",
-        )
-        os.environ["MLFLOW_S3_ENDPOINT_URL"] = config.get(
-            "settings",
-            "MLFLOW_S3_ENDPOINT_URL",
-            fallback="http://mlflow-minio.kubeflow:9000",
-        )
-        os.environ["ML_TOOL"] = config.get("settings", "ML_TOOL", fallback="mlflow")
+        set_env_if_not_exists("ML_TOOL", config.get("settings", "ML_TOOL"))
 
         # Validate that the environment variables are set
         required_vars = [

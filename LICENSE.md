@@ -1,4 +1,4 @@
-Copyright (c) 2023, Fred Buining
+Copyright (c) 2024, Fred Buining
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without
