@@ -284,8 +284,12 @@ def evaluate(
 
     PluginManager().load_config()
     # Construct URLs
-    url_metrics = os.getenv(plugin_config.API_BASEPATH) + "/validation/metrics"
-    url_artifacts = os.getenv(plugin_config.API_BASEPATH) + "/validation/artifact"
+    url_metrics = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+        "validation_metrics"
+    )
+    url_artifacts = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+        "validation_artifacts"
+    )
 
     # Attempt to make POST requests, continue regardless of success or failure
     try:
@@ -1189,7 +1193,9 @@ def get_pipeline_and_experiment_details(run_id):
         for model_uri in model_uris:
             PluginManager().load_config()
             # Define the URL
-            url = os.getenv(plugin_config.API_BASEPATH) + "/models/uri"
+            url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+                "models_uri"
+            )
             data = {"uri": model_uri}
             json_data = json.dumps(data)
             headers = {"Content-Type": "application/json"}
@@ -1427,7 +1433,7 @@ def list_pipelines_by_name(pipeline_name):
         Exception: For any other issues encountered during the fetch operations.
     """
 
-    NotebookPlugin().list_pipelines_by_name(pipeline_name=pipeline_name)
+    return NotebookPlugin().list_pipelines_by_name(pipeline_name=pipeline_name)
 
 
 __all__ = [

@@ -58,7 +58,9 @@ class NotebookPlugin:
             "dataset_id": dataset_id,
         }
         # call the api
-        url = os.getenv(plugin_config.API_BASEPATH) + "/link_dataset_model"
+        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+            "link_dataset_model"
+        )
         return make_post_request(url, data=data)
 
     def save_model_details_to_db(self, registered_model_name):
@@ -81,7 +83,9 @@ class NotebookPlugin:
         }
 
         # call the api to register model
-        url = os.getenv(plugin_config.API_BASEPATH) + "/models"
+        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+            "models"
+        )
         return make_post_request(url, data=data)
 
     @staticmethod
@@ -133,7 +137,9 @@ class NotebookPlugin:
             "uri": model_uri,
             "description": f"model uri of model id :{model_id}",
         }
-        url = os.getenv(plugin_config.API_BASEPATH) + "/models/uri"
+        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+            "models_uri"
+        )
         return make_post_request(url, data=data)
 
     @staticmethod
@@ -148,7 +154,9 @@ class NotebookPlugin:
 
         PluginManager().load_config()
 
-        url = os.getenv(plugin_config.API_BASEPATH) + "/pipeline"
+        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+            "pipeline"
+        )
         return make_delete_request(url=url, path_params=pipeline_id)
 
     @staticmethod
@@ -163,7 +171,9 @@ class NotebookPlugin:
 
         PluginManager().load_config()
 
-        url = os.getenv(plugin_config.API_BASEPATH) + "/pipeline/runs"
+        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+            "pipeline_runs"
+        )
         return make_get_request(url=url, path_params=pipeline_id)
 
     @staticmethod
@@ -178,7 +188,9 @@ class NotebookPlugin:
 
         PluginManager().load_config()
 
-        url = os.getenv(plugin_config.API_BASEPATH) + "/pipeline/runs"
+        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+            "pipeline_runs"
+        )
         return make_delete_request(url=url, path_params=pipeline_id)
 
     @staticmethod
@@ -252,7 +264,9 @@ class NotebookPlugin:
         PluginManager().load_config()
 
         data = json.dumps(details, default=custom_serializer, indent=4)
-        url = os.getenv(plugin_config.API_BASEPATH) + "/pipeline/add"
+        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+            "pipeline_add"
+        )
         make_post_request(url=url, data=data)
 
     def log_model_by_model_file(self, model_file_path, model_name):

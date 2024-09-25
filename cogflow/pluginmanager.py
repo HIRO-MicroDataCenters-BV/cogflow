@@ -283,3 +283,11 @@ class PluginManager:
             raise ValueError(
                 f"The following environment variables are missing or not set: {', '.join(missing_vars)}"
             )
+
+    def load_path(self, path_name):
+        """
+        loads the path variable for the api endpoints from config.ini
+        """
+        return self.get_config_value(
+            config_file_path=self.config_file_path, section="path", key=path_name
+        )

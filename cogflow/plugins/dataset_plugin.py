@@ -230,14 +230,14 @@ class DatasetPlugin:
             files = None
             if details.is_external_url():
                 # If the dataset is hosted online
-                path = "/dataset/register_by_api"
+                path = PluginManager().load_path("dataset_register")
                 data = {
                     "url": details.source,
                     "user_id_val": plugin_config.JUPYTER_USER_ID,
                     "file_name": output_file,
                 }
             elif details.is_file_path():
-                path = "/dataset"
+                path = PluginManager().load_path("dataset")
                 params = {
                     "dataset_type": 1,
                     "dataset_source_type": 0,
@@ -369,7 +369,7 @@ class DatasetPlugin:
 
         PluginManager().load_config()
 
-        path = f"/dataset/{name}"
+        path = f"{PluginManager().load_path('dataset')}/{name}"
         url = os.getenv(plugin_config.API_BASEPATH) + path
         response = requests.get(url, timeout=10)
 
