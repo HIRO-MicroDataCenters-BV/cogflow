@@ -191,7 +191,7 @@ class TestMlflowPlugin(unittest.TestCase):
         mock_client_instance.create_registered_model.side_effect = exception_to_raise
 
         with self.assertRaises(MlflowException):
-            self.mlflow_plugin.create_registered_model("model_name_6")
+            self.mlflow_plugin.create_registered_model("model_name_5")
         mock_plugin_activation.assert_called_once()
 
     @patch("mlflow.tracking.client.MlflowClient.create_registered_model")
