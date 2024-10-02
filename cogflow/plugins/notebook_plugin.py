@@ -174,7 +174,8 @@ class NotebookPlugin:
         url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
             "pipeline_runs"
         )
-        return make_get_request(url=url, path_params=pipeline_id)
+        response = make_get_request(url=url, path_params=pipeline_id)
+        return response['data']
 
     @staticmethod
     def delete_run_details_from_db(pipeline_id):
