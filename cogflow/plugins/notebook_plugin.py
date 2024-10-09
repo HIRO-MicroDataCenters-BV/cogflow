@@ -175,7 +175,7 @@ class NotebookPlugin:
             "pipeline_runs"
         )
         response = make_get_request(url=url, path_params=pipeline_id)
-        return response['data']
+        return response["data"]
 
     @staticmethod
     def delete_run_details_from_db(pipeline_id):
