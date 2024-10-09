@@ -207,7 +207,7 @@ class TestNotebookPlugin(unittest.TestCase):
 
             # Define mock response
             mock_response = {
-                "runs": [
+                "data": [
                     {"run_id": "0d3ffa58-7d15-4456-a1f6-2c1355f95d22"},
                     {"run_id": "0d3ffa58-7d15-4456-a1f6-2c1355f95d23"},
                 ]
