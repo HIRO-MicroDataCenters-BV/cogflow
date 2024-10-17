@@ -7,8 +7,6 @@ import os
 import subprocess
 import sys
 from datetime import datetime
-
-# from typing import Optional, Mapping
 import joblib
 from .mlflowplugin import MlflowPlugin
 from .. import plugin_config
@@ -53,7 +51,6 @@ class NotebookPlugin:
         PluginManager().load_config()
 
         data = {
-            "user_id": plugin_config.JUPYTER_USER_ID,
             "model_id": model_id,
             "dataset_id": dataset_id,
         }
@@ -78,7 +75,6 @@ class NotebookPlugin:
             "name": registered_model_name,
             "version": self.get_model_latest_version(registered_model_name),
             "type": "sklearn",
-            "user_id": plugin_config.JUPYTER_USER_ID,
             "description": f"{registered_model_name} model",
         }
 
@@ -107,11 +103,6 @@ class NotebookPlugin:
 
         if sorted_model_versions:
             latest_version = sorted_model_versions[0]
-            # print("Latest Version:", latest_version.version)
-            # print("Status:", latest_version.status)
-            # print("Stage:", latest_version.current_stage)
-            # print("Description:", latest_version.description)
-            # print("Last Updated:", latest_version.last_updated_timestamp)
             return latest_version.version
 
         # print(f"No model versions found for {registered_model_name}")
@@ -132,7 +123,7 @@ class NotebookPlugin:
 
         # call the api for saving model_uri
         data = {
-            "user_id": plugin_config.JUPYTER_USER_ID,
+            "file_type": plugin_config.FILE_TYPE,
             "model_id": model_id,
             "uri": model_uri,
             "description": f"model uri of model id :{model_id}",

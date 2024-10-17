@@ -192,7 +192,7 @@ class TestKubeflowPlugin(unittest.TestCase):
             "AWS_SECRET_ACCESS_KEY": "minio123",
             "API_BASEPATH": "http://randomn",
             "TIMER_IN_SEC": "10",
-            "JUPYTER_USER_ID": "2",
+            "FILE_TYPE": "2",
             "MLFLOW_TRACKING_URI": "http://mlflow",
             "ML_TOOL": "ml_flow",
             "COGFLOW_CONFIG_FILE_PATH": "/path/to/config",
