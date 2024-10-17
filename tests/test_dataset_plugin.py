@@ -363,13 +363,13 @@ class TestDatasetPlugin(unittest.TestCase):
                                 "AWS_SECRET_ACCESS_KEY": "minio123",
                                 "API_BASEPATH": "http://randomn",
                                 "TIMER_IN_SEC": "10",
-                                "JUPYTER_USER_ID": "2",
                                 "MLFLOW_TRACKING_URI": "http://mlflow",
                                 "ML_TOOL": "ml_flow",
+                                "FILE_TYPE": "0",
                             }[x]
 
                             mock_response = {
-                                "data": {"dataset_id": 5, "id": 1, "user_id": 0},
+                                "data": {"dataset_id": 5, "id": 1},
                                 "message": "Dataset linked with model successfully",
                             }
                             mock_requests_post.return_value.status_code = 201
@@ -416,13 +416,13 @@ class TestDatasetPlugin(unittest.TestCase):
             "AWS_SECRET_ACCESS_KEY": "minio123",
             "API_BASEPATH": "http://randomn",
             "TIMER_IN_SEC": "10",
-            "JUPYTER_USER_ID": "1",
             "MLFLOW_TRACKING_URI": "http://mlflow_server",
             "ML_TOOL": "mlflow",
+            "FILE_TYPE": "0",
         }[x]
 
         mock_response = {
-            "data": {"dataset_id": 5, "id": 1, "user_id": 0},
+            "data": {"dataset_id": 5, "id": 1},
             "message": "Dataset uploaded successfully",
         }
         mock_requests_post.return_value.status_code = 201
