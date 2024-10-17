@@ -1,0 +1,6 @@
+cogflow==1.9.39b7
+black==24.8.0
+pytest==8.3.2
+pytest-asyncio==0.18.3
+pylint==3.2.6
+pycodestyle==2.12.1
