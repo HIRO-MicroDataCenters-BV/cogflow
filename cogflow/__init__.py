@@ -1426,6 +1426,221 @@ def list_pipelines_by_name(pipeline_name):
     return NotebookPlugin().list_pipelines_by_name(pipeline_name=pipeline_name)
 
 
+def model_recommender(model_name=None, classification_score=None):
+    """
+    Calls the model recommender API and returns the response.
+
+    Args:
+    - model_name (str): The name of the model to recommend (optional).
+    - classification_score (list): A list of classification scores to consider(e.g., accuracy_score, f1_score,
+     recall_score, log_loss, roc_auc, precision_score, example_count, score.). (optional).
+
+    Returns:
+    - dict: The response from the model recommender API.
+    """
+
+    return NotebookPlugin().model_recommender(
+        model_name=model_name, classification_score=classification_score
+    )
+
+
+def get_pipeline_task_sequence_by_run_id(run_id):
+    """
+    Fetches the pipeline workflow and task sequence for a given run in Kubeflow.
+
+    Args:
+        run_id (str): The ID of the pipeline run to fetch details for.
+
+    Returns:
+        tuple: A tuple containing:
+            - pipeline_workflow_name (str): The name of the pipeline's workflow (root node of the DAG).
+            - task_structure (dict): A dictionary representing the task structure of the pipeline, with each node
+                                     containing information such as task ID, pod name, status, inputs, outputs,
+                                     and resource duration.
+
+    The task structure contains the following fields for each node:
+        - id (str): The unique ID of the task (node).
+        - podName (str): The name of the pod associated with the task.
+        - name (str): The display name of the task.
+        - inputs (list): A list of input parameters for the task.
+        - outputs (list): A list of outputs produced by the task.
+        - status (str): The phase/status of the task (e.g., 'Succeeded', 'Failed').
+        - startedAt (str): The timestamp when the task started.
+        - finishedAt (str): The timestamp when the task finished.
+        - resourcesDuration (dict): A dictionary representing the resources used (e.g., CPU, memory).
+        - children (list): A list of child tasks (if any) in the DAG.
+
+    Example:
+        >>> run_id = "afcf98bb-a9af-4a34-a512-1236110150ae"
+        >>> pipeline_name, task_structure = get_pipeline_and_task_sequence_by_run(run_id)
+        >>> print(f"Pipeline Workflow Name: {pipeline_name}")
+        >>> print("Task Structure:", task_structure)
+
+    Raises:
+        ValueError: If the root node (DAG) is not found in the pipeline.
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_run_id(run_id=run_id)
+
+
+def list_all_pipelines():
+    """
+    Lists all pipelines along with their IDs, handling pagination.
+
+    Returns:
+        list: A list of tuples containing (pipeline_name, pipeline_id).
+    """
+    return NotebookPlugin().list_all_pipelines()
+
+
+def get_pipeline_task_sequence_by_pipeline_id(pipeline_id):
+    """
+    Fetches the task structures of all pipeline runs based on the provided pipeline_id.
+
+    Args:
+        pipeline_id (str): The ID of the pipeline to fetch task structures for.
+
+    Returns:
+        list: A list of dictionaries containing pipeline workflow names and task structures for each run.
+    Example:
+        >>>pipeline_id = "1000537e-b101-4432-a779-768ec479c2b0"  # Replace with your actual pipeline_id
+        >>>all_task_structures = get_pipeline_task_sequence_by_pipeline_id(pipeline_id)
+        >>>for details in all_task_structures:
+            >>>print(f'Run ID: {details["run_id"]}')
+            >>>print(f'Pipeline Workflow Name: {details["pipeline_workflow_name"]}')
+            >>>print("Task Structure:")
+            >>>print(json.dumps(details["task_structure"], indent=4))
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_pipeline_id(
+        pipeline_id=pipeline_id
+    )
+
+
+def get_latest_run_id_by_pipeline_id(pipeline_id):
+    """
+    Fetches the run_id of the latest pipeline run by its pipeline_id.
+
+    Args:
+        pipeline_id (str): The ID of the pipeline to search for.
+
+    Returns:
+        str: The run_id of the latest run if found, otherwise None.
+    """
+    NotebookPlugin().get_run_ids_by_pipeline_id(pipeline_id=pipeline_id)
+
+
+def get_pipeline_task_sequence_by_run_name(run_name):
+    """
+    Fetches the task structure of a pipeline run based on its name.
+
+    Args:
+        run_name (str): The name of the pipeline run to fetch task structure for.
+
+    Returns:
+        tuple: (pipeline_workflow_name, task_structure)
+    Example:
+        >>>run_name = "Run of test_pipeline (ad001)"
+        >>>pipeline_name, task_structure = get_pipeline_task_sequence_by_name(run_name)
+        >>>print(f'Pipeline Workflow Name: {pipeline_name}')
+        >>>print("Task Structure:")
+        >>>print(json.dumps(task_structure, indent=4))
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_run_name(run_name=run_name)
+
+
+def get_run_id_by_run_name(run_name):
+    """
+    Fetches the run_id of a pipeline run by its name, traversing all pages if necessary.
+
+    Args:
+        run_name (str): The name of the pipeline run to search for.
+
+    Returns:
+        str: The run_id if found, otherwise None.
+    """
+    return NotebookPlugin().get_run_id_by_run_name(run_name=run_name)
+
+
+def get_run_ids_by_pipeline_name(pipeline_name):
+    """
+    Fetches all run_ids for a given pipeline name.
+
+    Args:
+        pipeline_name (str): The name of the pipeline to search for.
+
+    Returns:
+        list: A list of run_ids for the matching pipeline name.
+    """
+    return NotebookPlugin().get_run_ids_by_pipeline_name(pipeline_name=pipeline_name)
+
+
+def get_pipeline_task_sequence_by_pipeline_name(pipeline_name):
+    """
+    Fetches the task structures of all pipeline runs based on the provided pipeline name.
+
+    Args:
+        pipeline_name (str): The name of the pipeline to fetch task structures for.
+
+    Returns:
+        dict: A dictionary with run_ids as keys and their corresponding task structures.
+    Example:
+        >>> pipeline_name = "test_pipeline"
+        >>> all_task_structures = get_pipeline_task_sequence_by_pipeline_name(pipeline_name)
+        >>> for details in all_task_structures:
+                >>>print(f'Run ID: {details["run_id"]}')
+                >>>print(f'Pipeline Workflow Name: {details["pipeline_workflow_name"]}')
+                >>>print("Task Structure:")
+                >>>print(json.dumps(details["task_structure"], indent=4))
+
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_pipeline_name(
+        pipeline_name=pipeline_name
+    )
+
+
+def get_all_run_ids():
+    """
+    Fetches all run_ids available in the system.
+
+    Returns:
+        list: A list of all run_ids.
+    """
+    return NotebookPlugin().get_all_run_ids()
+
+
+def get_run_ids_by_name(run_name):
+    """
+    Fetches run_ids by run name.
+
+    Args:
+        run_name (str): The name of the run to search for.
+
+    Returns:
+        list: A list of run_ids matching the run_name.
+    """
+    return NotebookPlugin().get_run_ids_by_name(run_name=run_name)
+
+
+def get_task_structure_by_task_id(task_id, run_id=None, run_name=None):
+    """
+    Fetches the task structure of a specific task ID, optionally filtered by run_id or run_name.
+
+    Args:
+        task_id (str): The task ID to look for.
+        run_id (str, optional): The specific run ID to filter by. Defaults to None.
+        run_name (str, optional): The specific run name to filter by. Defaults to None.
+
+    Returns:
+        list: A list of dictionaries containing run IDs and their corresponding task info if found.
+    Example:
+        >>>task_id = "test-pipeline-749dn-2534915009"
+        >>>run_id = None  # "afcf98bb-a9af-4a34-a512-1236110150ae"
+        >>>run_name = "Run of test_pipeline (ad001)"
+    """
+    return NotebookPlugin().get_task_structure_by_task_id(
+        task_id=task_id, run_id=run_id, run_name=run_name
+    )
+
+
 __all__ = [
     # Methods from MlflowPlugin class
     "InputPath",
