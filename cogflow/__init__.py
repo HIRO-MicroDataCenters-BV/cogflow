@@ -308,10 +308,10 @@ def evaluate(
 
 
 def search_registered_models(
-        filter_string: Optional[str] = None,
-        max_results: int = 100,
-        order_by: Optional[List[str]] = None,
-        page_token: Optional[str] = None,
+    filter_string: Optional[str] = None,
+    max_results: int = 100,
+    order_by: Optional[List[str]] = None,
+    page_token: Optional[str] = None,
 ):
     """
     Searches for registered models.
@@ -358,11 +358,11 @@ def load_model(model_uri: str, dst_path=None):
 
 
 def register_model(
-        model_uri: str,
-        model: str,
-        await_registration_for: int = 300,
-        *,
-        tags: Optional[Dict[str, Any]] = None,
+    model_uri: str,
+    model: str,
+    await_registration_for: int = 300,
+    *,
+    tags: Optional[Dict[str, Any]] = None,
 ):
     """
     Registers the given model with Mlflow.
@@ -398,7 +398,7 @@ def autolog():
 
 
 def create_registered_model(
-        model: str, tags: Optional[Dict[str, Any]] = None, description: Optional[str] = None
+    model: str, tags: Optional[Dict[str, Any]] = None, description: Optional[str] = None
 ):
     """
     Create a registered model in the Mlflow Model Registry.
@@ -424,13 +424,13 @@ def create_registered_model(
 
 
 def create_model_version(
-        model: str,
-        source: str,
-        run_id: Optional[str] = None,
-        tags: Optional[Dict[str, Any]] = None,
-        run_link: Optional[str] = None,
-        description: Optional[str] = None,
-        await_creation_for: int = 300,
+    model: str,
+    source: str,
+    run_id: Optional[str] = None,
+    tags: Optional[Dict[str, Any]] = None,
+    run_link: Optional[str] = None,
+    description: Optional[str] = None,
+    await_creation_for: int = 300,
 ):
     """
     Create a model version for a registered model in the Mlflow Model Registry.
@@ -483,7 +483,7 @@ def set_tracking_uri(tracking_uri):
 
 
 def set_experiment(
-        experiment_name: Optional[str] = None, experiment_id: Optional[str] = None
+    experiment_name: Optional[str] = None, experiment_id: Optional[str] = None
 ):
     """
     Set the active experiment.
@@ -527,12 +527,12 @@ def get_artifact_uri(artifact_path: Optional[str] = None):
 
 
 def start_run(
-        run_id: Optional[str] = None,
-        experiment_id: Optional[str] = None,
-        run_name: Optional[str] = None,
-        nested: bool = False,
-        tags: Optional[Dict[str, Any]] = None,
-        description: Optional[str] = None,
+    run_id: Optional[str] = None,
+    experiment_id: Optional[str] = None,
+    run_name: Optional[str] = None,
+    nested: bool = False,
+    tags: Optional[Dict[str, Any]] = None,
+    description: Optional[str] = None,
 ):
     """
     Starts a run.
@@ -582,9 +582,9 @@ def log_param(key: str, value: Any):
 
 
 def log_metric(
-        key: str,
-        value: float,
-        step: Optional[int] = None,
+    key: str,
+    value: float,
+    step: Optional[int] = None,
 ):
     """
     Logs a metric to the current run.
@@ -602,29 +602,29 @@ def log_metric(
 
 
 def log_model(
-        sk_model,
-        artifact_path,
-        conda_env=None,
-        code_paths=None,
-        serialization_format="cloudpickle",
-        registered_model_name=None,
-        signature: ModelSignature = None,
-        input_example: Union[
-            pd.DataFrame,
-            np.ndarray,
-            dict,
-            list,
-            csr_matrix,
-            csc_matrix,
-            str,
-            bytes,
-            tuple,
-        ] = None,
-        await_registration_for=300,
-        pip_requirements=None,
-        extra_pip_requirements=None,
-        pyfunc_predict_fn="predict",
-        metadata=None,
+    sk_model,
+    artifact_path,
+    conda_env=None,
+    code_paths=None,
+    serialization_format="cloudpickle",
+    registered_model_name=None,
+    signature: ModelSignature = None,
+    input_example: Union[
+        pd.DataFrame,
+        np.ndarray,
+        dict,
+        list,
+        csr_matrix,
+        csc_matrix,
+        str,
+        bytes,
+        tuple,
+    ] = None,
+    await_registration_for=300,
+    pip_requirements=None,
+    extra_pip_requirements=None,
+    pyfunc_predict_fn="predict",
+    metadata=None,
 ):
     """
     Logs a model.
@@ -689,30 +689,30 @@ def log_model(
 
 
 def log_model_with_dataset(
-        sk_model,
-        artifact_path,
-        dataset: DatasetMetadata,
-        conda_env=None,
-        code_paths=None,
-        serialization_format="cloudpickle",
-        registered_model_name=None,
-        signature: ModelSignature = None,
-        input_example: Union[
-            pd.DataFrame,
-            np.ndarray,
-            dict,
-            list,
-            csr_matrix,
-            csc_matrix,
-            str,
-            bytes,
-            tuple,
-        ] = None,
-        await_registration_for=300,
-        pip_requirements=None,
-        extra_pip_requirements=None,
-        pyfunc_predict_fn="predict",
-        metadata=None,
+    sk_model,
+    artifact_path,
+    dataset: DatasetMetadata,
+    conda_env=None,
+    code_paths=None,
+    serialization_format="cloudpickle",
+    registered_model_name=None,
+    signature: ModelSignature = None,
+    input_example: Union[
+        pd.DataFrame,
+        np.ndarray,
+        dict,
+        list,
+        csr_matrix,
+        csc_matrix,
+        str,
+        bytes,
+        tuple,
+    ] = None,
+    await_registration_for=300,
+    pip_requirements=None,
+    extra_pip_requirements=None,
+    pyfunc_predict_fn="predict",
+    metadata=None,
 ):
     """
     Logs a model along with its dataset.
@@ -820,7 +820,7 @@ def get_model_latest_version(registered_model_name):
 
 
 def search_model_versions(
-        filter_string: Optional[str] = None,
+    filter_string: Optional[str] = None,
 ):
     """
     Searches for model versions in the model registry based on the specified filters.
@@ -856,11 +856,11 @@ def pipeline(name=None, description=None):
 
 
 def create_component_from_func(
-        func,
-        output_component_file=None,
-        base_image="hiroregistry/cogflow:latest",
-        packages_to_install=None,
-        annotations: Optional[Mapping[str, str]] = None,
+    func,
+    output_component_file=None,
+    base_image="hiroregistry/cogflow:latest",
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
 ):
     """
     Creates a Kubeflow component from a function.
@@ -1017,10 +1017,10 @@ def delete_pipeline(pipeline_id):
 
 
 def cogcomponent(
-        output_component_file=None,
-        base_image="hiroregistry/cogflow:latest",
-        packages_to_install=None,
-        annotations: Optional[Mapping[str, str]] = None,
+    output_component_file=None,
+    base_image="hiroregistry/cogflow:latest",
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
 ):
     """
     Decorator to create a Kubeflow component from a Python function.
@@ -1053,14 +1053,14 @@ def cogcomponent(
 
 
 def create_run_from_pipeline_func(
-        pipeline_func,
-        arguments: Optional[Dict[str, Any]] = None,
-        run_name: Optional[str] = None,
-        experiment_name: Optional[str] = None,
-        namespace: Optional[str] = None,
-        pipeline_root: Optional[str] = None,
-        enable_caching: Optional[bool] = None,
-        service_account: Optional[str] = None,
+    pipeline_func,
+    arguments: Optional[Dict[str, Any]] = None,
+    run_name: Optional[str] = None,
+    experiment_name: Optional[str] = None,
+    namespace: Optional[str] = None,
+    pipeline_root: Optional[str] = None,
+    enable_caching: Optional[bool] = None,
+    service_account: Optional[str] = None,
 ):
     """
         method to create a run from pipeline function
@@ -1232,21 +1232,21 @@ original_pyfunc_log_model = pyfunc.log_model
 
 
 def custom_log_model(
-        artifact_path,
-        registered_model_name=None,
-        loader_module=None,
-        data_path=None,
-        code_path=None,
-        conda_env=None,
-        python_model=None,
-        artifacts=None,
-        signature: ModelSignature = None,
-        input_example: ModelInputExample = None,
-        await_registration_for=300,
-        pip_requirements=None,
-        extra_pip_requirements=None,
-        metadata=None,
-        **kwargs,
+    artifact_path,
+    registered_model_name=None,
+    loader_module=None,
+    data_path=None,
+    code_path=None,
+    conda_env=None,
+    python_model=None,
+    artifacts=None,
+    signature: ModelSignature = None,
+    input_example: ModelInputExample = None,
+    await_registration_for=300,
+    pip_requirements=None,
+    extra_pip_requirements=None,
+    metadata=None,
+    **kwargs,
 ):
     """
     Custom wrapper around cogflow.pyfunc.log_model with extended signature.
@@ -1431,29 +1431,29 @@ def list_pipelines_by_name(pipeline_name):
 
 
 def register_kafka_dataset(
-        dataset_name: str, kafka_host_name: str, kafka_server_ip, topic_name
+    dataset_name: str, kafka_host_name: str, kafka_server_ip, topic_name
 ):
     """
-        Registers a Kafka dataset by creating and submitting a registration request.
+    Registers a Kafka dataset by creating and submitting a registration request.
 
-        This function constructs a `KafkaDatasetRequest` object with details about the dataset,
-        such as dataset name, Kafka host name, server IP, and topic details, then submits
-        this request to register the dataset using the `KafkaDatasetPlugin`. If any error
-        occurs during the process, it logs the exception message.
+    This function constructs a `KafkaDatasetRequest` object with details about the dataset,
+    such as dataset name, Kafka host name, server IP, and topic details, then submits
+    this request to register the dataset using the `KafkaDatasetPlugin`. If any error
+    occurs during the process, it logs the exception message.
 
-        Parameters:
-        - dataset_name (str): The name of the dataset to be registered.
-        - kafka_host_name (str): Host name of the Kafka server.
-        - kafka_server_ip (str): IP address of the Kafka server.
-        - topic_name (str): Name of the Kafka topic associated with this dataset.
+    Parameters:
+    - dataset_name (str): The name of the dataset to be registered.
+    - kafka_host_name (str): Host name of the Kafka server.
+    - kafka_server_ip (str): IP address of the Kafka server.
+    - topic_name (str): Name of the Kafka topic associated with this dataset.
 
-        Returns:
-        - Response from the `KafkaDatasetPlugin` upon successful registration, or None if an error occurs.
+    Returns:
+    - Response from the `KafkaDatasetPlugin` upon successful registration, or None if an error occurs.
 
-        Exceptions:
-        - Catches any exceptions and logs an error message detailing the failure.
+    Exceptions:
+    - Catches any exceptions and logs an error message detailing the failure.
 
-        """
+    """
     try:
         topic = TopicDetail(topic_name=topic_name, topic_schema={})
         request = KafkaDatasetRequest(
@@ -1498,42 +1498,42 @@ def get_kafka_dataset(dataset_id: str):
 
 def read_from_kafka_topic(kafka_broker_url, topic_name, group_id):
     """
-        Initiates reading messages from a specified Kafka topic.
+    Initiates reading messages from a specified Kafka topic.
 
-        This function calls `start_consumer_thread` with the provided Kafka broker URL,
-        topic name, and consumer group ID to initiate the reading process. It starts a
-        consumer thread to continuously listen for and process incoming messages on the
-        specified topic, managed under the provided consumer group for load balancing
-        and offset tracking.
+    This function calls `start_consumer_thread` with the provided Kafka broker URL,
+    topic name, and consumer group ID to initiate the reading process. It starts a
+    consumer thread to continuously listen for and process incoming messages on the
+    specified topic, managed under the provided consumer group for load balancing
+    and offset tracking.
 
-        Parameters:
-        - kafka_broker_url (str): The URL of the Kafka broker to connect to.
-        - topic_name (str): The name of the Kafka topic to read messages from.
-        - group_id (str): The consumer group ID for managing offsets and load balancing.
+    Parameters:
+    - kafka_broker_url (str): The URL of the Kafka broker to connect to.
+    - topic_name (str): The name of the Kafka topic to read messages from.
+    - group_id (str): The consumer group ID for managing offsets and load balancing.
 
-        Returns:
-        - None
-        """
+    Returns:
+    - None
+    """
 
     start_consumer_thread(kafka_broker_url, topic_name, group_id)
 
 
 def stop_kafka_consumer():
     """
-        Stops the Kafka consumer gracefully.
+    Stops the Kafka consumer gracefully.
 
-        This function initiates the process to stop the Kafka consumer by printing a log
-        message and calling the `stop_consumer` function. This is useful in scenarios where
-        the consumer needs to be terminated without abruptly closing the connection,
-        ensuring any active resources are released appropriately.
+    This function initiates the process to stop the Kafka consumer by printing a log
+    message and calling the `stop_consumer` function. This is useful in scenarios where
+    the consumer needs to be terminated without abruptly closing the connection,
+    ensuring any active resources are released appropriately.
 
-        Behavior:
-        - Logs a message to indicate that a stop request for the Kafka consumer has been received.
-        - Calls `stop_consumer()` to perform the stop operation.
+    Behavior:
+    - Logs a message to indicate that a stop request for the Kafka consumer has been received.
+    - Calls `stop_consumer()` to perform the stop operation.
 
-        Returns:
-        - None
-        """
+    Returns:
+    - None
+    """
     print("Stop kafka consumer request received....")
     stop_consumer()
 

@@ -1,6 +1,7 @@
 """
 Kafka consumer implementation class
 """
+
 import json
 import threading
 
@@ -9,19 +10,20 @@ from kafka import KafkaConsumer
 
 class KafkaThread:
     """
-     A class to manage the Kafka consumer and its dedicated thread for message consumption.
+    A class to manage the Kafka consumer and its dedicated thread for message consumption.
 
-     Attributes:
-     - stop_flag (threading.Event): Event flag to signal when the consumer thread should stop.
-       Set to 'True' to stop the thread safely.
-     - CONSUMER_THREAD (Thread): Reference to the thread running the Kafka consumer to facilitate
-       starting and stopping operations.
-     - CONSUMER (KafkaConsumer): Holds the KafkaConsumer instance for managing message consumption
-       from a specified Kafka topic.
+    Attributes:
+    - stop_flag (threading.Event): Event flag to signal when the consumer thread should stop.
+      Set to 'True' to stop the thread safely.
+    - CONSUMER_THREAD (Thread): Reference to the thread running the Kafka consumer to facilitate
+      starting and stopping operations.
+    - CONSUMER (KafkaConsumer): Holds the KafkaConsumer instance for managing message consumption
+      from a specified Kafka topic.
 
-     This class is intended for managing a Kafka consumer within a multi-threaded environment,
-     allowing asynchronous message processing and easy control of the consumer lifecycle.
-     """
+    This class is intended for managing a Kafka consumer within a multi-threaded environment,
+    allowing asynchronous message processing and easy control of the consumer lifecycle.
+    """
+
     stop_flag = threading.Event()
     CONSUMER_THREAD = None  # Holds the reference to the consumer thread
     CONSUMER = None  # Holds the Kafka consumer instance
@@ -29,20 +31,20 @@ class KafkaThread:
 
 def get_kafka_consumer(kafka_broker_url, topic_name, group_id):
     """
-        Initialize and return a Kafka consumer.
+    Initialize and return a Kafka consumer.
 
-        This function sets up a Kafka consumer with specified configurations to read messages
-        from a given topic. It is designed to start reading from the latest available message
-        if no previous offset is found. The consumer supports automatic offset committing.
+    This function sets up a Kafka consumer with specified configurations to read messages
+    from a given topic. It is designed to start reading from the latest available message
+    if no previous offset is found. The consumer supports automatic offset committing.
 
-        Parameters:
-        - kafka_broker_url (str): The URL of the Kafka broker to connect to.
-        - topic_name (str): The name of the Kafka topic to subscribe to.
-        - group_id (str): The consumer group ID that the consumer will join.
+    Parameters:
+    - kafka_broker_url (str): The URL of the Kafka broker to connect to.
+    - topic_name (str): The name of the Kafka topic to subscribe to.
+    - group_id (str): The consumer group ID that the consumer will join.
 
-        Returns:
-        - KafkaConsumer: An instance of KafkaConsumer configured to read from the specified topic.
-        """
+    Returns:
+    - KafkaConsumer: An instance of KafkaConsumer configured to read from the specified topic.
+    """
 
     # Consumer configurations
     kafka_config_for_consumer = {
@@ -89,7 +91,9 @@ def start_consumer_thread(kafka_broker_url, topic_name, group_id):
     KafkaThread.CONSUMER = get_kafka_consumer(kafka_broker_url, topic_name, group_id)
 
     # Create and start a new thread for consuming messages
-    KafkaThread.CONSUMER_THREAD = threading.Thread(target=read_messages, args=(KafkaThread.CONSUMER,))
+    KafkaThread.CONSUMER_THREAD = threading.Thread(
+        target=read_messages, args=(KafkaThread.CONSUMER,)
+    )
     # consumer_thread.daemon = True  # Daemon thread exits when the main program exits
     KafkaThread.CONSUMER_THREAD.start()
 
