@@ -128,11 +128,8 @@ class TestNotebookPlugin(unittest.TestCase):
             }
             mock_requests_post.return_value.status_code = 201
             mock_requests_post.return_value.json.return_value = mock_response
-            f = StringIO()
-            with redirect_stdout(f):
-                link_model_to_dataset(2, 1)
-            out = f.getvalue().strip()
-            assert out == "POST request successful"
+            result = link_model_to_dataset(2, 1)
+            assert result == mock_response
 
     @patch("os.getenv")
     def test_delete_pipeline_details_from_db(self, mock_env):
@@ -215,11 +212,9 @@ class TestNotebookPlugin(unittest.TestCase):
 
             mock_requests_get.return_value.status_code = 200
             mock_requests_get.return_value.json.return_value = mock_response
-            f = StringIO()
-            with redirect_stdout(f):
-                NotebookPlugin().list_runs_by_pipeline_id("2")
-            out = f.getvalue().strip()
-            assert out == "GET request successful"
+            result = NotebookPlugin().list_runs_by_pipeline_id("2")
+
+            assert result == mock_response["data"]
 
     def test_deploy_model(self):
         """Test model deployment."""
