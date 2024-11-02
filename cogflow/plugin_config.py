@@ -42,3 +42,8 @@ TESTING_CONFIG = "config.app_config.TestingConfig"
 FILE_TYPE = 0
 
 API_BASEPATH = "API_BASEPATH"
+
+# kafka plugin
+
+KAFKA_DATASETS_URL = "/datasets"
+KAFKA_DATASETS_REGISTER = "/kafka/register"

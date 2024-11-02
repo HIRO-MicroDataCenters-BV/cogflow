@@ -53,6 +53,7 @@ setup(
         "kserve==0.12.0",
         "tensorflow",
         "ray==2.9.3",
+        "kafka-python==2.0.2",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
