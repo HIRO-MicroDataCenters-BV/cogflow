@@ -49,7 +49,7 @@ class MlflowPlugin:
         PluginManager().verify_activation(MlflowPlugin().section)
 
         try:
-            response = requests.get(os.getenv(plugin_config.TRACKING_URI), timeout=300)
+            response = requests.get(os.getenv(plugin_config.TRACKING_URI), timeout="30")
 
             if response.status_code == 200:
                 pass

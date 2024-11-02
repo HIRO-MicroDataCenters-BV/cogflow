@@ -51,13 +51,12 @@ class NotebookPlugin:
         PluginManager().load_config()
 
         data = {
+            "user_id": plugin_config.JUPYTER_USER_ID,
             "model_id": model_id,
             "dataset_id": dataset_id,
         }
         # call the api
-        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-            "link_dataset_model"
-        )
+        url = os.getenv(plugin_config.API_BASEPATH) + "/link_dataset_model"
         return make_post_request(url, data=data)
 
     def save_model_details_to_db(self, registered_model_name):
@@ -75,13 +74,12 @@ class NotebookPlugin:
             "name": registered_model_name,
             "version": self.get_model_latest_version(registered_model_name),
             "type": "sklearn",
+            "user_id": plugin_config.JUPYTER_USER_ID,
             "description": f"{registered_model_name} model",
         }
 
         # call the api to register model
-        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-            "models"
-        )
+        url = os.getenv(plugin_config.API_BASEPATH) + "/models"
         return make_post_request(url, data=data)
 
     @staticmethod
@@ -103,6 +101,11 @@ class NotebookPlugin:
 
         if sorted_model_versions:
             latest_version = sorted_model_versions[0]
+            # print("Latest Version:", latest_version.version)
+            # print("Status:", latest_version.status)
+            # print("Stage:", latest_version.current_stage)
+            # print("Description:", latest_version.description)
+            # print("Last Updated:", latest_version.last_updated_timestamp)
             return latest_version.version
 
         # print(f"No model versions found for {registered_model_name}")
@@ -123,14 +126,12 @@ class NotebookPlugin:
 
         # call the api for saving model_uri
         data = {
-            "file_type": plugin_config.FILE_TYPE,
+            "user_id": plugin_config.JUPYTER_USER_ID,
             "model_id": model_id,
             "uri": model_uri,
             "description": f"model uri of model id :{model_id}",
         }
-        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-            "models_uri"
-        )
+        url = os.getenv(plugin_config.API_BASEPATH) + "/models/uri"
         return make_post_request(url, data=data)
 
     @staticmethod
@@ -145,9 +146,7 @@ class NotebookPlugin:
 
         PluginManager().load_config()
 
-        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-            "pipeline"
-        )
+        url = os.getenv(plugin_config.API_BASEPATH) + "/pipeline"
         return make_delete_request(url=url, path_params=pipeline_id)
 
     @staticmethod
@@ -162,11 +161,8 @@ class NotebookPlugin:
 
         PluginManager().load_config()
 
-        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-            "pipeline_runs"
-        )
-        response = make_get_request(url=url, path_params=pipeline_id)
-        return response["data"]
+        url = os.getenv(plugin_config.API_BASEPATH) + "/pipeline/runs"
+        return make_get_request(url=url, path_params=pipeline_id)
 
     @staticmethod
     def delete_run_details_from_db(pipeline_id):
@@ -180,9 +176,7 @@ class NotebookPlugin:
 
         PluginManager().load_config()
 
-        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-            "pipeline_runs"
-        )
+        url = os.getenv(plugin_config.API_BASEPATH) + "/pipeline/runs"
         return make_delete_request(url=url, path_params=pipeline_id)
 
     @staticmethod
@@ -256,9 +250,7 @@ class NotebookPlugin:
         PluginManager().load_config()
 
         data = json.dumps(details, default=custom_serializer, indent=4)
-        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-            "pipeline_add"
-        )
+        url = os.getenv(plugin_config.API_BASEPATH) + "/pipeline/add"
         make_post_request(url=url, data=data)
 
     def log_model_by_model_file(self, model_file_path, model_name):
