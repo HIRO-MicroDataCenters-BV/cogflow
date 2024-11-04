@@ -43,6 +43,8 @@ FILE_TYPE = 0
 
 API_BASEPATH = "API_BASEPATH"
 
+BASE_IMAGE = "hiroregistry/cogflow:dev"
+
 # kafka plugin
 
 KAFKA_DATASETS_URL = "/datasets"

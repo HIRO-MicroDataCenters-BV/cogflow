@@ -76,10 +76,11 @@ register_dataset: Register a dataset.
 
 import json
 import os
-import time
 from typing import Union, Any, List, Optional, Dict, Mapping
 import random
 import string
+import time
+import psutil
 import numpy as np
 import pandas as pd
 import requests
@@ -284,12 +285,24 @@ def evaluate(
     url_artifacts = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
         "validation_artifacts"
     )
+    # Capture final CPU and memory usage metrics
+    final_cpu_percent = psutil.cpu_percent(interval=1)
+    final_memory_info = psutil.virtual_memory()
+    final_memory_used_mb = round(final_memory_info.used / (1024**2), 2)  # Convert to MB
 
     # Attempt to make POST requests, continue regardless of success or failure
     try:
         metrics = result.metrics
-        metrics.update({"model_name": model_name})
-        make_post_request(url_metrics, data=metrics)
+        metrics.update(
+            {
+                "model_name": model_name,
+                "cpu_consumption": final_cpu_percent,
+                "memory_utilization": final_memory_used_mb,
+            }
+        )
+        print("metrics", metrics)
+        response = requests.post(url=url_metrics, json=metrics, timeout=100)
+        response.raise_for_status()
     except Exception as exp:
         print(f"Failed to post metrics: {exp}")
 
@@ -297,10 +310,13 @@ def evaluate(
 
     # Update artifacts with model name
     serialized_artifacts.update({"model_name": model_name})
-
     # Now you can use serialized_artifacts in your HTTP request
     try:
-        make_post_request(url_artifacts, data=serialized_artifacts)
+        # make_post_request(url_artifacts, data=serialized_artifacts)
+        response = requests.post(
+            url=url_artifacts, json=serialized_artifacts, timeout=100
+        )
+        response.raise_for_status()
     except Exception as exp:
         print(f"Failed to post artifacts: {exp}")
 
@@ -858,7 +874,7 @@ def pipeline(name=None, description=None):
 def create_component_from_func(
     func,
     output_component_file=None,
-    base_image="hiroregistry/cogflow:latest",
+    base_image=plugin_config.BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
 ):
@@ -869,7 +885,7 @@ def create_component_from_func(
         func: The function to create the component from.
         output_component_file (str, optional): The output file for the component.
         base_image (str, optional): The base image to use. Defaults to
-        "hiroregistry/cogflow:latest".
+        "hiroregistry/cogflow:dev".
         packages_to_install (list, optional): List of packages to install.
         annotations: Optional. Allows adding arbitrary key-value data to the
         component specification.
@@ -1018,7 +1034,7 @@ def delete_pipeline(pipeline_id):
 
 def cogcomponent(
     output_component_file=None,
-    base_image="hiroregistry/cogflow:latest",
+    base_image=plugin_config.BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
 ):
@@ -1029,7 +1045,7 @@ def cogcomponent(
         output_component_file (str, optional): Path to save the component YAML file.
         Defaults to None.
         base_image (str, optional): Base Docker image for the component. Defaults to
-        "hiroregistry/cogflow:latest".
+        "hiroregistry/cogflow:dev".
         packages_to_install (List[str], optional): List of additional Python packages
         to install in the component.
         Defaults to None.
@@ -1090,10 +1106,10 @@ def create_run_from_pipeline_func(
         print(f"Run {run_details.run_id} status: {status}")
         time.sleep(plugin_config.TIMER_IN_SEC)
 
-    details = get_pipeline_and_experiment_details(run_details.run_id)
-    print("details of upload pipeline", details)
-    NotebookPlugin().save_pipeline_details_to_db(details)
-    return run_details
+    # details = get_pipeline_and_experiment_details(run_details.run_id)
+    # print("details of upload pipeline", details)
+    # NotebookPlugin().save_pipeline_details_to_db(details)
+    # return run_details
 
 
 def get_pipeline_and_experiment_details(run_id):
@@ -1751,6 +1767,31 @@ def stop_kafka_consumer():
     """
     print("Stop kafka consumer request received....")
     stop_consumer()
+
+
+def get_model_uri(model_name, version):
+    """
+        return the model_uri given the model name and version
+    :param model_name: name of the model
+    :param version: version of the model
+    :return: model_uri
+    """
+    return MlflowPlugin().get_model_uri(model_name=model_name, version=version)
+
+
+def get_artifacts(model_name, version):
+    """
+        return the model_uri given the model name and version
+    :param model_name: name of the model
+    :param version: version of the model
+    :return: model_uri
+    """
+    artifacts_complete = MlflowPlugin().get_model_uri(
+        model_name=model_name, version=version
+    )
+    artifacts = "/".join(artifacts_complete.split("/")[:-1])
+
+    return artifacts
 
 
 __all__ = [
