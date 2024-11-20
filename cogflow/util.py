@@ -5,9 +5,8 @@
 import re
 from datetime import datetime
 import requests
-from . import plugin_config
 
-DEFAULT_TIMEOUT = plugin_config.TIMER_IN_SEC  # Set a default timeout in seconds
+DEFAULT_TIMEOUT = 10  # Set a default timeout in seconds
 
 
 def make_post_request(url, data=None, params=None, files=None, timeout=DEFAULT_TIMEOUT):

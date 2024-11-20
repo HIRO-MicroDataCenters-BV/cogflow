@@ -49,7 +49,7 @@ class MlflowPlugin:
         PluginManager().verify_activation(MlflowPlugin().section)
 
         try:
-            response = requests.get(os.getenv(plugin_config.TRACKING_URI), timeout=300)
+            response = requests.get(os.getenv(plugin_config.TRACKING_URI), timeout="30")
 
             if response.status_code == 200:
                 pass
@@ -85,7 +85,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.cogclient.delete_registered_model(model_name)
 
     def search_registered_models(
@@ -121,7 +121,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         registered_models = self.cogclient.search_registered_models(
             filter_string=filter_string,
             max_results=max_results,
@@ -145,7 +145,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         loaded_model = ml.sklearn.load_model(model_uri, dst_path)
         return loaded_model
 
@@ -236,7 +236,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return ml.register_model(
             name=model,
             model_uri=model_uri,
@@ -253,7 +253,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.mlflow.autolog()
 
     def create_registered_model(
@@ -284,7 +284,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.cogclient.create_registered_model(
             name=model, tags=tags, description=description
         )
@@ -332,7 +332,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.cogclient.create_model_version(
             name=model,
             source=source,
@@ -355,7 +355,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.mlflow.set_tracking_uri(tracking_uri)
 
     def set_experiment(
@@ -380,7 +380,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.mlflow.set_experiment(
             experiment_name=experiment_name, experiment_id=experiment_id
         )
@@ -433,7 +433,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.mlflow.start_run(
             run_id=run_id,
             experiment_id=experiment_id,
@@ -452,7 +452,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.mlflow.end_run()
 
     def log_param(self, key: str, value: Any) -> None:
@@ -469,7 +469,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.mlflow.log_param(key, value)
 
     def log_metric(
@@ -491,7 +491,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.mlflow.log_metric(
             key,
             value,
@@ -605,7 +605,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
-
+        PluginManager().load_config()
         return self.cogclient.search_model_versions(
             filter_string=filter_string,
         )
@@ -634,6 +634,7 @@ class MlflowPlugin:
         :param local_path: Path to the file to write.
         :param artifact_path: If provided, the directory in ``artifact_uri`` to write to.
         """
+        PluginManager().load_config()
         return self.mlflow.log_artifact(
             local_path=local_path, artifact_path=artifact_path
         )

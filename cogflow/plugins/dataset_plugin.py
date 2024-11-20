@@ -95,6 +95,7 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
+        PluginManager().load_config()
         return Minio(
             self.minio_endpoint,
             access_key=self.minio_access_key,
@@ -114,8 +115,9 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
+        PluginManager().load_config()
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=30)
             if response.status_code == 200:
                 self.save_to_minio(response.content, output_file, bucket_name)
                 return True
@@ -137,6 +139,7 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
+        PluginManager().load_config()
         # Initialize MinIO client
         minio_client = self.create_minio_client()
         object_name = output_file
@@ -180,6 +183,7 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
+        PluginManager().load_config()
         # Initialize MinIO client
         minio_client = self.create_minio_client()
         try:
@@ -230,16 +234,18 @@ class DatasetPlugin:
             files = None
             if details.is_external_url():
                 # If the dataset is hosted online
-                path = PluginManager().load_path("dataset_register")
+                path = "/dataset/register_by_api"
                 data = {
                     "url": details.source,
+                    "user_id_val": plugin_config.JUPYTER_USER_ID,
                     "file_name": output_file,
                 }
             elif details.is_file_path():
-                path = PluginManager().load_path("dataset")
+                path = "/dataset"
                 params = {
                     "dataset_type": 1,
                     "dataset_source_type": 0,
+                    "user_id": plugin_config.JUPYTER_USER_ID,
                     "dataset_name": details.name,
                     "description": details.description,
                 }
@@ -261,7 +267,7 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
-
+        PluginManager().load_config()
         response = self.register_dataset(dataset)
         dataset_id = response["data"]["dataset_id"]
         return dataset_id
@@ -333,7 +339,7 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
-
+        PluginManager().load_config()
         result = MlflowPlugin().log_model(
             sk_model=sk_model,
             artifact_path=artifact_path,
@@ -367,9 +373,9 @@ class DatasetPlugin:
 
         PluginManager().load_config()
 
-        path = f"{PluginManager().load_path('dataset')}/{name}"
+        path = f"/dataset/{name}"
         url = os.getenv(plugin_config.API_BASEPATH) + path
-        response = requests.get(url, timeout=10)
+        response = requests.get(url, timeout=30)
 
         # Check if the request was successful
         if response.status_code == 200:

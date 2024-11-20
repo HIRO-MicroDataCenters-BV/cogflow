@@ -99,6 +99,16 @@ from .plugin_config import (
     ACCESS_KEY_ID,
     SECRET_ACCESS_KEY,
     S3_ENDPOINT_URL,
+    ML_DB_USERNAME,
+    ML_DB_PASSWORD,
+    ML_DB_HOST,
+    ML_DB_PORT,
+    ML_DB_NAME,
+    COGFLOW_DB_USERNAME,
+    COGFLOW_DB_PASSWORD,
+    COGFLOW_DB_HOST,
+    COGFLOW_DB_PORT,
+    COGFLOW_DB_NAME,
     MINIO_ENDPOINT_URL,
     MINIO_ACCESS_KEY,
     MINIO_SECRET_ACCESS_KEY,
@@ -278,12 +288,8 @@ def evaluate(
 
     PluginManager().load_config()
     # Construct URLs
-    url_metrics = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-        "validation_metrics"
-    )
-    url_artifacts = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-        "validation_artifacts"
-    )
+    url_metrics = os.getenv(plugin_config.API_BASEPATH) + "/validation/metrics"
+    url_artifacts = os.getenv(plugin_config.API_BASEPATH) + "/validation/artifact"
 
     # Attempt to make POST requests, continue regardless of success or failure
     try:
@@ -645,6 +651,8 @@ def log_model(
         pyfunc_predict_fn (str, optional): The prediction function to use.
         metadata (dict, optional): Metadata for the model.
     """
+    PluginManager().load_config()
+
     result = MlflowPlugin().log_model(
         sk_model=sk_model,
         artifact_path=artifact_path,
@@ -674,13 +682,11 @@ def log_model(
                     random.choices(string.ascii_letters + string.digits, k=10)
                 )
         response = NotebookPlugin().save_model_details_to_db(registered_model_name)
-        # print("response", response)
         model_id = response["data"]["id"]
         # print("model_id", model_id)
         if result.model_uri:
             artifact_uri = get_artifact_uri(artifact_path=result.artifact_path)
             # Construct the model URI
-            # print("model_uri", artifact_uri)
             NotebookPlugin().save_model_uri_to_db(model_id, model_uri=artifact_uri)
     except Exception as exp:
         print(f"Failed to log model details to DB: {exp}")
@@ -734,6 +740,8 @@ def log_model_with_dataset(
         pyfunc_predict_fn (str, optional): The prediction function to use.
         metadata (dict, optional): Metadata for the model.
     """
+    PluginManager().load_config()
+
     return DatasetPlugin().log_model_with_dataset(
         sk_model=sk_model,
         artifact_path=artifact_path,
@@ -1090,9 +1098,6 @@ def create_run_from_pipeline_func(
         print(f"Run {run_details.run_id} status: {status}")
         time.sleep(plugin_config.TIMER_IN_SEC)
 
-    details = get_pipeline_and_experiment_details(run_details.run_id)
-    print("details of upload pipeline", details)
-    NotebookPlugin().save_pipeline_details_to_db(details)
     return run_details
 
 
@@ -1187,9 +1192,7 @@ def get_pipeline_and_experiment_details(run_id):
         for model_uri in model_uris:
             PluginManager().load_config()
             # Define the URL
-            url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-                "models_uri"
-            )
+            url = os.getenv(plugin_config.API_BASEPATH) + "/models/uri"
             data = {"uri": model_uri}
             json_data = json.dumps(data)
             headers = {"Content-Type": "application/json"}
@@ -1268,7 +1271,7 @@ def custom_log_model(
         metadata (dict, optional): Additional metadata to log.
         **kwargs: Additional arguments for cogflow.pyfunc.log_model.
     """
-
+    PluginManager().load_config()
     # Call the original cogflow.pyfunc.log_model
     result = original_pyfunc_log_model(
         artifact_path=artifact_path,
@@ -1427,7 +1430,7 @@ def list_pipelines_by_name(pipeline_name):
         Exception: For any other issues encountered during the fetch operations.
     """
 
-    return NotebookPlugin().list_pipelines_by_name(pipeline_name=pipeline_name)
+    NotebookPlugin().list_pipelines_by_name(pipeline_name=pipeline_name)
 
 
 def model_recommender(model_name=None, classification_score=None):
