@@ -486,9 +486,7 @@ class NotebookPlugin:
             if hasattr(artifact, "uri"):
                 serialized_artifacts[key] = artifact.uri
             else:
-                serialized_artifacts[key] = str(
-                    artifact
-                )  # Fallback conversion to string
+                serialized_artifacts[key] = str(artifact)
 
         return {"validation_artifacts": serialized_artifacts}
 
