@@ -484,3 +484,681 @@ class NotebookPlugin:
                 )  # Fallback conversion to string
 
         return {"validation_artifacts": serialized_artifacts}
+
+    @staticmethod
+    def model_recommender(model_name=None, classification_score=None):
+        """
+        Calls the model recommender API and returns the response.
+
+        Args:
+        - model_name (str): The name of the model to recommend (optional).
+        - classification_score (list): A list of classification scores to consider(e.g., accuracy_score, f1_score,
+         recall_score, log_loss, roc_auc, precision_score, example_count, score.). (optional).
+
+        Returns:
+        - dict: The response from the model recommender API.
+        """
+        # Verify plugin activation
+        PluginManager().verify_activation(NotebookPlugin().section)
+
+        PluginManager().load_config()
+
+        # call the api for model recommend
+        data = {"model_name": model_name, "classification_score": classification_score}
+        url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
+            "model_recommend"
+        )
+        return make_get_request(url, query_params=data)
+
+    @staticmethod
+    def get_pipeline_task_sequence_by_run_id(run_id):
+        """
+        Fetches the pipeline workflow and task sequence for a given run in Kubeflow.
+
+        Args:
+            run_id (str): The ID of the pipeline run to fetch details for.
+
+        Returns:
+            tuple: A tuple containing:
+                - pipeline_workflow_name (str): The name of the pipeline's workflow (root node of the DAG).
+                - task_structure (dict): A dictionary representing the task structure of the pipeline, with each node
+                                         containing information such as task ID, pod name, status, inputs, outputs,
+                                         and resource duration.
+
+        The task structure contains the following fields for each node:
+            - id (str): The unique ID of the task (node).
+            - podName (str): The name of the pod associated with the task.
+            - name (str): The display name of the task.
+            - inputs (list): A list of input parameters for the task.
+            - outputs (list): A list of outputs produced by the task.
+            - status (str): The phase/status of the task (e.g., 'Succeeded', 'Failed').
+            - startedAt (str): The timestamp when the task started.
+            - finishedAt (str): The timestamp when the task finished.
+            - resourcesDuration (dict): A dictionary representing the resources used (e.g., CPU, memory).
+            - children (list): A list of child tasks (if any) in the DAG.
+
+        Example:
+            >>> run_id = "afcf98bb-a9af-4a34-a512-1236110150ae"
+            >>> pipeline_name, task_structure = get_pipeline_task_sequence_by_run_id(run_id)
+            >>> print(f"Pipeline Workflow Name: {pipeline_name}")
+            >>> print("Task Structure:", task_structure)
+
+        Raises:
+            ValueError: If the root node (DAG) is not found in the pipeline.
+        """
+
+        # Initialize the Kubeflow client
+        client = KubeflowPlugin().client()
+
+        # Get the details of the specified run using the run ID
+        run_details = client.get_run(run_id)
+
+        # Parse the workflow manifest from the pipeline runtime
+        workflow_graph = json.loads(run_details.pipeline_runtime.workflow_manifest)
+
+        # Access the nodes in the pipeline graph
+        nodes = workflow_graph["status"]["nodes"]
+
+        # Initialize variables for the pipeline name and root node ID
+        pipeline_workflow_name = None
+        root_node_id = None
+
+        # Iterate through nodes to find the DAG root (pipeline root node)
+        for node_id, node_data in nodes.items():
+            if node_data["type"] == "DAG":
+                pipeline_workflow_name = node_data["displayName"]
+                root_node_id = node_id
+                break
+
+        if not root_node_id:
+            raise ValueError("Root DAG node not found in the pipeline run.")
+
+        # Task structure to store the task details
+        task_structure = {}
+
+        # Recursive function to traverse the graph and build the task structure
+        def traverse(node_id, parent=None):
+            node = nodes[node_id]
+
+            # Extract inputs, outputs, phase (status), and other information
+            inputs = node.get("inputs", {}).get("parameters", [])
+            outputs = node.get("outputs", [])
+            phase = node.get("phase", "unknown")
+            started_at = node.get("startedAt", "unknown")
+            finished_at = node.get("finishedAt", "unknown")
+            resources_duration = node.get("resourcesDuration", {})
+
+            # Task information dictionary for the current node
+            task_info = {
+                "id": node_id,
+                "podName": node_id,  # Assuming podName is the same as node_id
+                "name": node["displayName"],
+                "inputs": inputs,
+                "outputs": outputs,
+                "status": phase,
+                "startedAt": started_at,
+                "finishedAt": finished_at,
+                "resourcesDuration": resources_duration,
+                "children": [],
+            }
+
+            # Add the task to the parent's children or to the task structure if it's the root
+            if parent is None:
+                task_structure[node_id] = task_info
+            else:
+                parent["children"].append(task_info)
+
+            # Recursively traverse and process child nodes
+            if "children" in node and node["children"]:
+                for child_id in node["children"]:
+                    traverse(child_id, task_info)
+
+        # Begin traversal starting from the root node of the pipeline
+        if root_node_id:
+            traverse(root_node_id)
+
+        # Return the pipeline workflow name and task structure
+        return pipeline_workflow_name, task_structure
+
+    @staticmethod
+    def get_run_id_by_run_name(run_name):
+        """
+        Fetches the run_id of a pipeline run by its name, traversing all pages if necessary.
+
+        Args:
+            run_name (str): The name of the pipeline run to search for.
+
+        Returns:
+            str: The run_id if found, otherwise None.
+        """
+        next_page_token = None
+        page_size = 100  # Set page size (adjust if needed)
+        client = KubeflowPlugin().client()
+
+        # Traverse through pages to find the matching run name
+        while True:
+            # Fetch the list of runs, providing the next_page_token to continue from the last point
+            runs_list = client.list_runs(
+                page_size=page_size, page_token=next_page_token
+            )
+
+            # Check the current page for the run with the specified name
+            for run in runs_list.runs:
+                if run.name == run_name:
+                    return run.id
+
+            # Check if there are more pages
+            next_page_token = runs_list.next_page_token
+            if not next_page_token:
+                # No more pages, the run was not found
+                break
+
+        return None
+
+    @staticmethod
+    def get_pipeline_task_sequence_by_run_name(run_name):
+        """
+        Fetches the task structure of a pipeline run based on its name.
+
+        Args:
+            run_name (str): The name of the pipeline run to fetch task structure for.
+
+        Returns:
+            tuple: (pipeline_workflow_name, task_structure)
+        Example:
+            >>>run_name = "Run of test_pipeline (ad001)"
+            >>>pipeline_name, task_structure = get_pipeline_task_sequence_by_run_name(run_name)
+            >>>print(f'Pipeline Workflow Name: {pipeline_name}')
+            >>>print("Task Structure:")
+            >>>print(json.dumps(task_structure, indent=4))
+        """
+        client = KubeflowPlugin().client()
+
+        # Fetch the run_id using the run_name
+        run_id = NotebookPlugin().get_run_id_by_run_name(run_name)
+
+        if not run_id:
+            raise ValueError(f"No run found with name: {run_name}")
+
+        # Get the details of the specified run by run_id
+        run_details = client.get_run(run_id)
+
+        # Parse the workflow manifest
+        workflow_graph = json.loads(run_details.pipeline_runtime.workflow_manifest)
+
+        # Access the nodes in the graph
+        nodes = workflow_graph["status"]["nodes"]
+
+        # Store the pipeline name and root node
+        pipeline_workflow_name = None
+        root_node_id = None
+
+        for node_id, node_data in nodes.items():
+            if node_data["type"] == "DAG":
+                pipeline_workflow_name = node_data["displayName"]
+                root_node_id = node_id
+                break
+
+        # Create a task representation structure
+        task_structure = {}
+
+        # Function to traverse the graph and build the task structure
+        def traverse(node_id, parent=None):
+            node = nodes[node_id]
+
+            # Extract inputs, outputs, and additional information
+            inputs = node.get("inputs", {}).get("parameters", [])
+            outputs = node.get("outputs", [])
+            phase = node.get("phase", "unknown")
+            started_at = node.get("startedAt", "unknown")
+            finished_at = node.get("finishedAt", "unknown")
+            resources_duration = node.get("resourcesDuration", {})
+
+            # Prepare the task information
+            task_info = {
+                "id": node_id,
+                "podName": node_id,
+                "name": node["displayName"],
+                "inputs": inputs,  # Include inputs
+                "outputs": outputs,  # Include outputs
+                "status": phase,
+                "startedAt": started_at,
+                "finishedAt": finished_at,
+                "resourcesDuration": resources_duration,
+                "children": [],
+            }
+
+            # Add task to the parent
+            if parent is None:
+                task_structure[node_id] = task_info
+            else:
+                parent["children"].append(task_info)
+
+            # Recursively traverse child nodes
+            if "children" in node and node["children"]:
+                for child_id in node["children"]:
+                    traverse(child_id, task_info)
+
+        # Start traversing from the root node
+        if root_node_id:
+            traverse(root_node_id)
+
+        return pipeline_workflow_name, task_structure
+
+    @staticmethod
+    def get_run_ids_by_pipeline_id(pipeline_id):
+        """
+        Fetches all run_ids for a given pipeline ID.
+
+        Args:
+            pipeline_id (str): The ID of the pipeline to search for.
+
+        Returns:
+            list: A list of run_ids for the matching pipeline ID.
+        """
+        run_ids = []
+        next_page_token = None
+        client = KubeflowPlugin().client()
+        while True:
+            runs_list = client.list_runs(page_size=100, page_token=next_page_token)
+            for run in runs_list.runs:
+                # Check if the run's pipeline_id matches the provided pipeline_id
+                if run.pipeline_spec.pipeline_id == pipeline_id:
+                    run_ids.append(run.id)
+
+            # Check if there is a next page
+            next_page_token = runs_list.next_page_token
+            if not next_page_token:
+                break  # Exit if there are no more pages
+
+        return run_ids
+
+    @staticmethod
+    def get_pipeline_task_sequence_by_pipeline_id(pipeline_id):
+        """
+        Fetches the task structures of all pipeline runs based on the provided pipeline_id.
+
+        Args:
+            pipeline_id (str): The ID of the pipeline to fetch task structures for.
+
+        Returns:
+            list: A list of dictionaries containing pipeline workflow names and task structures for each run.
+        Example:
+            >>>pipeline_id = "1000537e-b101-4432-a779-768ec479c2b0"  # Replace with your actual pipeline_id
+            >>>all_task_structures = get_pipeline_task_sequence_by_pipeline_id(pipeline_id)
+            >>>for details in all_task_structures:
+                >>>print(f'Run ID: {details["run_id"]}')
+                >>>print(f'Pipeline Workflow Name: {details["pipeline_workflow_name"]}')
+                >>>print("Task Structure:")
+                >>>print(json.dumps(details["task_structure"], indent=4))
+        """
+        client = KubeflowPlugin().client()
+
+        # Fetch all run_ids using the pipeline_id
+        run_ids = NotebookPlugin().get_run_ids_by_pipeline_id(pipeline_id)
+
+        if not run_ids:
+            raise ValueError(f"No runs found for pipeline_id: {pipeline_id}")
+
+        # Create a list to hold task structures for each run
+        task_structures = []
+
+        for run_id in run_ids:
+            # Get the details of the specified run by run_id
+            run_details = client.get_run(run_id)
+
+            # Parse the workflow manifest
+            workflow_graph = json.loads(run_details.pipeline_runtime.workflow_manifest)
+
+            # Access the nodes in the graph
+            nodes = workflow_graph["status"]["nodes"]
+
+            # Store the pipeline name and root node
+            pipeline_workflow_name = None
+            root_node_id = None
+
+            for node_id, node_data in nodes.items():
+                if node_data["type"] == "DAG":
+                    pipeline_workflow_name = node_data["displayName"]
+                    root_node_id = node_id
+                    break
+
+            # Create a task representation structure
+            task_structure = {}
+
+            # Function to traverse the graph and build the task structure
+            def traverse(node_id, parent=None):
+                node = nodes[node_id]
+
+                # Extract inputs, outputs, and additional information
+                inputs = node.get("inputs", {}).get("parameters", [])
+                outputs = node.get("outputs", [])
+                phase = node.get("phase", "unknown")
+                started_at = node.get("startedAt", "unknown")
+                finished_at = node.get("finishedAt", "unknown")
+                resources_duration = node.get("resourcesDuration", {})
+
+                # Prepare the task information
+                task_info = {
+                    "id": node_id,
+                    "podName": node_id,
+                    "name": node["displayName"],
+                    "inputs": inputs,  # Include inputs
+                    "outputs": outputs,  # Include outputs
+                    "status": phase,
+                    "startedAt": started_at,
+                    "finishedAt": finished_at,
+                    "resourcesDuration": resources_duration,
+                    "children": [],
+                }
+
+                # Add task to the parent
+                if parent is None:
+                    task_structure[node_id] = task_info
+                else:
+                    parent["children"].append(task_info)
+
+                # Recursively traverse child nodes
+                if "children" in node and node["children"]:
+                    for child_id in node["children"]:
+                        traverse(child_id, task_info)
+
+            # Start traversing from the root node
+            if root_node_id:
+                traverse(root_node_id)
+
+            # Append the task structure and workflow name for the current run_id
+            task_structures.append(
+                {
+                    "run_id": run_id,
+                    "pipeline_workflow_name": pipeline_workflow_name,
+                    "task_structure": task_structure,
+                }
+            )
+
+        return task_structures
+
+    @staticmethod
+    def list_all_pipelines():
+        """
+        Lists all pipelines along with their IDs, handling pagination.
+
+        Returns:
+            list: A list of tuples containing (pipeline_name, pipeline_id).
+        """
+        client = KubeflowPlugin().client()
+
+        pipelines_info = []
+        next_page_token = None
+        page_size = 100  # You can adjust this as needed
+
+        while True:
+            # Fetch all pipelines with pagination
+            pipelines_list = client.list_pipelines(
+                page_size=page_size, page_token=next_page_token
+            )
+
+            # Add the pipelines to the list
+            for pipeline in pipelines_list.pipelines:
+                pipelines_info.append((pipeline.name, pipeline.id))
+
+            # Check if there is a next page
+            next_page_token = pipelines_list.next_page_token
+            if not next_page_token:
+                break  # Exit the loop if there are no more pages
+
+        return pipelines_info
+
+    @staticmethod
+    def get_run_ids_by_pipeline_name(pipeline_name):
+        """
+        Fetches all run_ids for a given pipeline name.
+
+        Args:
+            pipeline_name (str): The name of the pipeline to search for.
+
+        Returns:
+            list: A list of run_ids for the matching pipeline name.
+        """
+        run_ids = []
+        next_page_token = None
+        client = KubeflowPlugin().client()
+        while True:
+            runs_list = client.list_runs(page_size=100, page_token=next_page_token)
+            for run in runs_list.runs:
+                # Check if the run's pipeline name matches the provided pipeline name
+                if run.pipeline_spec.pipeline_name == pipeline_name:
+                    run_ids.append(run.id)
+
+            # Check if there is a next page
+            next_page_token = runs_list.next_page_token
+            if not next_page_token:
+                break  # Exit if there are no more pages
+
+        return run_ids
+
+    @staticmethod
+    def get_pipeline_task_sequence_by_pipeline_name(pipeline_name):
+        """
+        Fetches the task structures of all pipeline runs based on the provided pipeline name.
+
+        Args:
+            pipeline_name (str): The name of the pipeline to fetch task structures for.
+
+        Returns:
+            dict: A dictionary with run_ids as keys and their corresponding task structures.
+        Example:
+            >>> pipeline_name = "test_pipeline"
+            >>> all_task_structures = get_pipeline_task_sequence_by_pipeline_name(pipeline_name)
+            >>> for details in all_task_structures:
+                    >>>print(f'Run ID: {details["run_id"]}')
+                    >>>print(f'Pipeline Workflow Name: {details["pipeline_workflow_name"]}')
+                    >>>print("Task Structure:")
+                    >>>print(json.dumps(details["task_structure"], indent=4))
+
+        """
+        client = KubeflowPlugin().client()
+
+        # Fetch all run_ids using the pipeline_name
+        run_ids = NotebookPlugin().get_run_ids_by_pipeline_name(pipeline_name)
+
+        if not run_ids:
+            raise ValueError(f"No runs found for pipeline name: {pipeline_name}")
+
+        # Create a dictionary to hold task structures for each run
+        task_structures = {}
+        output_details = []  # List to hold details to return
+
+        for run_id in run_ids:
+            # Get the details of the specified run by run_id
+            run_details = client.get_run(run_id)
+
+            # Parse the workflow manifest
+            workflow_graph = json.loads(run_details.pipeline_runtime.workflow_manifest)
+
+            # Access the nodes in the graph
+            nodes = workflow_graph["status"]["nodes"]
+
+            # Store the pipeline name and root node
+            pipeline_workflow_name = None
+            root_node_id = None
+
+            for node_id, node_data in nodes.items():
+                if node_data["type"] == "DAG":
+                    pipeline_workflow_name = node_data["displayName"]
+                    root_node_id = node_id
+                    break
+
+            # Create a task representation structure
+            task_structure = {}
+
+            # Function to traverse the graph and build the task structure
+            def traverse(node_id, parent=None):
+                node = nodes[node_id]
+
+                # Extract inputs, outputs, and additional information
+                inputs = node.get("inputs", {}).get("parameters", [])
+                outputs = node.get("outputs", [])
+                phase = node.get("phase", "unknown")
+                started_at = node.get("startedAt", "unknown")
+                finished_at = node.get("finishedAt", "unknown")
+                resources_duration = node.get("resourcesDuration", {})
+
+                # Prepare the task information
+                task_info = {
+                    "id": node_id,
+                    "podName": node_id,
+                    "name": node["displayName"],
+                    "inputs": inputs,  # Include inputs
+                    "outputs": outputs,  # Include outputs
+                    "status": phase,
+                    "startedAt": started_at,
+                    "finishedAt": finished_at,
+                    "resourcesDuration": resources_duration,
+                    "children": [],
+                }
+
+                # Add task to the parent
+                if parent is None:
+                    task_structure[node_id] = task_info
+                else:
+                    parent["children"].append(task_info)
+
+                # Recursively traverse child nodes
+                if "children" in node and node["children"]:
+                    for child_id in node["children"]:
+                        traverse(child_id, task_info)
+
+            # Start traversing from the root node
+            if root_node_id:
+                traverse(root_node_id)
+
+            # Store the task structure for the current run_id
+            task_structures[run_id] = {
+                "pipeline_workflow_name": pipeline_workflow_name,
+                "task_structure": task_structure,
+            }
+
+            # Append details to the output list
+            output_details.append(
+                {
+                    "run_id": run_id,
+                    "pipeline_workflow_name": pipeline_workflow_name,
+                    "task_structure": task_structure,
+                }
+            )
+
+        return output_details  # Return the list of details
+
+    @staticmethod
+    def get_all_run_ids():
+        """
+        Fetches all run_ids available in the system.
+
+        Returns:
+            list: A list of all run_ids.
+        """
+        run_ids = []
+        next_page_token = None
+        client = KubeflowPlugin().client()
+        while True:
+            runs_list = client.list_runs(page_size=100, page_token=next_page_token)
+            for run in runs_list.runs:
+                run_ids.append(run.id)
+
+            next_page_token = runs_list.next_page_token
+            if not next_page_token:
+                break
+
+        return run_ids
+
+    @staticmethod
+    def get_run_ids_by_name(run_name):
+        """
+        Fetches run_ids by run name.
+
+        Args:
+            run_name (str): The name of the run to search for.
+
+        Returns:
+            list: A list of run_ids matching the run_name.
+        """
+        run_ids = []
+        next_page_token = None
+        client = KubeflowPlugin().client()
+        while True:
+            runs_list = client.list_runs(page_size=100, page_token=next_page_token)
+            for run in runs_list.runs:
+                if run.name == run_name:
+                    run_ids.append(run.id)
+
+            next_page_token = runs_list.next_page_token
+            if not next_page_token:
+                break
+
+        return run_ids
+
+    @staticmethod
+    def get_task_structure_by_task_id(task_id, run_id=None, run_name=None):
+        """
+        Fetches the task structure of a specific task ID, optionally filtered by run_id or run_name.
+
+        Args:
+            task_id (str): The task ID to look for.
+            run_id (str, optional): The specific run ID to filter by. Defaults to None.
+            run_name (str, optional): The specific run name to filter by. Defaults to None.
+
+        Returns:
+            list: A list of dictionaries containing run IDs and their corresponding task info if found.
+        Example:
+            >>>task_id = "test-pipeline-749dn-2534915009"
+            >>>run_id = None  # "afcf98bb-a9af-4a34-a512-1236110150ae"
+            >>>run_name = "Run of test_pipeline (ad001)"
+            >>>get_task_structure_by_task_id(task_id, run_id, run_name)
+        """
+        client = KubeflowPlugin().client()
+
+        # Fetch all run_ids available in the system
+        run_ids = NotebookPlugin().get_all_run_ids()
+
+        # If run_name is provided, filter by run_name
+        if run_name:
+            run_ids = NotebookPlugin().get_run_ids_by_name(run_name)
+
+        # If run_id is provided, make it the only run to check
+        if run_id:
+            run_ids = [run_id] if run_id in run_ids else []
+
+        task_structures = []
+
+        for run_id in run_ids:
+            # Get the details of the specified run by run_id
+            run_details = client.get_run(run_id)
+
+            # Parse the workflow manifest
+            workflow_graph = json.loads(run_details.pipeline_runtime.workflow_manifest)
+
+            # Access the nodes in the graph
+            nodes = workflow_graph["status"]["nodes"]
+
+            # Check if the task_id exists in the nodes
+            if task_id in nodes:
+                node_data = nodes[task_id]
+                # Extract necessary details
+                task_info = {
+                    "id": task_id,
+                    "name": node_data["displayName"],
+                    "inputs": node_data.get("inputs", {}).get("parameters", []),
+                    "outputs": node_data.get("outputs", []),
+                    "status": node_data.get("phase", "unknown"),
+                    "startedAt": node_data.get("startedAt", "unknown"),
+                    "finishedAt": node_data.get("finishedAt", "unknown"),
+                    "resourcesDuration": node_data.get("resourcesDuration", {}),
+                    "run_id": run_id,
+                }
+
+                # Store the task info
+                task_structures.append(task_info)
+        if not task_structures:
+            raise ValueError(f"No task found with ID: {task_id}.")
+        return task_structures

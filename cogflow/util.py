@@ -33,7 +33,6 @@ def make_post_request(url, data=None, params=None, files=None, timeout=DEFAULT_T
             response = requests.post(url, params=params, timeout=timeout)
 
         if response.status_code == 201:
-            print("POST request successful")
             return response.json()
         # If not the success response
         print(f"POST request failed with status code {response.status_code}")
@@ -117,11 +116,12 @@ def make_get_request(url, path_params=None, query_params=None, timeout=DEFAULT_T
     try:
         if query_params:
             response = requests.get(url, params=query_params, timeout=timeout)
-        else:
+        elif path_params:
             # Make the GET request with path params
             response = requests.get(url + "/" + path_params, timeout=timeout)
+        else:
+            response = requests.get(url, timeout=timeout)
         if response.status_code == 200:
-            print("GET request successful")
             return response.json()
         # If not the success response
         print(f"GET request failed with status code {response.status_code}")

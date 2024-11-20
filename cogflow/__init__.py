@@ -88,6 +88,8 @@ from mlflow.models import ModelSignature, ModelInputExample
 from scipy.sparse import csr_matrix, csc_matrix
 from kfp.components import InputPath, OutputPath
 from kfp.dsl import ParallelFor
+
+from .kafka.consumer import stop_consumer, start_consumer_thread
 from .v2 import *
 from . import pluginmanager, plugin_config
 from .plugin_config import (
@@ -112,11 +114,13 @@ from .plugin_config import (
     MINIO_SECRET_ACCESS_KEY,
     API_BASEPATH,
 )
+from .pluginmanager import PluginManager
 from .plugins.dataset_plugin import DatasetMetadata, DatasetPlugin
+from .plugins.kafka_dataset_plugin import KafkaDatasetPlugin
 from .plugins.kubeflowplugin import CogContainer, KubeflowPlugin
 from .plugins.mlflowplugin import MlflowPlugin
 from .plugins.notebook_plugin import NotebookPlugin
-from .pluginmanager import PluginManager
+from .schema.kafka_dataset_metadata import KafkaDatasetRequest, TopicDetail
 from .util import make_post_request, is_valid_s3_uri
 
 
@@ -1427,6 +1431,329 @@ def list_pipelines_by_name(pipeline_name):
     """
 
     NotebookPlugin().list_pipelines_by_name(pipeline_name=pipeline_name)
+
+
+def model_recommender(model_name=None, classification_score=None):
+    """
+    Calls the model recommender API and returns the response.
+
+    Args:
+    - model_name (str): The name of the model to recommend (optional).
+    - classification_score (list): A list of classification scores to consider(e.g., accuracy_score, f1_score,
+     recall_score, log_loss, roc_auc, precision_score, example_count, score.). (optional).
+
+    Returns:
+    - dict: The response from the model recommender API.
+    """
+
+    return NotebookPlugin().model_recommender(
+        model_name=model_name, classification_score=classification_score
+    )
+
+
+def get_pipeline_task_sequence_by_run_id(run_id):
+    """
+    Fetches the pipeline workflow and task sequence for a given run in Kubeflow.
+
+    Args:
+        run_id (str): The ID of the pipeline run to fetch details for.
+
+    Returns:
+        tuple: A tuple containing:
+            - pipeline_workflow_name (str): The name of the pipeline's workflow (root node of the DAG).
+            - task_structure (dict): A dictionary representing the task structure of the pipeline, with each node
+                                     containing information such as task ID, pod name, status, inputs, outputs,
+                                     and resource duration.
+
+    The task structure contains the following fields for each node:
+        - id (str): The unique ID of the task (node).
+        - podName (str): The name of the pod associated with the task.
+        - name (str): The display name of the task.
+        - inputs (list): A list of input parameters for the task.
+        - outputs (list): A list of outputs produced by the task.
+        - status (str): The phase/status of the task (e.g., 'Succeeded', 'Failed').
+        - startedAt (str): The timestamp when the task started.
+        - finishedAt (str): The timestamp when the task finished.
+        - resourcesDuration (dict): A dictionary representing the resources used (e.g., CPU, memory).
+        - children (list): A list of child tasks (if any) in the DAG.
+
+    Example:
+        >>> run_id = "afcf98bb-a9af-4a34-a512-1236110150ae"
+        >>> pipeline_name, task_structure = get_pipeline_and_task_sequence_by_run(run_id)
+        >>> print(f"Pipeline Workflow Name: {pipeline_name}")
+        >>> print("Task Structure:", task_structure)
+
+    Raises:
+        ValueError: If the root node (DAG) is not found in the pipeline.
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_run_id(run_id=run_id)
+
+
+def list_all_pipelines():
+    """
+    Lists all pipelines along with their IDs, handling pagination.
+
+    Returns:
+        list: A list of tuples containing (pipeline_name, pipeline_id).
+    """
+    return NotebookPlugin().list_all_pipelines()
+
+
+def get_pipeline_task_sequence_by_pipeline_id(pipeline_id):
+    """
+    Fetches the task structures of all pipeline runs based on the provided pipeline_id.
+
+    Args:
+        pipeline_id (str): The ID of the pipeline to fetch task structures for.
+
+    Returns:
+        list: A list of dictionaries containing pipeline workflow names and task structures for each run.
+    Example:
+        >>>pipeline_id = "1000537e-b101-4432-a779-768ec479c2b0"  # Replace with your actual pipeline_id
+        >>>all_task_structures = get_pipeline_task_sequence_by_pipeline_id(pipeline_id)
+        >>>for details in all_task_structures:
+            >>>print(f'Run ID: {details["run_id"]}')
+            >>>print(f'Pipeline Workflow Name: {details["pipeline_workflow_name"]}')
+            >>>print("Task Structure:")
+            >>>print(json.dumps(details["task_structure"], indent=4))
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_pipeline_id(
+        pipeline_id=pipeline_id
+    )
+
+
+def get_latest_run_id_by_pipeline_id(pipeline_id):
+    """
+    Fetches the run_id of the latest pipeline run by its pipeline_id.
+
+    Args:
+        pipeline_id (str): The ID of the pipeline to search for.
+
+    Returns:
+        str: The run_id of the latest run if found, otherwise None.
+    """
+    NotebookPlugin().get_run_ids_by_pipeline_id(pipeline_id=pipeline_id)
+
+
+def get_pipeline_task_sequence_by_run_name(run_name):
+    """
+    Fetches the task structure of a pipeline run based on its name.
+
+    Args:
+        run_name (str): The name of the pipeline run to fetch task structure for.
+
+    Returns:
+        tuple: (pipeline_workflow_name, task_structure)
+    Example:
+        >>>run_name = "Run of test_pipeline (ad001)"
+        >>>pipeline_name, task_structure = get_pipeline_task_sequence_by_name(run_name)
+        >>>print(f'Pipeline Workflow Name: {pipeline_name}')
+        >>>print("Task Structure:")
+        >>>print(json.dumps(task_structure, indent=4))
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_run_name(run_name=run_name)
+
+
+def get_run_id_by_run_name(run_name):
+    """
+    Fetches the run_id of a pipeline run by its name, traversing all pages if necessary.
+
+    Args:
+        run_name (str): The name of the pipeline run to search for.
+
+    Returns:
+        str: The run_id if found, otherwise None.
+    """
+    return NotebookPlugin().get_run_id_by_run_name(run_name=run_name)
+
+
+def get_run_ids_by_pipeline_name(pipeline_name):
+    """
+    Fetches all run_ids for a given pipeline name.
+
+    Args:
+        pipeline_name (str): The name of the pipeline to search for.
+
+    Returns:
+        list: A list of run_ids for the matching pipeline name.
+    """
+    return NotebookPlugin().get_run_ids_by_pipeline_name(pipeline_name=pipeline_name)
+
+
+def get_pipeline_task_sequence_by_pipeline_name(pipeline_name):
+    """
+    Fetches the task structures of all pipeline runs based on the provided pipeline name.
+
+    Args:
+        pipeline_name (str): The name of the pipeline to fetch task structures for.
+
+    Returns:
+        dict: A dictionary with run_ids as keys and their corresponding task structures.
+    Example:
+        >>> pipeline_name = "test_pipeline"
+        >>> all_task_structures = get_pipeline_task_sequence_by_pipeline_name(pipeline_name)
+        >>> for details in all_task_structures:
+                >>>print(f'Run ID: {details["run_id"]}')
+                >>>print(f'Pipeline Workflow Name: {details["pipeline_workflow_name"]}')
+                >>>print("Task Structure:")
+                >>>print(json.dumps(details["task_structure"], indent=4))
+
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_pipeline_name(
+        pipeline_name=pipeline_name
+    )
+
+
+def get_all_run_ids():
+    """
+    Fetches all run_ids available in the system.
+
+    Returns:
+        list: A list of all run_ids.
+    """
+    return NotebookPlugin().get_all_run_ids()
+
+
+def get_run_ids_by_name(run_name):
+    """
+    Fetches run_ids by run name.
+
+    Args:
+        run_name (str): The name of the run to search for.
+
+    Returns:
+        list: A list of run_ids matching the run_name.
+    """
+    return NotebookPlugin().get_run_ids_by_name(run_name=run_name)
+
+
+def get_task_structure_by_task_id(task_id, run_id=None, run_name=None):
+    """
+    Fetches the task structure of a specific task ID, optionally filtered by run_id or run_name.
+
+    Args:
+        task_id (str): The task ID to look for.
+        run_id (str, optional): The specific run ID to filter by. Defaults to None.
+        run_name (str, optional): The specific run name to filter by. Defaults to None.
+
+    Returns:
+        list: A list of dictionaries containing run IDs and their corresponding task info if found.
+    Example:
+        >>>task_id = "test-pipeline-749dn-2534915009"
+        >>>run_id = None  # "afcf98bb-a9af-4a34-a512-1236110150ae"
+        >>>run_name = "Run of test_pipeline (ad001)"
+    """
+    return NotebookPlugin().get_task_structure_by_task_id(
+        task_id=task_id, run_id=run_id, run_name=run_name
+    )
+
+
+def register_kafka_dataset(
+    dataset_name: str, kafka_host_name: str, kafka_server_ip, topic_name
+):
+    """
+    Registers a Kafka dataset by creating and submitting a registration request.
+
+    This function constructs a `KafkaDatasetRequest` object with details about the dataset,
+    such as dataset name, Kafka host name, server IP, and topic details, then submits
+    this request to register the dataset using the `KafkaDatasetPlugin`. If any error
+    occurs during the process, it logs the exception message.
+
+    Parameters:
+    - dataset_name (str): The name of the dataset to be registered.
+    - kafka_host_name (str): Host name of the Kafka server.
+    - kafka_server_ip (str): IP address of the Kafka server.
+    - topic_name (str): Name of the Kafka topic associated with this dataset.
+
+    Returns:
+    - Response from the `KafkaDatasetPlugin` upon successful registration, or None if an error occurs.
+
+    Exceptions:
+    - Catches any exceptions and logs an error message detailing the failure.
+
+    """
+    try:
+        topic = TopicDetail(topic_name=topic_name, topic_schema={})
+        request = KafkaDatasetRequest(
+            dataset_name,
+            "kafka server dataset",
+            kafka_host_name,
+            kafka_server_ip,
+            topic_details=[topic],
+        )
+        kafka_dataset_plugin = KafkaDatasetPlugin()
+        return kafka_dataset_plugin.register_kafka_dataset(request)
+    except Exception as ex:
+        print(f"Error registering kafka server dataset details: {str(ex)}")
+
+
+def get_dataset_data(dataset_id: str):
+    """
+    get a kafka dataset with the given server_id.
+    """
+    print(f"reading data from dataset id  {dataset_id}")
+    kafka_dataset_plugin = KafkaDatasetPlugin()
+    response = kafka_dataset_plugin.get_kafka_dataset(dataset_id)
+    if response:
+        kafka_server_ip = response["data"]["server_ip"]
+        topic_name = response["data"]["topic_details"][0]["topic_name"]
+        print(
+            f"Start reading data from kafka server: {kafka_server_ip} topic: {topic_name}"
+        )
+        read_from_kafka_topic(kafka_server_ip, topic_name, "aces_metrics_consumer")
+
+
+def get_kafka_dataset(dataset_id: str):
+    """
+    get a kafka dataset with the given server_id.
+    """
+    try:
+        kafka_dataset_plugin = KafkaDatasetPlugin()
+        return kafka_dataset_plugin.get_kafka_dataset(dataset_id)
+    except Exception as ex:
+        print(f"Error in fetching kafka server dataset details {str(ex)}")
+
+
+def read_from_kafka_topic(kafka_broker_url, topic_name, group_id):
+    """
+    Initiates reading messages from a specified Kafka topic.
+
+    This function calls `start_consumer_thread` with the provided Kafka broker URL,
+    topic name, and consumer group ID to initiate the reading process. It starts a
+    consumer thread to continuously listen for and process incoming messages on the
+    specified topic, managed under the provided consumer group for load balancing
+    and offset tracking.
+
+    Parameters:
+    - kafka_broker_url (str): The URL of the Kafka broker to connect to.
+    - topic_name (str): The name of the Kafka topic to read messages from.
+    - group_id (str): The consumer group ID for managing offsets and load balancing.
+
+    Returns:
+    - None
+    """
+
+    start_consumer_thread(kafka_broker_url, topic_name, group_id)
+
+
+def stop_kafka_consumer():
+    """
+    Stops the Kafka consumer gracefully.
+
+    This function initiates the process to stop the Kafka consumer by printing a log
+    message and calling the `stop_consumer` function. This is useful in scenarios where
+    the consumer needs to be terminated without abruptly closing the connection,
+    ensuring any active resources are released appropriately.
+
+    Behavior:
+    - Logs a message to indicate that a stop request for the Kafka consumer has been received.
+    - Calls `stop_consumer()` to perform the stop operation.
+
+    Returns:
+    - None
+    """
+    print("Stop kafka consumer request received....")
+    stop_consumer()
 
 
 __all__ = [
