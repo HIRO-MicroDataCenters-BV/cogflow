@@ -5,7 +5,7 @@ FROM hiroregistry/cogflow:latest
 RUN python3 -m pip install --no-cache-dir --upgrade pip
 
 # Install specific version of cogflow
-RUN pip3 install --ignore-installed cogflow==1.9.45
+RUN pip3 install --ignore-installed cogflow==1.9.46
 
 # Install additional Python packages (shap, xgboost)
 RUN pip3 install --ignore-requires-python shap xgboost

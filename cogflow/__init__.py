@@ -647,6 +647,8 @@ def log_model(
         pyfunc_predict_fn (str, optional): The prediction function to use.
         metadata (dict, optional): Metadata for the model.
     """
+    PluginManager().load_config()
+
     result = MlflowPlugin().log_model(
         sk_model=sk_model,
         artifact_path=artifact_path,
@@ -734,6 +736,8 @@ def log_model_with_dataset(
         pyfunc_predict_fn (str, optional): The prediction function to use.
         metadata (dict, optional): Metadata for the model.
     """
+    PluginManager().load_config()
+
     return DatasetPlugin().log_model_with_dataset(
         sk_model=sk_model,
         artifact_path=artifact_path,
@@ -1263,7 +1267,7 @@ def custom_log_model(
         metadata (dict, optional): Additional metadata to log.
         **kwargs: Additional arguments for cogflow.pyfunc.log_model.
     """
-
+    PluginManager().load_config()
     # Call the original cogflow.pyfunc.log_model
     result = original_pyfunc_log_model(
         artifact_path=artifact_path,

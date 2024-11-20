@@ -95,6 +95,7 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
+        PluginManager().load_config()
         return Minio(
             self.minio_endpoint,
             access_key=self.minio_access_key,
@@ -114,8 +115,9 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
+        PluginManager().load_config()
         try:
-            response = requests.get(url, timeout="30")
+            response = requests.get(url, timeout=30)
             if response.status_code == 200:
                 self.save_to_minio(response.content, output_file, bucket_name)
                 return True
@@ -137,6 +139,7 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
+        PluginManager().load_config()
         # Initialize MinIO client
         minio_client = self.create_minio_client()
         object_name = output_file
@@ -180,6 +183,7 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
+        PluginManager().load_config()
         # Initialize MinIO client
         minio_client = self.create_minio_client()
         try:
@@ -263,7 +267,7 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
-
+        PluginManager().load_config()
         response = self.register_dataset(dataset)
         dataset_id = response["data"]["dataset_id"]
         return dataset_id
@@ -335,7 +339,7 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
-
+        PluginManager().load_config()
         result = MlflowPlugin().log_model(
             sk_model=sk_model,
             artifact_path=artifact_path,
@@ -371,7 +375,7 @@ class DatasetPlugin:
 
         path = f"/dataset/{name}"
         url = os.getenv(plugin_config.API_BASEPATH) + path
-        response = requests.get(url, timeout="30")
+        response = requests.get(url, timeout=30)
 
         # Check if the request was successful
         if response.status_code == 200:

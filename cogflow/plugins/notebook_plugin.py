@@ -91,7 +91,7 @@ class NotebookPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(NotebookPlugin().section)
-
+        PluginManager().load_config()
         latest_version_info = MlflowPlugin().search_model_versions(
             filter_string=f"name='{registered_model_name}'"
         )
@@ -264,6 +264,7 @@ class NotebookPlugin:
                 "version" : "model version"
             }
         """
+        PluginManager().load_config()
         model = self.load_pkl(model_file_path)
         mfp = MlflowPlugin()
         mfp.mlflow.set_experiment(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}_exp")
