@@ -19,8 +19,8 @@ from kserve import (
     constants,
     utils,
 )
-from kubernetes import client
-from kubernetes.client import V1ObjectMeta
+from kubernetes import client, config
+from kubernetes.client import V1ObjectMeta, V1ContainerPort
 from kubernetes.client.models import V1EnvVar
 from tenacity import retry, wait_exponential, stop_after_attempt
 
@@ -429,3 +429,162 @@ class KubeflowPlugin:
         """
         for run in run_ids:
             KubeflowPlugin.client().runs.delete_run(id=run)
+
+    @staticmethod
+    def get_default_namespace() -> str:
+        """
+        Retrieve the default namespace from the current Kubernetes configuration.
+        Returns:
+            str: The default namespace.
+        """
+        try:
+            # Load Kubernetes configuration
+            config.load_incluster_config()
+            return (
+                open(
+                    "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+                    "r",
+                    encoding="utf-8",
+                )
+                .read()
+                .strip()
+            )
+        except FileNotFoundError:
+            # If running outside a cluster, load default kubeconfig
+            config.load_kube_config()
+            current_context = config.list_kube_config_contexts()[1]
+            return current_context["context"].get("namespace", "default")
+
+    @staticmethod
+    def create_service(name: str) -> str:
+        """
+        Create a Kubernetes service for the component in the default namespace.
+        Args:
+            name (str): Name of the service to be created.
+        Returns:
+            str: Name of the created service.
+        """
+        namespace = KubeflowPlugin().get_default_namespace()
+        srvname = name
+
+        print(f"Creating service in namespace '{namespace}'...")
+
+        # Define the service
+        service_spec = client.V1Service(
+            api_version="v1",
+            kind="Service",
+            metadata=client.V1ObjectMeta(
+                name=srvname,
+                annotations={
+                    "service.alpha.kubernetes.io/app-protocols": '{"grpc":"HTTP2"}'
+                },
+            ),
+            spec=client.V1ServiceSpec(
+                selector={"app": name},
+                ports=[
+                    client.V1ServicePort(
+                        protocol="TCP", port=8080, name="grpc", target_port=8080
+                    )
+                ],
+                type="ClusterIP",
+            ),
+        )
+
+        # Create the Kubernetes API client
+        api_instance = client.CoreV1Api()
+
+        try:
+            # Create the service
+            api_instance.create_namespaced_service(
+                namespace=namespace, body=service_spec
+            )
+            print(
+                f"Service '{srvname}' created successfully in namespace '{namespace}'."
+            )
+        except client.exceptions.ApiException as e:
+            raise RuntimeError(f"Exception when creating service: {e}")
+
+        return srvname
+
+    @staticmethod
+    def delete_service(name: str):
+        """
+        Delete a Kubernetes service by name in the default namespace.
+        Args:
+            name (str): Name of the service to be deleted.
+        """
+        namespace = KubeflowPlugin().get_default_namespace()
+        srvname = name
+        print(f"Deleting service '{srvname}' from namespace '{namespace}'...")
+
+        api_instance = client.CoreV1Api()
+
+        try:
+            api_instance.delete_namespaced_service(name=srvname, namespace=namespace)
+            print(
+                f"Service '{srvname}' deleted successfully from namespace '{namespace}'."
+            )
+        except client.exceptions.ApiException as e:
+            print(f"Exception when deleting service: {e}")
+
+    @staticmethod
+    def create_fl_component_from_func(
+        func,
+        output_component_file=None,
+        base_image=None,
+        packages_to_install=None,
+        annotations: Optional[Mapping[str, str]] = None,
+        container_port=8080,
+        pod_label_name="app",
+        pod_label_value="flserver",
+    ):
+        """
+        Create a component from a Python function with additional configurations
+        for ports and pod labels.
+        Args:
+            func (Callable): Python function to convert into a component.
+            output_component_file (str, optional): Path to save the component YAML file. Defaults to None.
+            base_image (str, optional): Base Docker image for the component. Defaults to None.
+            packages_to_install (List[str], optional): List of additional Python packages to install.
+            annotations: Optional. Adds arbitrary key-value data to the component specification.
+            container_port (int, optional): Container port to expose. Defaults to 8080.
+            pod_label_name (str, optional): Name of the pod label. Defaults to "app".
+            pod_label_value (str, optional): Value of the pod label. Defaults to "flserver".
+        Returns:
+            kfp.components.ComponentSpec: Component specification.
+        """
+        # Verify plugin activation
+        PluginManager().verify_activation(KubeflowPlugin().section)
+
+        # Create the initial component specification
+        training_var = kfp.components.create_component_from_func(
+            func=func,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+        )
+
+        def wrapped_fl_component(*args, **kwargs):
+            # Create the service
+            KubeflowPlugin().create_service(name=pod_label_value)
+
+            try:
+                # Execute the component operation
+                component_op = training_var(*args, **kwargs)
+
+                # Add container port and pod labels
+                component_op.container.add_port(
+                    V1ContainerPort(container_port=container_port)
+                )
+                component_op.add_pod_label(name=pod_label_name, value=pod_label_value)
+
+                # Add model access configurations
+                component_op = CogContainer.add_model_access(component_op)
+                return component_op
+            finally:
+                # Ensure service is deleted after execution
+                KubeflowPlugin().delete_service(name=pod_label_value)
+
+        wrapped_fl_component.component_spec = training_var.component_spec
+        return wrapped_fl_component

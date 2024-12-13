@@ -1843,6 +1843,78 @@ def get_deployments(namespace="adminh"):
     return NotebookPlugin().get_deployments(namespace=namespace)
 
 
+def create_fl_component_from_func(
+    func,
+    output_component_file=None,
+    base_image=plugin_config.BASE_IMAGE,
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
+    container_port=8080,
+    pod_label_value="flserver",
+):
+    """
+    Create a component from a Python function with additional configurations
+    for ports and pod labels.
+    Args:
+        func (Callable): Python function to convert into a component.
+        output_component_file (str, optional): Path to save the component YAML file. Defaults to None.
+        base_image (str, optional): Base Docker image for the component. Defaults to None.
+        packages_to_install (List[str], optional): List of additional Python packages to install.
+        annotations: Optional. Adds arbitrary key-value data to the component specification.
+        container_port (int, optional): Container port to expose. Defaults to 8080.
+        pod_label_value (str, optional): Value of the pod label. Defaults to "flserver".
+    Returns:
+        kfp.components.ComponentSpec: Component specification.
+    """
+    return KubeflowPlugin().create_fl_component_from_func(
+        func=func,
+        output_component_file=output_component_file,
+        base_image=base_image,
+        packages_to_install=packages_to_install,
+        annotations=annotations,
+        container_port=container_port,
+        pod_label_value=pod_label_value,
+    )
+
+
+def flservercomponent(
+    output_component_file=None,
+    base_image=plugin_config.BASE_IMAGE,
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
+    container_port=8080,
+    pod_label_value="flserver",
+):
+    """
+    Decorator to create a Kubeflow component from a Python function.
+
+    Args:
+        func (Callable): Python function to convert into a component.
+        output_component_file (str, optional): Path to save the component YAML file. Defaults to None.
+        base_image (str, optional): Base Docker image for the component. Defaults to None.
+        packages_to_install (List[str], optional): List of additional Python packages to install.
+        annotations: Optional. Adds arbitrary key-value data to the component specification.
+        container_port (int, optional): Container port to expose. Defaults to 8080.
+        pod_label_value (str, optional): Value of the pod label. Defaults to "flserver".
+
+    Returns:
+        Callable: A wrapped function that is now a Kubeflow component.
+    """
+
+    def decorator(func):
+        return create_fl_component_from_func(
+            func=func,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+            container_port=container_port,
+            pod_label_value=pod_label_value,
+        )
+
+    return decorator
+
+
 __all__ = [
     # Methods from MlflowPlugin class
     "InputPath",
