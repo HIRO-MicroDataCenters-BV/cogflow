@@ -53,7 +53,7 @@ Pipeline and Component Management
 pipeline: Create a new Kubeflow pipeline.
 create_component_from_func: Create a Kubeflow component from a function.
 client: Get the Kubeflow client.
-load_component_from_url: Load a Kubeflow component from a URL.
+load_component: Load a Kubeflow component from a URL/file/text.
 
 Model Serving
 
@@ -1109,7 +1109,7 @@ def create_run_from_pipeline_func(
     # details = get_pipeline_and_experiment_details(run_details.run_id)
     # print("details of upload pipeline", details)
     # NotebookPlugin().save_pipeline_details_to_db(details)
-    # return run_details
+    return run_details
 
 
 def get_pipeline_and_experiment_details(run_id):
@@ -1124,6 +1124,24 @@ def get_pipeline_and_experiment_details(run_id):
         # Extract run details
         run = run_detail.run
         pipeline_id = run.pipeline_spec.pipeline_id
+        workflow_manifest = run_detail.pipeline_runtime.workflow_manifest
+
+        # Try to parse the workflow manifest if it's a valid JSON string
+        try:
+            # Parse the string to a dictionary (if it's a valid JSON string)
+            workflow_manifest_dict = json.loads(workflow_manifest)
+
+            # Get the workflow name from the metadata section
+            workflow_name = workflow_manifest_dict.get("metadata", {}).get("name", None)
+
+            # If pipeline_id is None, set it to the workflow_name
+            if pipeline_id is None:
+                pipeline_id = workflow_name
+
+            # print(f"Pipeline ID: {pipeline_id}")
+
+        except json.JSONDecodeError:
+            print("Error: workflow_manifest is not a valid JSON string")
         experiment_id = run.resource_references[0].key.id
         run_details = {
             "uuid": run.id,
@@ -1150,17 +1168,34 @@ def get_pipeline_and_experiment_details(run_id):
             "createdAt_in_sec": experiment.created_at,
         }
 
-        # Get pipeline details using the pipeline_id
-        pipeline_info = KubeflowPlugin().client().get_pipeline(pipeline_id=pipeline_id)
+        if run.pipeline_spec.pipeline_id:
+            # Get pipeline details using the pipeline_id
+            pipeline_info = (
+                KubeflowPlugin().client().get_pipeline(pipeline_id=pipeline_id)
+            )
 
+            pipeline_details = {
+                "uuid": pipeline_info.id,
+                "createdAt_in_sec": pipeline_info.created_at,
+                "name": pipeline_info.name,
+                "description": pipeline_info.description,
+                "experiment_uuid": experiment.id,
+                "status": run.status,
+            }
+
+        pipeline_spec = json.loads(
+            workflow_manifest_dict["metadata"].get(
+                "pipelines.kubeflow.org/pipeline_spec", "{}"
+            )
+        )
         pipeline_details = {
-            "uuid": pipeline_info.id,
-            "createdAt_in_sec": pipeline_info.created_at,
-            "name": pipeline_info.name,
-            "description": pipeline_info.description,
-            "parameters": pipeline_info.parameters,
+            "uuid": pipeline_id,
+            "createdAt_in_sec": workflow_manifest_dict["metadata"].get(
+                "creationTimestamp", None
+            ),
+            "name": workflow_manifest_dict["metadata"].get("name", None),
+            "description": pipeline_spec.get("description", "No description available"),
             "experiment_uuid": experiment.id,
-            "pipeline_spec": run.pipeline_spec.workflow_manifest,
             "status": run.status,
         }
 
@@ -1186,13 +1221,13 @@ def get_pipeline_and_experiment_details(run_id):
         steps = workflow["status"]["nodes"]
         model_uris = []
 
-        for step_name, step_info in steps.items():
-            print(f"step={step_name}")
+        for step_info in steps.items():
+            # print(f"step={step_name}")
             if step_info["type"] == "Pod":
                 outputs = step_info.get("outputs", {}).get("parameters", [])
                 for output in outputs:
-                    print(f"Artifact: {output['name']}")
-                    print(f"URI: {output['value']}")
+                    # print(f"Artifact: {output['name']}")
+                    # print(f"URI: {output['value']}")
                     if is_valid_s3_uri(output["value"]):
                         model_uris.append(output["value"])
                     else:
@@ -1206,11 +1241,9 @@ def get_pipeline_and_experiment_details(run_id):
             url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
                 "models_uri"
             )
-            data = {"uri": model_uri}
-            json_data = json.dumps(data)
-            headers = {"Content-Type": "application/json"}
+            query_params = {"uri": model_uri}
             # Make the GET request
-            response = requests.get(url, data=json_data, headers=headers, timeout=100)
+            response = requests.get(url, params=query_params, timeout=100)
 
             # Check if the request was successful
             if response.status_code == 200:
@@ -1593,27 +1626,30 @@ def get_run_ids_by_pipeline_name(pipeline_name):
     return NotebookPlugin().get_run_ids_by_pipeline_name(pipeline_name=pipeline_name)
 
 
-def get_pipeline_task_sequence_by_pipeline_name(pipeline_name):
+def get_pipeline_task_sequence(pipeline_name=None, pipeline_workflow_name=None):
     """
-    Fetches the task structures of all pipeline runs based on the provided pipeline name.
+    Fetches the task structures of all pipeline runs based on the provided pipeline name or pipeline workflow name.
 
     Args:
-        pipeline_name (str): The name of the pipeline to fetch task structures for.
+        pipeline_name (str, optional): The name of the pipeline to fetch task structures for.
+        pipeline_workflow_name (str, optional): The workflow name of the pipeline to fetch task structures for.
 
     Returns:
-        dict: A dictionary with run_ids as keys and their corresponding task structures.
+        list: A list with details of task structures for each run.
     Example:
-        >>> pipeline_name = "test_pipeline"
-        >>> all_task_structures = get_pipeline_task_sequence_by_pipeline_name(pipeline_name)
+        >>> pipeline_workflow_name = "pipeline-vzn7z"
+        >>> all_task_structures = get_pipeline_task_sequence(pipeline_workflow_name=pipeline_workflow_name)
         >>> for details in all_task_structures:
-                >>>print(f'Run ID: {details["run_id"]}')
-                >>>print(f'Pipeline Workflow Name: {details["pipeline_workflow_name"]}')
-                >>>print("Task Structure:")
-                >>>print(json.dumps(details["task_structure"], indent=4))
+                >>> print(f'Run ID: {details["run_id"]}')
+                >>> print(f'Pipeline Workflow Name: {details["pipeline_workflow_name"]}')
+                >>> print("Task Structure:")
+                >>> print(json.dumps(details["task_structure"], indent=4))
 
+    Raises:
+        ValueError: If neither pipeline_name nor pipeline_workflow_name is provided.
     """
-    return NotebookPlugin().get_pipeline_task_sequence_by_pipeline_name(
-        pipeline_name=pipeline_name
+    return NotebookPlugin().get_pipeline_task_sequence(
+        pipeline_name=pipeline_name, pipeline_workflow_name=pipeline_workflow_name
     )
 
 
@@ -1792,6 +1828,19 @@ def get_artifacts(model_name, version):
     artifacts = "/".join(artifacts_complete.split("/")[:-1])
 
     return artifacts
+
+
+def get_deployments(namespace="adminh"):
+    """
+    Fetches details of all InferenceServices in the given namespace and formats them.
+
+    Args:
+    - namespace (str): The Kubernetes namespace where InferenceServices are deployed. Defaults to "default".
+
+    Returns:
+    - list of dicts: A list of dictionaries with InferenceService details.
+    """
+    return NotebookPlugin().get_deployments(namespace=namespace)
 
 
 __all__ = [

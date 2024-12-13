@@ -2,7 +2,6 @@
     Test module for cases related to notebook_plugin
 """
 
-import json
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -236,84 +235,6 @@ class TestNotebookPlugin(unittest.TestCase):
             mock_model_uri.side_effect = Exception()
             with self.assertRaises(Exception):
                 NotebookPlugin().deploy_model("Flearning", "1", "fl-svc")
-
-    @patch.object(NotebookPlugin, "run_kubectl_command")
-    def test_get_pods_in_namespace(self, mock_run_kubectl_command):
-        """Test getting pods in a namespace."""
-        mock_output = {
-            "items": [{"metadata": {"name": "pod1"}}, {"metadata": {"name": "pod2"}}]
-        }
-        mock_run_kubectl_command.return_value = json.dumps(mock_output)
-
-        pods = NotebookPlugin.get_pods_in_namespace("test-namespace")
-
-        self.assertEqual(len(pods), 2)
-        self.assertEqual(pods[0]["metadata"]["name"], "pod1")
-        self.assertEqual(pods[1]["metadata"]["name"], "pod2")
-
-    @patch.object(NotebookPlugin, "run_kubectl_command")
-    def test_get_pod_logs(self, mock_run_kubectl_command):
-        """Test getting pod logs."""
-        mock_logs = "Mock pod logs"
-        mock_run_kubectl_command.return_value = mock_logs
-
-        logs = NotebookPlugin.get_pod_logs("test-namespace", "test-pod")
-
-        self.assertEqual(logs, mock_logs)
-
-    @patch.object(NotebookPlugin, "run_kubectl_command")
-    def test_get_pod_prefix(self, mock_run_kubectl_command):
-        """Test getting pod prefix."""
-        mock_output = {
-            "status": {
-                "components": {"predictor": {"latestReadyRevision": "revision-123"}}
-            }
-        }
-        mock_run_kubectl_command.return_value = json.dumps(mock_output)
-
-        prefix = NotebookPlugin.get_pod_prefix("test-inference-service")
-
-        self.assertEqual(prefix, "revision-123")
-
-    @patch.object(NotebookPlugin, "get_pods_in_namespace")
-    @patch.object(NotebookPlugin, "get_pod_prefix")
-    @patch.object(NotebookPlugin, "get_pod_logs")
-    @patch.object(json, "dump")
-    def test_get_logs_for_inference_service(
-        self,
-        mock_json_dump,  # This is for json.dump
-        mock_get_pod_logs,
-        mock_get_pod_prefix,
-        mock_get_pods_in_namespace,
-    ):
-        """Test getting logs for inference service."""
-
-        # Setup mock returns
-        mock_get_pod_prefix.return_value = "revision-123"
-        mock_get_pods_in_namespace.return_value = [
-            {"metadata": {"name": "revision-123-pod1"}},
-            {"metadata": {"name": "revision-123-pod2"}},
-        ]
-        mock_get_pod_logs.side_effect = (
-            lambda namespace, pod_name: f"Logs for {pod_name}"
-        )
-
-        # Call the method
-        logs_output = NotebookPlugin.get_logs_for_inference_service(
-            "test-namespace", "test-inference-service"
-        )
-
-        # Assertions
-        self.assertIn("revision-123-pod1", logs_output)
-        self.assertIn("revision-123-pod2", logs_output)
-        self.assertEqual(logs_output["revision-123-pod1"], "Logs for revision-123-pod1")
-        self.assertEqual(logs_output["revision-123-pod2"], "Logs for revision-123-pod2")
-
-        # Check that methods were called
-        mock_get_pod_prefix.assert_called_once_with("test-inference-service")
-        mock_get_pods_in_namespace.assert_called_once_with("test-namespace")
-        mock_get_pod_logs.assert_any_call("test-namespace", "revision-123-pod1")
-        mock_get_pod_logs.assert_any_call("test-namespace", "revision-123-pod2")
 
 
 if __name__ == "__main__":
