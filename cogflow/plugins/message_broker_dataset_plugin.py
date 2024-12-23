@@ -160,6 +160,21 @@ class MessageBrokerDatasetPlugin:
             print(ex)
 
     def register_message_topic(self, message_broker_id, topic_name):
+        """
+        Registers a new message topic with the specified message broker.
+
+        Args:
+            message_broker_id (int): The ID of the message broker to which the topic will be registered.
+            topic_name (str): The name of the topic to be registered.
+
+        Returns:
+            int: The ID of the newly created topic or the existing topic if already registered.
+
+        Raises:
+            ConnectionError: Raised if there is a network issue preventing the API request from completing.
+            ValueError: Raised if the response data format is invalid or if an unexpected response is received.
+            Exception: Catches unexpected errors and checks for the "Topic Already Exists" condition.
+        """
 
         url = self.kafka_api_dataset_url + message_broker_topic_register
         try:
@@ -189,10 +204,6 @@ class MessageBrokerDatasetPlugin:
                         f"Topic [{topic_name}] already registered for broker id {message_broker_id}"
                     )
                     return topic_id
-                else:
-                    print(
-                        f"An unexpected while registering kafka dataset error occurred: {str(ex)}"
-                    )
             print(
                 f"An unexpected while registering kafka dataset error occurred: {str(ex)}"
             )
@@ -209,8 +220,9 @@ class MessageBrokerDatasetPlugin:
         detailed error messages are printed.
 
         Args:
-            message_broker_id (int): The ID of the message broker where the topic will be registered.
-            topic_name (str): The name of the topic to be registered.
+            broker_name (int): broker name to be registered.
+            broker_ip (str): broker ip to be registered.
+            broker_port (str): broker port to be registered.
 
         Returns:
             int: The ID of the newly created or existing topic.
@@ -246,10 +258,6 @@ class MessageBrokerDatasetPlugin:
                     print(response_json["detail"]["message"])
                     print(f"Already message broker exists {broker_id}")
                     return broker_id
-                else:
-                    print(
-                        f"An unexpected while registering kafka dataset error occurred: {str(ex)}"
-                    )
             print(
                 f"An unexpected while registering kafka dataset error occurred: {str(ex)}"
             )
