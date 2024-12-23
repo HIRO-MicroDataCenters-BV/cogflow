@@ -43,8 +43,9 @@ FILE_TYPE = 0
 
 API_BASEPATH = "API_BASEPATH"
 
-# MESSAGE_BROKER plugin
+BASE_IMAGE = "hiroregistry/cogflow:dev"
 
+# MESSAGE_BROKER plugin
 MESSAGE_BROKER_DATASETS_URL = "/datasets"
 MESSAGE_BROKER_DATASETS_REGISTER = "/broker/register"
 MESSAGE_BROKER_TOPIC_REGISTER = "/topic/register"
