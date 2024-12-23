@@ -1644,10 +1644,6 @@ def get_task_structure_by_task_id(task_id, run_id=None, run_name=None):
     )
 
 
-def test():
-    print("new my test3")
-
-
 def register_message_broker(
     dataset_name: str,
     broker_name: str,
