@@ -46,6 +46,7 @@ class MessageBrokerTopicDetail:
     """
     Class used for  metadata of MessageBrokerTopicDetail
     """
+
     broker_ip: str
     broker_port: str
     topic_name: str

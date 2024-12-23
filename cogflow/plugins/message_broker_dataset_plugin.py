@@ -44,12 +44,12 @@ class MessageBrokerDatasetPlugin:
         print(self.kafka_api_dataset_url)
 
     def register_message_broker_dataset(
-            self,
-            dataset_name: str,
-            broker_name: str,
-            broker_ip: str,
-            topic_name: str,
-            broker_port: str,
+        self,
+        dataset_name: str,
+        broker_name: str,
+        broker_ip: str,
+        topic_name: str,
+        broker_port: str,
     ):
         """
         Registers a dataset, message broker, and topic in the system.
@@ -122,25 +122,24 @@ class MessageBrokerDatasetPlugin:
             print(ex)
 
     def register_topic_dataset(self, dataset_name, message_broker_id, topic_id):
-
         """
-            Registers a dataset with a message broker and topic.
+        Registers a dataset with a message broker and topic.
 
-            This method sends a POST request to register a new dataset for a specific message broker and topic.
-            It constructs a `MessageBrokerTopicDataSetRegisterRequest` with the given parameters and logs the
-            response, including the IDs of the dataset, broker, and topic.
+        This method sends a POST request to register a new dataset for a specific message broker and topic.
+        It constructs a `MessageBrokerTopicDataSetRegisterRequest` with the given parameters and logs the
+        response, including the IDs of the dataset, broker, and topic.
 
-            Args:
-                dataset_name (str): The name of the dataset to be registered.
-                message_broker_id (int): The ID of the message broker where the dataset will be associated.
-                topic_id (int): The ID of the topic with which the dataset will be linked.
+        Args:
+            dataset_name (str): The name of the dataset to be registered.
+            message_broker_id (int): The ID of the message broker where the dataset will be associated.
+            topic_id (int): The ID of the topic with which the dataset will be linked.
 
-            Returns:
-                int: The ID of the newly registered dataset.
+        Returns:
+            int: The ID of the newly registered dataset.
 
-            Raises:
-                Exception: Logs and raises any exception that occurs during the API request or data processing.
-            """
+        Raises:
+            Exception: Logs and raises any exception that occurs during the API request or data processing.
+        """
         url = self.kafka_api_dataset_url + message_broker_topic_datasets_register
         request = MessageBrokerTopicDataSetRegisterRequest(
             0, dataset_name, "done via jupyter notebook", message_broker_id, topic_id
@@ -199,29 +198,29 @@ class MessageBrokerDatasetPlugin:
             )
 
     def register_message_broker(
-            self, broker_name: str, broker_ip: str, broker_port: str
+        self, broker_name: str, broker_ip: str, broker_port: str
     ):
         """
-         Registers a new message topic with the specified message broker.
+        Registers a new message topic with the specified message broker.
 
-         This method sends a POST request to register a new topic for a given message broker.
-         If the topic is already registered, it will identify the existing topic and return its ID.
-         In case of errors (e.g., network issues, invalid responses, or other exceptions),
-         detailed error messages are printed.
+        This method sends a POST request to register a new topic for a given message broker.
+        If the topic is already registered, it will identify the existing topic and return its ID.
+        In case of errors (e.g., network issues, invalid responses, or other exceptions),
+        detailed error messages are printed.
 
-         Args:
-             message_broker_id (int): The ID of the message broker where the topic will be registered.
-             topic_name (str): The name of the topic to be registered.
+        Args:
+            message_broker_id (int): The ID of the message broker where the topic will be registered.
+            topic_name (str): The name of the topic to be registered.
 
-         Returns:
-             int: The ID of the newly created or existing topic.
+        Returns:
+            int: The ID of the newly created or existing topic.
 
-         Raises:
-             ConnectionError: Raised if there is a network issue preventing connection to the API endpoint.
-             ValueError: Raised if the response or data format from the API is invalid or unexpected.
-             Exception: Handles unexpected errors, including checking for existing topics.
+        Raises:
+            ConnectionError: Raised if there is a network issue preventing connection to the API endpoint.
+            ValueError: Raised if the response or data format from the API is invalid or unexpected.
+            Exception: Handles unexpected errors, including checking for existing topics.
 
-         """
+        """
         url = self.kafka_api_dataset_url + message_broker_register
         try:
 
