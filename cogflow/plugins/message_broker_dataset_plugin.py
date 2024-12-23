@@ -35,7 +35,9 @@ class MessageBrokerDatasetPlugin:
     def __init__(self):
         api_base_path = os.getenv(plugin_config.API_BASEPATH)
         if api_base_path:
-            self.message_broker_api_dataset_url = api_base_path + message_broker_datasets_url
+            self.message_broker_api_dataset_url = (
+                api_base_path + message_broker_datasets_url
+            )
         else:
             raise Exception(
                 f"Failed to initialize MessageBrokerDatasetPlugin,: {plugin_config.API_BASEPATH} "
@@ -44,12 +46,12 @@ class MessageBrokerDatasetPlugin:
         print(self.message_broker_api_dataset_url)
 
     def register_message_broker_dataset(
-            self,
-            dataset_name: str,
-            broker_name: str,
-            broker_ip: str,
-            topic_name: str,
-            broker_port: int,
+        self,
+        dataset_name: str,
+        broker_name: str,
+        broker_ip: str,
+        topic_name: str,
+        broker_port: int,
     ):
         """
         Registers a dataset, message broker, and topic in the system.
@@ -136,7 +138,9 @@ class MessageBrokerDatasetPlugin:
         Raises:
             Exception: Logs and raises any exception that occurs during the API request or data processing.
         """
-        url = self.message_broker_api_dataset_url + message_broker_topic_datasets_register
+        url = (
+            self.message_broker_api_dataset_url + message_broker_topic_datasets_register
+        )
         request = MessageBrokerTopicDataSetRegisterRequest(
             0, dataset_name, "done via jupyter notebook", message_broker_id, topic_id
         )
@@ -205,7 +209,7 @@ class MessageBrokerDatasetPlugin:
             )
 
     def register_message_broker(
-            self, broker_name: str, broker_ip: str, broker_port: int
+        self, broker_name: str, broker_ip: str, broker_port: int
     ):
         """
         Registers a new message topic with the specified message broker.
