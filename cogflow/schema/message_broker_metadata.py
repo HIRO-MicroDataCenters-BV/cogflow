@@ -1,5 +1,5 @@
 """
-kafka dataset metadata schema class
+Message dataset metadata schema class
 """
 
 from dataclasses import dataclass
@@ -14,7 +14,7 @@ class MessageBrokerRequest:
 
     broker_name: str
     broker_ip: str
-    broker_port: str
+    broker_port: int
 
 
 @dataclass
@@ -48,6 +48,6 @@ class MessageBrokerTopicDetail:
     """
 
     broker_ip: str
-    broker_port: str
+    broker_port: int
     topic_name: str
     topic_schema: Dict

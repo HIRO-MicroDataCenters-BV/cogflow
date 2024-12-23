@@ -43,10 +43,7 @@ FILE_TYPE = 0
 
 API_BASEPATH = "API_BASEPATH"
 
-# kafka plugin
-
-KAFKA_DATASETS_URL = "/datasets"
-KAFKA_DATASETS_REGISTER = "/kafka/register"
+# MESSAGE_BROKER plugin
 
 MESSAGE_BROKER_DATASETS_URL = "/datasets"
 MESSAGE_BROKER_DATASETS_REGISTER = "/broker/register"
