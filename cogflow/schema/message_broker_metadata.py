@@ -9,7 +9,7 @@ from typing import Dict
 @dataclass
 class MessageBrokerRequest:
     """
-    Class used for  metadata of Dataset
+    Class used for  metadata of MessageBrokerRequest
     """
 
     broker_name: str
@@ -20,7 +20,7 @@ class MessageBrokerRequest:
 @dataclass
 class MessageBrokerTopicRequest:
     """
-    Class used for  metadata of Dataset
+    Class used for  metadata of MessageBrokerTopicRequest
     """
 
     topic_name: str
@@ -31,7 +31,7 @@ class MessageBrokerTopicRequest:
 @dataclass
 class MessageBrokerTopicDataSetRegisterRequest:
     """
-    Class used for  metadata of Dataset
+    Class used for  metadata of MessageBrokerTopicDataSetRegisterRequest
     """
 
     dataset_type: int
@@ -43,6 +43,9 @@ class MessageBrokerTopicDataSetRegisterRequest:
 
 @dataclass
 class MessageBrokerTopicDetail:
+    """
+    Class used for  metadata of MessageBrokerTopicDetail
+    """
     broker_ip: str
     broker_port: str
     topic_name: str
