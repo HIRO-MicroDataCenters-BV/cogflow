@@ -1,22 +1,31 @@
 """
 Message Broker dataset plugin implementation class
 """
+
 import json
 import os
 import re
 from dataclasses import asdict
 from .. import plugin_config
 
-from ..schema.message_broker_metadata import MessageBrokerRequest, MessageBrokerTopicRequest, \
-    MessageBrokerTopicDataSetRegisterRequest, MessageBrokerTopicDetail
+from ..schema.message_broker_metadata import (
+    MessageBrokerRequest,
+    MessageBrokerTopicRequest,
+    MessageBrokerTopicDataSetRegisterRequest,
+    MessageBrokerTopicDetail,
+)
 
 from ..util import make_post_request, make_get_request
 
 message_broker_datasets_url = plugin_config.MESSAGE_BROKER_DATASETS_URL
 message_broker_register = plugin_config.MESSAGE_BROKER_DATASETS_REGISTER
 message_broker_topic_register = plugin_config.MESSAGE_BROKER_TOPIC_REGISTER
-message_broker_topic_datasets_register = plugin_config.MESSAGE_BROKER_TOPIC_DATASETS_REGISTER
-message_broker_topic_datasets_details = plugin_config.MESSAGE_BROKER_TOPIC_DATASETS_DETAILS
+message_broker_topic_datasets_register = (
+    plugin_config.MESSAGE_BROKER_TOPIC_DATASETS_REGISTER
+)
+message_broker_topic_datasets_details = (
+    plugin_config.MESSAGE_BROKER_TOPIC_DATASETS_DETAILS
+)
 
 
 class MessageBrokerDatasetPlugin:
@@ -35,31 +44,46 @@ class MessageBrokerDatasetPlugin:
             )
         print(self.kafka_api_dataset_url)
 
-    def register_message_broker_dataset(self, dataset_name: str, broker_name: str, broker_ip: str, topic_name: str):
+    def register_message_broker_dataset(
+        self,
+        dataset_name: str,
+        broker_name: str,
+        broker_ip: str,
+        topic_name: str,
+        broker_port: str,
+    ):
 
-        message_broker_id = self.register_message_broker(broker_name, broker_ip)
-        print(f"Start registering topic for message broker {message_broker_id}")
+        print(f"Start registering [{broker_name}] broker")
+        message_broker_id = self.register_message_broker(
+            broker_name, broker_ip, broker_port
+        )
+        print(
+            f"Start registering [{topic_name}] topic for message broker {message_broker_id}"
+        )
         topic_id = self.register_message_topic(message_broker_id, topic_name)
         print(f"Topic [{topic_id}] is register with broker [{message_broker_id}]")
 
-        print(f"Start registering topic {topic_id} with dataset")
-        dataset_id = self.register_topic_dataset(dataset_name, message_broker_id, topic_id)
-        print(dataset_id)
+        print(f"Start registering [{dataset_name}] topic [{topic_id}] with dataset")
+        dataset_id = self.register_topic_dataset(
+            dataset_name, message_broker_id, topic_id
+        )
+        print(f"new registered data set dataset_id [{dataset_id}]")
 
     def get_message_broker_details(self, dataset_id):
         url = f"{self.kafka_api_dataset_url}{message_broker_topic_datasets_details}?dataset_id={dataset_id}"
-        print(url)
         try:
             response = make_get_request(url)
-            broker_ip = response["data"]["BrokerDetails"]["broker_ip"]
-            topic_name = response["data"]["TopicDetails"]["topic_name"]
-            topic_schema = response["data"]["TopicDetails"]["topic_schema"]
+            print(response)
+            broker_ip = response["data"]["broker_details"]["broker_ip"]
+            broker_port = response["data"]["broker_details"]["broker_port"]
+            topic_name = response["data"]["topic_details"]["topic_name"]
+            topic_schema = response["data"]["topic_details"]["topic_schema"]
             topic_detail = MessageBrokerTopicDetail(
                 broker_ip=broker_ip,
+                broker_port=broker_port,
                 topic_name=topic_name,
-                topic_schema=topic_schema
+                topic_schema=topic_schema,
             )
-            print(topic_detail)
             return topic_detail
         except Exception as ex:
             print(ex)
@@ -67,18 +91,20 @@ class MessageBrokerDatasetPlugin:
     def register_topic_dataset(self, dataset_name, message_broker_id, topic_id):
 
         url = self.kafka_api_dataset_url + message_broker_topic_datasets_register
-        request = MessageBrokerTopicDataSetRegisterRequest(0, dataset_name, "done via jupyter notebook",
-                                                           message_broker_id,
-                                                           topic_id)
+        request = MessageBrokerTopicDataSetRegisterRequest(
+            0, dataset_name, "done via jupyter notebook", message_broker_id, topic_id
+        )
         try:
             response = make_post_request(url=url, data=asdict(request))
             if response:
                 dataset_id = response["data"]["dataset"]["id"]
-                broker_ip = response["data"]["broker_details"]["broker_ip"]
+                broker_id = response["data"]["broker_details"]["id"]
                 topic_id = response["data"]["topic_details"]["id"]
                 topic_name = response["data"]["topic_details"]["topic_name"]
-                print(f"Dataset [{dataset_id}] registered with topic id : [{topic_id}], "
-                      f"topic name: {topic_name}, broker id {broker_ip}")
+                print(
+                    f"Dataset [{dataset_id}] registered with topic id : [{topic_id}], "
+                    f"topic name: {topic_name}, broker id {broker_id}"
+                )
                 return dataset_id
         except Exception as ex:
             print(ex)
@@ -91,7 +117,7 @@ class MessageBrokerDatasetPlugin:
             response = make_post_request(url=url, data=asdict(request))
             if response:
                 message_broker_topic_id = response["data"]["id"]
-                print(f"New topic is created with id {message_broker_topic_id}")
+                print(f"New topic is created with id [{message_broker_topic_id}]")
                 return message_broker_topic_id
         except ConnectionError as ce:
             print(f"Network issue: Unable to connect to {url}")
@@ -110,7 +136,8 @@ class MessageBrokerDatasetPlugin:
                     topic_id = response_json["detail"]["topic_id"]
                     print(response_json["detail"]["message"])
                     print(
-                        f"Topic [{topic_name}] already registered for broker id {message_broker_id}")
+                        f"Topic [{topic_name}] already registered for broker id {message_broker_id}"
+                    )
                     return topic_id
                 else:
                     print(
@@ -120,10 +147,13 @@ class MessageBrokerDatasetPlugin:
                 f"An unexpected while registering kafka dataset error occurred: {str(ex)}"
             )
 
-    def register_message_broker(self, broker_name: str, broker_ip: str):
+    def register_message_broker(
+        self, broker_name: str, broker_ip: str, broker_port: str
+    ):
         url = self.kafka_api_dataset_url + message_broker_register
         try:
-            request = MessageBrokerRequest(broker_name, broker_ip)
+
+            request = MessageBrokerRequest(broker_name, broker_ip, broker_port)
             response = make_post_request(url=url, data=asdict(request))
             if response:
                 message_broker_ip = response["data"]["id"]

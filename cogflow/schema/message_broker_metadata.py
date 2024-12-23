@@ -11,8 +11,10 @@ class MessageBrokerRequest:
     """
     Class used for  metadata of Dataset
     """
+
     broker_name: str
     broker_ip: str
+    broker_port: str
 
 
 @dataclass
@@ -20,6 +22,7 @@ class MessageBrokerTopicRequest:
     """
     Class used for  metadata of Dataset
     """
+
     topic_name: str
     topic_schema: Dict
     broker_id: int
@@ -30,6 +33,7 @@ class MessageBrokerTopicDataSetRegisterRequest:
     """
     Class used for  metadata of Dataset
     """
+
     dataset_type: int
     dataset_name: str
     description: str
@@ -40,5 +44,6 @@ class MessageBrokerTopicDataSetRegisterRequest:
 @dataclass
 class MessageBrokerTopicDetail:
     broker_ip: str
+    broker_port: str
     topic_name: str
     topic_schema: Dict

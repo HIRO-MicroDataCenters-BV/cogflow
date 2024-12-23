@@ -90,6 +90,7 @@ from kfp.components import InputPath, OutputPath
 from kfp.dsl import ParallelFor
 
 from .kafka.consumer import stop_consumer, start_consumer_thread
+from .plugins.message_broker_dataset_plugin import MessageBrokerDatasetPlugin
 from .v2 import *
 from . import pluginmanager, plugin_config
 from .plugin_config import (
@@ -106,13 +107,11 @@ from .plugin_config import (
 )
 from .pluginmanager import PluginManager
 from .plugins.dataset_plugin import DatasetMetadata, DatasetPlugin
-from .plugins.kafka_dataset_plugin import KafkaDatasetPlugin
 from .plugins.kubeflowplugin import CogContainer, KubeflowPlugin
 from .plugins.mlflowplugin import MlflowPlugin
 from .plugins.notebook_plugin import NotebookPlugin
 from .schema.kafka_dataset_metadata import KafkaDatasetRequest, TopicDetail
 from .util import make_post_request, is_valid_s3_uri
-
 
 pyfunc = MlflowPlugin().pyfunc
 mlflow = MlflowPlugin().mlflow
@@ -1645,70 +1644,80 @@ def get_task_structure_by_task_id(task_id, run_id=None, run_name=None):
     )
 
 
-def register_kafka_dataset(
-    dataset_name: str, kafka_host_name: str, kafka_server_ip, topic_name
+def test():
+    print("new my test3")
+
+
+def register_message_broker(
+    dataset_name: str,
+    broker_name: str,
+    broker_ip: str,
+    broker_port: str,
+    topic_name: str,
 ):
     """
-    Registers a Kafka dataset by creating and submitting a registration request.
+    Registers a Message Broker dataset by creating and submitting a registration request.
 
-    This function constructs a `KafkaDatasetRequest` object with details about the dataset,
+    This function constructs a `Request` object with details about the dataset,
     such as dataset name, Kafka host name, server IP, and topic details, then submits
     this request to register the dataset using the `KafkaDatasetPlugin`. If any error
     occurs during the process, it logs the exception message.
 
     Parameters:
     - dataset_name (str): The name of the dataset to be registered.
-    - kafka_host_name (str): Host name of the Kafka server.
-    - kafka_server_ip (str): IP address of the Kafka server.
-    - topic_name (str): Name of the Kafka topic associated with this dataset.
+    - broker_name (str): Host name of the Broker server.
+    - broker_ip (str): IP address of the Broker server.
+    - topic_name (str): Name of the Broker topic associated with this dataset.
 
     Returns:
-    - Response from the `KafkaDatasetPlugin` upon successful registration, or None if an error occurs.
+    - Response from the `BrokerDatasetPlugin` upon successful registration, or None if an error occurs.
 
     Exceptions:
     - Catches any exceptions and logs an error message detailing the failure.
 
     """
     try:
-        topic = TopicDetail(topic_name=topic_name, topic_schema={})
-        request = KafkaDatasetRequest(
-            dataset_name,
-            "kafka server dataset",
-            kafka_host_name,
-            kafka_server_ip,
-            topic_details=[topic],
+        print(f"Start creating dataset {dataset_name}")
+        message_broker_dataset_plugin = MessageBrokerDatasetPlugin()
+        message_broker_dataset_plugin.register_message_broker_dataset(
+            dataset_name, broker_name, broker_ip, topic_name, broker_port
         )
-        kafka_dataset_plugin = KafkaDatasetPlugin()
-        return kafka_dataset_plugin.register_kafka_dataset(request)
     except Exception as ex:
         print(f"Error registering kafka server dataset details: {str(ex)}")
 
 
-def get_dataset_data(dataset_id: str):
+def read_message_broker_data(dataset_id: str):
     """
-    get a kafka dataset with the given server_id.
-    """
-    print(f"reading data from dataset id  {dataset_id}")
-    kafka_dataset_plugin = KafkaDatasetPlugin()
-    response = kafka_dataset_plugin.get_kafka_dataset(dataset_id)
-    if response:
-        kafka_server_ip = response["data"]["server_ip"]
-        topic_name = response["data"]["topic_details"][0]["topic_name"]
-        print(
-            f"Start reading data from kafka server: {kafka_server_ip} topic: {topic_name}"
-        )
-        read_from_kafka_topic(kafka_server_ip, topic_name, "aces_metrics_consumer")
+    Initiates reading messages from a specified Kafka topic.
 
+    This function calls `start_consumer_thread` with the provided Kafka broker URL,
+    topic name, and consumer group ID to initiate the reading process. It starts a
+    consumer thread to continuously listen for and process incoming messages on the
+    specified topic, managed under the provided consumer group for load balancing
+    and offset tracking.
 
-def get_kafka_dataset(dataset_id: str):
+    Parameters:
+    - dataset_id (str): The name of the dataset that need to be read data from.
+
+    Returns:
+    - None
     """
-    get a kafka dataset with the given server_id.
-    """
-    try:
-        kafka_dataset_plugin = KafkaDatasetPlugin()
-        return kafka_dataset_plugin.get_kafka_dataset(dataset_id)
-    except Exception as ex:
-        print(f"Error in fetching kafka server dataset details {str(ex)}")
+    print(f"Reading message from dataset {dataset_id}")
+    message_broker_dataset_plugin = MessageBrokerDatasetPlugin()
+    message_broker_topic_detail = (
+        message_broker_dataset_plugin.get_message_broker_details(dataset_id)
+    )
+    print(f"start reading message from topic {message_broker_topic_detail}")
+    kafka_broker_url = (
+        message_broker_topic_detail.broker_ip
+        + ":"
+        + str(message_broker_topic_detail.broker_port)
+    )
+    read_from_kafka_topic(
+        kafka_broker_url,
+        message_broker_topic_detail.topic_name,
+        "aces_metrics_consumer",
+    )
 
 
 def read_from_kafka_topic(kafka_broker_url, topic_name, group_id):
