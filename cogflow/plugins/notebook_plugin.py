@@ -6,7 +6,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 import joblib
 from kubernetes import client, config
@@ -972,7 +972,9 @@ class NotebookPlugin:
             config.load_kube_config()
 
     @staticmethod
-    def get_pods(namespace) -> Any:
+    def get_pods(
+        namespace=KubeflowPlugin().get_default_namespace(),
+    ) -> Any:
         """
         Retrieves the list of pods in a specified namespace with a given label selector.
 
@@ -997,12 +999,14 @@ class NotebookPlugin:
 
     @staticmethod
     def get_inference_service_logs(
-        namespace, inference_service_name, container_name="kserve-container"
+        inference_service_name,
+        namespace=KubeflowPlugin().get_default_namespace(),
+        container_name="kserve-container",
     ) -> Any:
         """
         Retrieve logs for all pods matching the given label selector in a specified namespace.
         Args:
-            namespace (str): The Kubernetes namespace where the pods are located.
+            namespace (str, optional): The Kubernetes namespace where the pods are located.
             inference_service_name (str): A inference_service to filter pods by their inference service.
 
             container_name (str, optional): The name of the container to fetch logs from.
@@ -1015,6 +1019,7 @@ class NotebookPlugin:
                  - "logs": The logs for the pod, or a message indicating that no logs are available.
         """
         NotebookPlugin().load_k8s_config()
+
         pods = NotebookPlugin().get_pods(namespace)
         inference_pods = [
             pod for pod in pods.items if inference_service_name in pod.metadata.name
@@ -1035,7 +1040,11 @@ class NotebookPlugin:
         return {"logs": json_logs}
 
     @staticmethod
-    def get_pod_logs(namespace, pod_name, container_name=None):
+    def get_pod_logs(
+        pod_name,
+        namespace=KubeflowPlugin().get_default_namespace(),
+        container_name=None,
+    ):
         """
         Retrieves the logs of a specified pod.
 
@@ -1282,7 +1291,7 @@ class NotebookPlugin:
         return output_details
 
     @staticmethod
-    def get_pod_events(podname, namespace):
+    def get_pod_events(podname, namespace=KubeflowPlugin().get_default_namespace()):
         """
         Fetches Kubernetes events for a specific pod in a namespace.
 
@@ -1327,7 +1336,7 @@ class NotebookPlugin:
             return obj
 
     @staticmethod
-    def get_pod_definition(podname, namespace):
+    def get_pod_definition(podname, namespace=KubeflowPlugin().get_default_namespace()):
         """
         Fetches the pod definition for a specific pod in a specific namespace.
 
@@ -1364,7 +1373,7 @@ class NotebookPlugin:
             }
 
     @staticmethod
-    def get_deployments(namespace="adminh"):
+    def get_deployments(namespace):
         """
         Fetches details of all InferenceServices in the given namespace and formats them.
 
@@ -1444,3 +1453,97 @@ class NotebookPlugin:
         except ApiException as e:
             print(f"Exception when calling API: {e}")
             return []
+
+    @staticmethod
+    def calculate_duration(start_time, end_time):
+        """
+        Calculate the duration between two datetime objects.
+
+        Args:
+            start_time (datetime): The start time of the run.
+            end_time (datetime): The end time of the run.
+
+        Returns:
+            str: Duration in the format 'HH:MM:SS'. If either start_time or end_time
+                 is None, returns "N/A".
+        """
+        if start_time and end_time:
+            duration = end_time - start_time
+            return str(timedelta(seconds=duration.total_seconds()))
+        return "N/A"
+
+    @staticmethod
+    def parse_runs(runs_response):
+        """
+        Parse the list of Kubeflow Pipeline (KFP) runs into a structured format.
+
+        Args:
+            runs_response (kfp_server_api.models.ApiListRunsResponse): The response object from
+                the KFP `list_runs` API containing the runs information.
+
+        Returns:
+            list[dict]: A list of dictionaries where each dictionary contains the following:
+                - "run_name" (str): The name of the run.
+                - "run_id" (str): The unique ID of the run.
+                - "status" (str): The current status of the run (e.g., "Succeeded", "Failed").
+                - "duration" (str): The duration of the run in 'HH:MM:SS' format or "N/A".
+                - "experiment_id" (str): The ID of the experiment associated with the run.
+                - "start_time" (str): The start time of the run in ISO 8601 format or "N/A".
+        """
+        parsed_runs = []
+        for run in runs_response.runs:
+            run_name = run.name
+            run_id = run.id
+            start_time = run.created_at.isoformat() if run.created_at else "N/A"
+            experiment_id = None
+            for ref in run.resource_references:
+                if ref.key.type == "EXPERIMENT":
+                    experiment_id = ref.key.id
+                    break
+            status = run.status
+            duration = NotebookPlugin().calculate_duration(
+                run.created_at, run.finished_at
+            )
+            parsed_runs.append(
+                {
+                    "run_name": run_name,
+                    "run_id": run_id,
+                    "status": status,
+                    "duration": duration,
+                    "experiment_id": experiment_id,
+                    "start_time": start_time,
+                }
+            )
+        return parsed_runs
+
+    @staticmethod
+    def list_all_kfp_runs():
+        """
+        List all Kubeflow Pipeline (KFP) runs by iterating through all pages of results.
+
+        This method retrieves and parses all available KFP runs using the KFP client API,
+        handling pagination via `next_page_token`.
+
+        Returns:
+            list[dict]: A list of parsed runs, where each run is represented as a dictionary
+                        containing:
+                - "run_name" (str): The name of the run.
+                - "run_id" (str): The unique ID of the run.
+                - "status" (str): The current status of the run (e.g., "Succeeded", "Failed").
+                - "duration" (str): The duration of the run in 'HH:MM:SS' format or "N/A".
+                - "experiment_id" (str): The ID of the experiment associated with the run.
+                - "start_time" (str): The start time of the run in ISO 8601 format or "N/A".
+        """
+        parsed_runs = []
+        next_page_token = None
+        kfp_client = KubeflowPlugin().client()
+        while True:
+            runs_response = kfp_client.list_runs(page_token=next_page_token)
+            # print(runs_response)# Fetch KFP runs
+            if runs_response and runs_response.runs:
+                parsed_runs.extend(NotebookPlugin().parse_runs(runs_response))
+            next_page_token = runs_response.next_page_token
+            if not next_page_token:  # Stop when there are no more pages
+                break
+
+        return parsed_runs

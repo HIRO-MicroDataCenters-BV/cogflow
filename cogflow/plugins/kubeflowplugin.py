@@ -22,6 +22,7 @@ from kserve import (
 from kubernetes import client, config
 from kubernetes.client import V1ObjectMeta, V1ContainerPort
 from kubernetes.client.models import V1EnvVar
+from kubernetes.config import ConfigException
 from tenacity import retry, wait_exponential, stop_after_attempt
 
 from .. import plugin_config
@@ -49,9 +50,28 @@ class CogContainer(kfp.dsl._container_op.Container):
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        # Adding environment variables
-        for key, value in os.environ.items():
-            self.add_env_variable(V1EnvVar(name=key, value=value))
+        env_vars = [
+            "DB_HOST",
+            "DB_PORT",
+            "DB_USER",
+            "DB_PASSWORD",
+            "DB_NAME",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "MINIO_BUCKET_NAME",
+            "BASE_PATH",
+            "MLFLOW_TRACKING_URI",
+            "KF_PIPELINES_SA_TOKEN_PATH",
+            "MINIO_ENDPOINT_URL",
+            "MLFLOW_S3_ENDPOINT_URL",
+        ]
+
+        # Adding only environment variables present in the image
+        for key in env_vars:
+            value = os.environ.get(key)
+            if value:
+                self.add_env_variable(V1EnvVar(name=key, value=value))
+
         return self
 
 
@@ -438,22 +458,20 @@ class KubeflowPlugin:
             str: The default namespace.
         """
         try:
-            # Load Kubernetes configuration
             config.load_incluster_config()
-            return (
-                open(
-                    "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
-                    "r",
-                    encoding="utf-8",
-                )
-                .read()
-                .strip()
-            )
-        except FileNotFoundError:
-            # If running outside a cluster, load default kubeconfig
-            config.load_kube_config()
-            current_context = config.list_kube_config_contexts()[1]
-            return current_context["context"].get("namespace", "default")
+            with open(
+                "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+                "r",
+                encoding="utf-8",
+            ) as f:
+                return f.read().strip()
+        except (FileNotFoundError, ConfigException):
+            try:
+                config.load_kube_config()
+                current_context = config.list_kube_config_contexts()[1]
+                return current_context["context"].get("namespace", "default")
+            except ConfigException:
+                return "default"
 
     @staticmethod
     def create_service(name: str) -> str:

@@ -1830,7 +1830,7 @@ def get_artifacts(model_name, version):
     return artifacts
 
 
-def get_deployments(namespace="adminh"):
+def get_deployments(namespace=KubeflowPlugin().get_default_namespace()):
     """
     Fetches details of all InferenceServices in the given namespace and formats them.
 
@@ -1889,7 +1889,6 @@ def flservercomponent(
     Decorator to create a Kubeflow component from a Python function.
 
     Args:
-        func (Callable): Python function to convert into a component.
         output_component_file (str, optional): Path to save the component YAML file. Defaults to None.
         base_image (str, optional): Base Docker image for the component. Defaults to None.
         packages_to_install (List[str], optional): List of additional Python packages to install.
