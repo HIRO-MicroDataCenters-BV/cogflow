@@ -37,7 +37,7 @@ def make_post_request(url, data=None, params=None, files=None, timeout=DEFAULT_T
             return response.json()
         # If not the success response
         print(f"POST request failed with status code {response.status_code}")
-        raise Exception("Request failed")
+        raise Exception(response.json())
     except requests.exceptions.RequestException as exp:
         print(f"Error making POST request: {exp}")
         raise Exception(f"Error making POST request: {exp}")

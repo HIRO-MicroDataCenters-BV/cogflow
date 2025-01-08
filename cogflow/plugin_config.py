@@ -45,7 +45,9 @@ API_BASEPATH = "API_BASEPATH"
 
 BASE_IMAGE = "hiroregistry/cogflow:dev"
 
-# kafka plugin
-
-KAFKA_DATASETS_URL = "/datasets"
-KAFKA_DATASETS_REGISTER = "/kafka/register"
+# MESSAGE_BROKER plugin
+MESSAGE_BROKER_DATASETS_URL = "/datasets"
+MESSAGE_BROKER_DATASETS_REGISTER = "/broker/register"
+MESSAGE_BROKER_TOPIC_REGISTER = "/topic/register"
+MESSAGE_BROKER_TOPIC_DATASETS_REGISTER = "/message/register"
+MESSAGE_BROKER_TOPIC_DATASETS_DETAILS = "/message/details"
