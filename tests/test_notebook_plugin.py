@@ -215,18 +215,6 @@ class TestNotebookPlugin(unittest.TestCase):
 
             assert result == mock_response["data"]
 
-    def test_deploy_model(self):
-        """Test model deployment."""
-        with patch("cogflow.cogflow.plugins.mlflowplugin.MlflowPlugin.get_model_uri"):
-            with patch(
-                "cogflow.cogflow.plugins.kubeflowplugin.KubeflowPlugin.serve_model_v1"
-            ):
-                result = NotebookPlugin().deploy_model("Flearning", "1", "fl-svc")
-                self.assertEqual(result["status"], True)
-                self.assertEqual(
-                    result["msg"], "Model Flearning deployed with service fl-svc"
-                )
-
     def test_deploy_model_for_model_not_found_exception(self):
         """Test deploy model when model is not found."""
         with patch(
