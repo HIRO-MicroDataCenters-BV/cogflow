@@ -286,7 +286,9 @@ def evaluate(
     # Capture final CPU and memory usage metrics
     final_cpu_percent = psutil.cpu_percent(interval=1)
     final_memory_info = psutil.virtual_memory()
-    final_memory_used_mb = round(final_memory_info.used / (1024**2), 2)  # Convert to MB
+    final_memory_used_mb = round(
+        final_memory_info.used / (1024**2), 2
+    )  # Convert to MB
 
     # Attempt to make POST requests, continue regardless of success or failure
     try:
@@ -676,7 +678,6 @@ def log_model(
     )
 
     try:
-
         # If registered_model_name is not provided, generate it
         if registered_model_name is None:
             # Check if sk_model is a string
@@ -1336,7 +1337,6 @@ def custom_log_model(
     )
 
     try:
-
         # If registered_model_name is not provided, generate it
         if registered_model_name is None:
             # Check if sk_model is a string

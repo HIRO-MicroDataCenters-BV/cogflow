@@ -597,7 +597,7 @@ class KubeflowPlugin:
 
         # Create the initial component specification
         training_var = kfp.components.create_component_from_func(
-            func=wrap_function_with_service,
+            func=wrap_function_with_service(func),
             output_component_file=output_component_file,
             base_image=base_image,
             packages_to_install=packages_to_install,

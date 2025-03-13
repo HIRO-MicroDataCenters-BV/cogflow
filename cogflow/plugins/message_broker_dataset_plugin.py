@@ -191,7 +191,6 @@ class MessageBrokerDatasetPlugin:
             print("Invalid response or data format encountered.")
             print(f"Error: {str(ve)}")
         except Exception as ex:
-
             if ex.args:
                 response_json = ex.args[0]
 
@@ -235,7 +234,6 @@ class MessageBrokerDatasetPlugin:
         """
         url = self.message_broker_api_dataset_url + message_broker_register
         try:
-
             request = MessageBrokerRequest(broker_name, broker_ip, broker_port)
             response = make_post_request(url=url, data=asdict(request))
             if response:
