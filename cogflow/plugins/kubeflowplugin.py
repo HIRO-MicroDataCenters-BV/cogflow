@@ -1,7 +1,8 @@
 """
 This module provides functionality related to Kubeflow Pipelines.
 """
-
+import functools
+import inspect
 import os
 import time
 from datetime import datetime
@@ -574,22 +575,29 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        def wrapped_func(*args, **kwargs):
-            """
-            Wrapper function to create and delete a service for the component.
-            """
-            KubeflowPlugin().create_service(name=pod_label_value)
+        def wrap_function_with_service(func):
+            """Wraps a function to ensure create_service is called before, and delete_service is called after execution."""
+            sig = inspect.signature(func)
 
-            try:
-                result = func(*args, **kwargs)
-            finally:
-                KubeflowPlugin().delete_service(name=pod_label_value)
+            @functools.wraps(func)
+            def wrapped_func(*args, **kwargs):
+                """
+                Wrapper function to create and delete a service for the component.
+                """
+                KubeflowPlugin().create_service(name=pod_label_value)
 
-            return result
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    KubeflowPlugin().delete_service(name=pod_label_value)
+
+            wrapped_func.__signature__ = sig
+
+            return wrapped_func
 
         # Create the initial component specification
         training_var = kfp.components.create_component_from_func(
-            func=wrapped_func,
+            func=wrap_function_with_service,
             output_component_file=output_component_file,
             base_image=base_image,
             packages_to_install=packages_to_install,
