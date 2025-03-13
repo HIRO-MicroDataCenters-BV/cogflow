@@ -574,9 +574,22 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
+        def wrapped_func(*args, **kwargs):
+            """
+            Wrapper function to create and delete a service for the component.
+            """
+            KubeflowPlugin().create_service(name=pod_label_value)
+
+            try:
+                result = func(*args, **kwargs)
+            finally:
+                KubeflowPlugin().delete_service(name=pod_label_value)
+
+            return result
+
         # Create the initial component specification
         training_var = kfp.components.create_component_from_func(
-            func=func,
+            func=wrapped_func,
             output_component_file=output_component_file,
             base_image=base_image,
             packages_to_install=packages_to_install,
