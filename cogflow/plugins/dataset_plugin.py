@@ -233,7 +233,6 @@ class DatasetPlugin:
                 path = PluginManager().load_path("dataset_register")
                 data = {
                     "url": details.source,
-                    "user_id_val": plugin_config.JUPYTER_USER_ID,
                     "file_name": output_file,
                 }
             elif details.is_file_path():
@@ -241,7 +240,6 @@ class DatasetPlugin:
                 params = {
                     "dataset_type": 1,
                     "dataset_source_type": 0,
-                    "user_id": plugin_config.JUPYTER_USER_ID,
                     "dataset_name": details.name,
                     "description": details.description,
                 }

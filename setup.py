@@ -30,7 +30,7 @@ with open("LICENSE.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="cogflow",
-    version="1.9.39b7",
+    version="1.10.0b2",
     author="Sai_kireeti",
     author_email="sai.kireeti@hiro-microdatacenters.nl",
     description="COG modules",
@@ -53,12 +53,13 @@ setup(
         "kserve==0.12.0",
         "tensorflow",
         "ray==2.9.3",
+        "kafka-python==2.0.2",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.6",
+    python_requires=">=3.9",
     package_data={
         "cogflow": ["cogflow_config.ini", "plugins/*", "LICENSE.md"],
     },
