@@ -1,6 +1,7 @@
 """
 This module provides functionality related to Kubeflow Pipelines.
 """
+
 import functools
 import inspect
 import os
@@ -576,7 +577,8 @@ class KubeflowPlugin:
         PluginManager().verify_activation(KubeflowPlugin().section)
 
         def wrap_function_with_service(func):
-            """Wraps a function to ensure create_service is called before, and delete_service is called after execution."""
+            """Wraps a function to ensure create_service is called before,
+            and delete_service is called after execution."""
             sig = inspect.signature(func)
 
             @functools.wraps(func)
