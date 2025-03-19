@@ -44,6 +44,7 @@ FILE_TYPE = 0
 API_BASEPATH = "API_BASEPATH"
 
 BASE_IMAGE = "hiroregistry/cogflow:latest"
+FL_BASE_IMAGE = "hiroregistry/flserver:latest"
 
 # MESSAGE_BROKER plugin
 MESSAGE_BROKER_DATASETS_URL = "/datasets"

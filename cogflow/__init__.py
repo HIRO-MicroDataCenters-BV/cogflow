@@ -1849,7 +1849,7 @@ def get_deployments(namespace=KubeflowPlugin().get_default_namespace()):
 def create_fl_component_from_func(
     func,
     output_component_file=None,
-    base_image=plugin_config.BASE_IMAGE,
+    base_image=plugin_config.FL_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
     container_port=8080,
@@ -1882,7 +1882,7 @@ def create_fl_component_from_func(
 
 def flservercomponent(
     output_component_file=None,
-    base_image=plugin_config.BASE_IMAGE,
+    base_image=plugin_config.FL_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
     container_port=8080,
