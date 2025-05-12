@@ -679,7 +679,6 @@ class KubeflowPlugin:
         )
 
         def wrapped_fl_client_component(*args, **kwargs):
-
             component_op = training_var(*args, **kwargs)
 
             # Add model access configurations
