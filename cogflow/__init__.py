@@ -1910,6 +1910,33 @@ def flservercomponent(
     return decorator
 
 
+def create_fl_client_component(
+    func,
+    output_component_file=None,
+    base_image=plugin_config.FLCLIENT_BASE_IMAGE,
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
+):
+    """
+    Create a component from a Python function with additional configurations.
+    Args:
+        func (Callable): Python function to convert into a component.
+        output_component_file (str, optional): Path to save the component YAML file. Defaults to None.
+        base_image (str, optional): Base Docker image for the component. Defaults to None.
+        packages_to_install (List[str], optional): List of additional Python packages to install.
+        annotations: Optional. Adds arbitrary key-value data to the component specification.
+    Returns:
+        kfp.components.ComponentSpec: Component specification.
+    """
+    return KubeflowPlugin().create_fl_client_component(
+        func=func,
+        output_component_file=output_component_file,
+        base_image=base_image,
+        packages_to_install=packages_to_install,
+        annotations=annotations,
+    )
+
+
 def flclientcomponent(
     output_component_file=None,
     base_image=plugin_config.FLCLIENT_BASE_IMAGE,
@@ -1922,7 +1949,7 @@ def flclientcomponent(
     Args:
         output_component_file (str, optional): The output file for the component.
         base_image (str, optional): The base image to use. Defaults to
-        "hiroregistry/cogflow:dev".
+        "hiroregistry/flclient:latest".
         packages_to_install (list, optional): List of packages to install.
         annotations: Optional. Allows adding arbitrary key-value data to the
         component specification.
@@ -1932,7 +1959,7 @@ def flclientcomponent(
     """
 
     def decorator(func):
-        return KubeflowPlugin().create_component_from_func(
+        return create_fl_client_component(
             func=func,
             output_component_file=output_component_file,
             base_image=base_image,

@@ -8,7 +8,7 @@ import os
 import time
 import uuid
 from datetime import datetime
-from typing import Optional, Dict, Any, Mapping
+from typing import Optional, Dict, Any, Mapping, Callable
 import kfp
 from kfp import dsl
 from kserve import (
@@ -647,30 +647,44 @@ class KubeflowPlugin:
         wrapped_fl_component.component_spec = training_var.component_spec
         return wrapped_fl_component
 
-    # @staticmethod
-    # def flclientcomponent(
-    #     annotations: Optional[Mapping[str, str]] = None,
-    #     log_output: bool = True,
-    # ) -> Callable:
-    #     """
-    #     Decorator to mark and execute an FL client function.
-    #
-    #     Args:
-    #         annotations (dict, optional): Arbitrary metadata to tag the component.
-    #         log_output (bool): Whether to log the return value. Defaults to True.
-    #
-    #     Returns:
-    #         Callable: The original function, executed when called.
-    #     """
-    #     def decorator(func: Callable) -> Callable:
-    #         @functools.wraps(func)
-    #         def wrapper(*args, **kwargs):
-    #             print(f"Executing FL client function: {func.__name__}")
-    #             if annotations:
-    #                 print(f"Annotations: {annotations}")
-    #             result = func(*args, **kwargs)
-    #             if log_output:
-    #                 print(f"Output: {result}")
-    #             return result
-    #         return wrapper
-    #     return decorator
+    @staticmethod
+    def create_fl_client_component(
+        func,
+        annotations: Optional[Mapping[str, str]] = None,
+        output_component_file=None,
+        base_image=None,
+        packages_to_install=None,
+    ) -> Callable:
+        """
+        Decorator to mark and execute an FL client function.
+
+        Args:
+            annotations (dict, optional): Arbitrary metadata to tag the component.
+            func : Wraps a function
+            output_component_file (str, optional): The output file for the component.
+            base_image (str, optional): The base image to use. Defaults to
+            "hiroregistry/cogflow:dev".
+            packages_to_install (list, optional): List of packages to install.
+
+        Returns:
+            Callable: The original function, executed when called.
+        """
+
+        training_var = kfp.components.create_component_from_func(
+            func=func,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+        )
+
+        def wrapped_fl_client_component(*args, **kwargs):
+
+            component_op = training_var(*args, **kwargs)
+
+            # Add model access configurations
+            component_op = CogContainer.add_model_access(component_op)
+            return component_op
+
+        wrapped_fl_client_component.component_spec = training_var.component_spec
+        return wrapped_fl_client_component
