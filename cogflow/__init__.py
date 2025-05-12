@@ -1910,8 +1910,7 @@ def flservercomponent(
     return decorator
 
 
-def flclientcomp(
-    func,
+def flclientcomponent(
     output_component_file=None,
     base_image=plugin_config.FLCLIENT_BASE_IMAGE,
     packages_to_install=None,
@@ -1921,7 +1920,6 @@ def flclientcomp(
     Creates a Kubeflow component from a function.
 
     Args:
-        func: The function to create the component from.
         output_component_file (str, optional): The output file for the component.
         base_image (str, optional): The base image to use. Defaults to
         "hiroregistry/cogflow:dev".
@@ -1932,13 +1930,17 @@ def flclientcomp(
     Returns:
         str: Information message confirming the component creation.
     """
-    return KubeflowPlugin().create_component_from_func(
-        func=func,
-        output_component_file=output_component_file,
-        base_image=base_image,
-        packages_to_install=packages_to_install,
-        annotations=annotations,
-    )
+
+    def decorator(func):
+        return KubeflowPlugin().create_component_from_func(
+            func=func,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+        )
+
+    return decorator
 
 
 __all__ = [
