@@ -676,7 +676,6 @@ def log_model(
     )
 
     try:
-
         # If registered_model_name is not provided, generate it
         if registered_model_name is None:
             # Check if sk_model is a string
@@ -1336,7 +1335,6 @@ def custom_log_model(
     )
 
     try:
-
         # If registered_model_name is not provided, generate it
         if registered_model_name is None:
             # Check if sk_model is a string
@@ -1851,11 +1849,10 @@ def get_deployments(namespace=KubeflowPlugin().get_default_namespace()):
 def create_fl_component_from_func(
     func,
     output_component_file=None,
-    base_image=plugin_config.BASE_IMAGE,
+    base_image=plugin_config.FLSERVER_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
     container_port=8080,
-    pod_label_value="flserver",
 ):
     """
     Create a component from a Python function with additional configurations
@@ -1867,7 +1864,6 @@ def create_fl_component_from_func(
         packages_to_install (List[str], optional): List of additional Python packages to install.
         annotations: Optional. Adds arbitrary key-value data to the component specification.
         container_port (int, optional): Container port to expose. Defaults to 8080.
-        pod_label_value (str, optional): Value of the pod label. Defaults to "flserver".
     Returns:
         kfp.components.ComponentSpec: Component specification.
     """
@@ -1878,17 +1874,15 @@ def create_fl_component_from_func(
         packages_to_install=packages_to_install,
         annotations=annotations,
         container_port=container_port,
-        pod_label_value=pod_label_value,
     )
 
 
 def flservercomponent(
     output_component_file=None,
-    base_image=plugin_config.BASE_IMAGE,
+    base_image=plugin_config.FLSERVER_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
     container_port=8080,
-    pod_label_value="flserver",
 ):
     """
     Decorator to create a Kubeflow component from a Python function.
@@ -1899,8 +1893,6 @@ def flservercomponent(
         packages_to_install (List[str], optional): List of additional Python packages to install.
         annotations: Optional. Adds arbitrary key-value data to the component specification.
         container_port (int, optional): Container port to expose. Defaults to 8080.
-        pod_label_value (str, optional): Value of the pod label. Defaults to "flserver".
-
     Returns:
         Callable: A wrapped function that is now a Kubeflow component.
     """
@@ -1913,7 +1905,66 @@ def flservercomponent(
             packages_to_install=packages_to_install,
             annotations=annotations,
             container_port=container_port,
-            pod_label_value=pod_label_value,
+        )
+
+    return decorator
+
+
+def create_fl_client_component(
+    func,
+    output_component_file=None,
+    base_image=plugin_config.FLCLIENT_BASE_IMAGE,
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
+):
+    """
+    Create a component from a Python function with additional configurations.
+    Args:
+        func (Callable): Python function to convert into a component.
+        output_component_file (str, optional): Path to save the component YAML file. Defaults to None.
+        base_image (str, optional): Base Docker image for the component. Defaults to None.
+        packages_to_install (List[str], optional): List of additional Python packages to install.
+        annotations: Optional. Adds arbitrary key-value data to the component specification.
+    Returns:
+        kfp.components.ComponentSpec: Component specification.
+    """
+    return KubeflowPlugin().create_fl_client_component(
+        func=func,
+        output_component_file=output_component_file,
+        base_image=base_image,
+        packages_to_install=packages_to_install,
+        annotations=annotations,
+    )
+
+
+def flclientcomponent(
+    output_component_file=None,
+    base_image=plugin_config.FLCLIENT_BASE_IMAGE,
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
+):
+    """
+    Creates a Kubeflow component from a function.
+
+    Args:
+        output_component_file (str, optional): The output file for the component.
+        base_image (str, optional): The base image to use. Defaults to
+        "hiroregistry/flclient:latest".
+        packages_to_install (list, optional): List of packages to install.
+        annotations: Optional. Allows adding arbitrary key-value data to the
+        component specification.
+
+    Returns:
+        str: Information message confirming the component creation.
+    """
+
+    def decorator(func):
+        return create_fl_client_component(
+            func=func,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
         )
 
     return decorator

@@ -2,10 +2,13 @@
 This module provides functionality related to Kubeflow Pipelines.
 """
 
+import functools
+import inspect
 import os
 import time
+import uuid
 from datetime import datetime
-from typing import Optional, Dict, Any, Mapping
+from typing import Optional, Dict, Any, Mapping, Callable
 import kfp
 from kfp import dsl
 from kserve import (
@@ -554,27 +557,119 @@ class KubeflowPlugin:
         annotations: Optional[Mapping[str, str]] = None,
         container_port=8080,
         pod_label_name="app",
-        pod_label_value="flserver",
     ):
         """
         Create a component from a Python function with additional configurations
-        for ports and pod labels.
-        Args:
-            func (Callable): Python function to convert into a component.
-            output_component_file (str, optional): Path to save the component YAML file. Defaults to None.
-            base_image (str, optional): Base Docker image for the component. Defaults to None.
-            packages_to_install (List[str], optional): List of additional Python packages to install.
-            annotations: Optional. Adds arbitrary key-value data to the component specification.
-            container_port (int, optional): Container port to expose. Defaults to 8080.
-            pod_label_name (str, optional): Name of the pod label. Defaults to "app".
-            pod_label_value (str, optional): Value of the pod label. Defaults to "flserver".
-        Returns:
-            kfp.components.ComponentSpec: Component specification.
+        for ports and pod labels using Pod UID to ensure unique run_id.
         """
+
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        # Create the initial component specification
+        def get_pod_unique_id():
+            """
+            Generate a unique ID for the run based on the pod's UID and pipeline name.
+            """
+            if os.getenv("FL_RUN_ID"):
+                return os.environ["FL_RUN_ID"]
+            try:
+                config.load_incluster_config()
+                pod_name = os.environ["HOSTNAME"]
+                with open(
+                    "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+                    encoding="utf-8",
+                ) as f:
+                    namespace = f.read().strip()
+
+                v1 = client.CoreV1Api()
+                pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
+                run_id = pod.metadata.labels.get("workflows.argoproj.io/workflow")
+
+                # pod_uid = pod.metadata.uid
+                # pipeline_name = os.getenv("PIPELINE_NAME", "fl-pipeline")
+                # run_id = f"{pipeline_name}-{pod_uid}"
+                if not run_id:
+                    raise ValueError("workflow label not found")
+
+                os.environ["FL_RUN_ID"] = run_id
+                return run_id
+            except Exception as e:
+                fallback = f"default-{uuid.uuid4()}"
+                os.environ["FL_RUN_ID"] = fallback
+                print(
+                    f"[WARN] Failed to fetch pipeline run ID: {e}, using fallback: {fallback}"
+                )
+                return fallback
+
+        def wrap_function_with_service(func):
+            """
+            Wraps a function to ensure service creation and deletion
+            tied to the pod unique ID.
+            """
+            sig = inspect.signature(func)
+
+            @functools.wraps(func)
+            def wrapped_func(*args, **kwargs):
+                run_id = get_pod_unique_id()
+                KubeflowPlugin().create_service(name=run_id)
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    KubeflowPlugin().delete_service(name=run_id)
+
+            wrapped_func.__signature__ = sig
+            return wrapped_func
+
+        # Create the initial KFP component
+        training_var = kfp.components.create_component_from_func(
+            func=wrap_function_with_service(func),
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+        )
+
+        def wrapped_fl_component(*args, **kwargs):
+            run_id = get_pod_unique_id()
+
+            component_op = training_var(*args, **kwargs)
+
+            # Add container port and pod labels
+            component_op.container.add_port(
+                V1ContainerPort(container_port=container_port)
+            )
+            component_op.add_pod_label(name=pod_label_name, value=run_id)
+
+            # Add model access configurations
+            component_op = CogContainer.add_model_access(component_op)
+            return component_op
+
+        wrapped_fl_component.component_spec = training_var.component_spec
+        return wrapped_fl_component
+
+    @staticmethod
+    def create_fl_client_component(
+        func,
+        annotations: Optional[Mapping[str, str]] = None,
+        output_component_file=None,
+        base_image=None,
+        packages_to_install=None,
+    ) -> Callable:
+        """
+        Decorator to mark and execute an FL client function.
+
+        Args:
+            annotations (dict, optional): Arbitrary metadata to tag the component.
+            func : Wraps a function
+            output_component_file (str, optional): The output file for the component.
+            base_image (str, optional): The base image to use. Defaults to
+            "hiroregistry/cogflow:dev".
+            packages_to_install (list, optional): List of packages to install.
+
+        Returns:
+            Callable: The original function, executed when called.
+        """
+
         training_var = kfp.components.create_component_from_func(
             func=func,
             output_component_file=output_component_file,
@@ -583,26 +678,13 @@ class KubeflowPlugin:
             annotations=annotations,
         )
 
-        def wrapped_fl_component(*args, **kwargs):
-            # Create the service
-            KubeflowPlugin().create_service(name=pod_label_value)
+        def wrapped_fl_client_component(*args, **kwargs):
 
-            try:
-                # Execute the component operation
-                component_op = training_var(*args, **kwargs)
+            component_op = training_var(*args, **kwargs)
 
-                # Add container port and pod labels
-                component_op.container.add_port(
-                    V1ContainerPort(container_port=container_port)
-                )
-                component_op.add_pod_label(name=pod_label_name, value=pod_label_value)
+            # Add model access configurations
+            component_op = CogContainer.add_model_access(component_op)
+            return component_op
 
-                # Add model access configurations
-                component_op = CogContainer.add_model_access(component_op)
-                return component_op
-            finally:
-                # Ensure service is deleted after execution
-                KubeflowPlugin().delete_service(name=pod_label_value)
-
-        wrapped_fl_component.component_spec = training_var.component_spec
-        return wrapped_fl_component
+        wrapped_fl_client_component.component_spec = training_var.component_spec
+        return wrapped_fl_client_component
