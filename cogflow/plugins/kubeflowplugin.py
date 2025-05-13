@@ -550,13 +550,13 @@ class KubeflowPlugin:
 
     @staticmethod
     def create_fl_component_from_func(
-        func,
-        output_component_file=None,
-        base_image=None,
-        packages_to_install=None,
-        annotations: Optional[Mapping[str, str]] = None,
-        container_port=8080,
-        pod_label_name="app",
+            func,
+            output_component_file=None,
+            base_image=None,
+            packages_to_install=None,
+            annotations: Optional[Mapping[str, str]] = None,
+            container_port=8080,
+            pod_label_name="app",
     ):
         """
         Create a component from a Python function with additional configurations
@@ -584,13 +584,13 @@ class KubeflowPlugin:
 
 
             @functools.wraps(func)
-            def wrapped_func(*args, srv_name:str="{{workflow.uid}}",**kwargs):
-                    srv_name = f"flserver-{srv_name}"
-                    KubeflowPlugin().create_service(name=srv_name)
-                    try:
-                        return func(*args, **kwargs)
-                    finally:
-                        KubeflowPlugin().delete_service(name=srv_name)
+            def wrapped_func(*args, srv_name="{{workflow.uid}}", **kwargs):
+                srv_name = f"flserver-{srv_name}"
+                KubeflowPlugin().create_service(name=srv_name)
+                try:
+                    return func(*args, **kwargs)
+                finally:
+                    KubeflowPlugin().delete_service(name=srv_name)
 
             wrapped_func.__signature__ = new_sig
             return wrapped_func
@@ -656,7 +656,7 @@ class KubeflowPlugin:
         # 2) Wrap the user's func so it *accepts* run_id (but just ignores it)
         @functools.wraps(func)
         def func_with_run_id(*args, run_id="{{workflow.uid}}", **kwargs):
-            kwargs={"serveraddress": f"flserver-{run_id}"}|kwargs
+            kwargs={"serveraddress": f"flserver-{run_id}"} | kwargs
             return func(*args, **kwargs)
 
         func_with_run_id.__signature__ = new_sig
