@@ -566,40 +566,6 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        def get_pod_unique_id():
-            """
-            Generate a unique ID for the run based on the pod's UID and pipeline name.
-            """
-            if os.getenv("FL_RUN_ID"):
-                return os.environ["FL_RUN_ID"]
-            try:
-                config.load_incluster_config()
-                pod_name = os.environ["HOSTNAME"]
-                with open(
-                    "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
-                    encoding="utf-8",
-                ) as f:
-                    namespace = f.read().strip()
-
-                v1 = client.CoreV1Api()
-                pod = v1.read_namespaced_pod(name=pod_name, namespace=namespace)
-                run_id = pod.metadata.labels.get("workflows.argoproj.io/workflow")
-
-                # pod_uid = pod.metadata.uid
-                # pipeline_name = os.getenv("PIPELINE_NAME", "fl-pipeline")
-                # run_id = f"{pipeline_name}-{pod_uid}"
-                if not run_id:
-                    raise ValueError("workflow label not found")
-
-                os.environ["FL_RUN_ID"] = run_id
-                return run_id
-            except Exception as e:
-                fallback = f"default-{uuid.uuid4()}"
-                os.environ["FL_RUN_ID"] = fallback
-                print(
-                    f"[WARN] Failed to fetch pipeline run ID: {e}, using fallback: {fallback}"
-                )
-                return fallback
 
         def wrap_function_with_service(func):
             """
@@ -607,17 +573,27 @@ class KubeflowPlugin:
             tied to the pod unique ID.
             """
             sig = inspect.signature(func)
+            run_id_param = inspect.Parameter(
+                                name="srv_name",
+                                kind=inspect.Parameter.KEYWORD_ONLY,
+                                default="{{workflow.uid}}",
+                                )
+            new_sig = sig.replace(
+                        parameters=list(sig.parameters.values()) + [run_id_param]
+                    )
+
 
             @functools.wraps(func)
-            def wrapped_func(*args, **kwargs):
-                run_id = get_pod_unique_id()
-                KubeflowPlugin().create_service(name=run_id)
-                try:
-                    return func(*args, **kwargs)
-                finally:
-                    KubeflowPlugin().delete_service(name=run_id)
+            def wrapped_func(*args, srv_name:str="{{workflow.uid}}",**kwargs):
+                    run_id = kwargs.pop("srv_name", "{{workflow.uid}}")
+                    srv_name = f"flserver-{srv_name}"
+                    KubeflowPlugin().create_service(name=srv_name)
+                    try:
+                        return func(*args, **kwargs)
+                    finally:
+                        KubeflowPlugin().delete_service(name=srv_name)
 
-            wrapped_func.__signature__ = sig
+            wrapped_func.__signature__ = new_sig
             return wrapped_func
 
         # Create the initial KFP component
@@ -629,8 +605,7 @@ class KubeflowPlugin:
             annotations=annotations,
         )
 
-        def wrapped_fl_component(*args, **kwargs):
-            run_id = get_pod_unique_id()
+        def wrapped_fl_component(*args,  **kwargs):
 
             component_op = training_var(*args, **kwargs)
 
@@ -638,12 +613,11 @@ class KubeflowPlugin:
             component_op.container.add_port(
                 V1ContainerPort(container_port=container_port)
             )
-            component_op.add_pod_label(name=pod_label_name, value=run_id)
 
             # Add model access configurations
             component_op = CogContainer.add_model_access(component_op)
             return component_op
-
+        
         wrapped_fl_component.component_spec = training_var.component_spec
         return wrapped_fl_component
 
@@ -669,18 +643,38 @@ class KubeflowPlugin:
         Returns:
             Callable: The original function, executed when called.
         """
+        # 1) Build a signature that adds `run_id="{{workflow.uid}}"` as a kw-only arg
+        sig = inspect.signature(func)
+        run_id_param = inspect.Parameter(
+            name="run_id",
+            kind=inspect.Parameter.KEYWORD_ONLY,
+            default="{{workflow.uid}}",
+        )
+        new_sig = sig.replace(
+            parameters=list(sig.parameters.values()) + [run_id_param]
+        )
 
+        # 2) Wrap the user's func so it *accepts* run_id (but just ignores it)
+        @functools.wraps(func)
+        def func_with_run_id(*args, run_id="{{workflow.uid}}", **kwargs):
+            kwargs.pop("run_id")
+            kwargs["serveraddress"] = f"flserver-{serveraddress}"
+            return func(*args, **kwargs)
+
+        func_with_run_id.__signature__ = new_sig
+
+        # 3) Create the initial KFP component
         training_var = kfp.components.create_component_from_func(
-            func=func,
+            func=func_with_run_id,
             output_component_file=output_component_file,
             base_image=base_image,
             packages_to_install=packages_to_install,
             annotations=annotations,
         )
 
-        def wrapped_fl_client_component(*args, **kwargs):
+        def wrapped_fl_client_component(*args,run_id="{{workflow.uid}}", **kwargs):
 
-            component_op = training_var(*args, **kwargs)
+            component_op = training_var(*args,run_id=run_id, **kwargs)
 
             # Add model access configurations
             component_op = CogContainer.add_model_access(component_op)

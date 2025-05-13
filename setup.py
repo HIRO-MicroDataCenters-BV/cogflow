@@ -30,7 +30,7 @@ with open("LICENSE.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="cogflow",
-    version="1.10.4",
+    version="1.10.6",
     author="Sai_kireeti",
     author_email="sai.kireeti@hiro-microdatacenters.nl",
     description="COG modules",
