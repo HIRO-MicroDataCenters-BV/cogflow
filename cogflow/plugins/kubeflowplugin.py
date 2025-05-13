@@ -585,7 +585,6 @@ class KubeflowPlugin:
 
             @functools.wraps(func)
             def wrapped_func(*args, srv_name:str="{{workflow.uid}}",**kwargs):
-                    run_id = kwargs.pop("srv_name", "{{workflow.uid}}")
                     srv_name = f"flserver-{srv_name}"
                     KubeflowPlugin().create_service(name=srv_name)
                     try:
@@ -657,8 +656,7 @@ class KubeflowPlugin:
         # 2) Wrap the user's func so it *accepts* run_id (but just ignores it)
         @functools.wraps(func)
         def func_with_run_id(*args, run_id="{{workflow.uid}}", **kwargs):
-            kwargs.pop("run_id")
-            kwargs["serveraddress"] = f"flserver-{serveraddress}"
+            kwargs={"serveraddress": f"flserver-{run_id}"}|kwargs
             return func(*args, **kwargs)
 
         func_with_run_id.__signature__ = new_sig
