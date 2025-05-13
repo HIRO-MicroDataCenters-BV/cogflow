@@ -671,7 +671,6 @@ class KubeflowPlugin:
             packages_to_install=packages_to_install,
             annotations=annotations,
         )
-
         def wrapped_fl_client_component(*args,run_id="{{workflow.uid}}", **kwargs):
 
             component_op = training_var(*args,run_id=run_id, **kwargs)
