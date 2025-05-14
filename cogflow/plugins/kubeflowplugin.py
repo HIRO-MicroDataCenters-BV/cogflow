@@ -566,7 +566,6 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-
         def wrap_function_with_service(func):
             """
             Wraps a function to ensure service creation and deletion
@@ -586,11 +585,14 @@ class KubeflowPlugin:
             @functools.wraps(func)
             def wrapped_func(*args, srv_name="{{workflow.uid}}", **kwargs):
                 srv_name = f"flserver-{srv_name}"
-                KubeflowPlugin().create_service(name=srv_name)
                 try:
+                    KubeflowPlugin().create_service(name=srv_name)
                     return func(*args, **kwargs)
                 finally:
-                    KubeflowPlugin().delete_service(name=srv_name)
+                    try:
+                        KubeflowPlugin().delete_service(name=srv_name)
+                    except Exception as e:
+                        print(f"Failed to delete service '{srv_name}': {e}")
 
             wrapped_func.__signature__ = new_sig
             return wrapped_func
@@ -656,7 +658,7 @@ class KubeflowPlugin:
         # 2) Wrap the user's func so it *accepts* run_id (but just ignores it)
         @functools.wraps(func)
         def func_with_run_id(*args, run_id="{{workflow.uid}}", **kwargs):
-            kwargs={"serveraddress": f"flserver-{run_id}"} | kwargs
+            kwargs.update({"serveraddress": f"flserver-{run_id}"})
             return func(*args, **kwargs)
 
         func_with_run_id.__signature__ = new_sig
