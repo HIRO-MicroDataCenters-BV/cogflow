@@ -548,15 +548,88 @@ class KubeflowPlugin:
         except client.exceptions.ApiException as e:
             print(f"Exception when deleting service: {e}")
 
+
+    @staticmethod
+    def create_fl_pipeline(fl_client, fl_server):
+        """
+        Returns a KFP pipeline function that wires up:
+        setup_links → fl_server → many fl_client → release_links
+
+        fl_client must accept at minimum:
+        - server_address: str
+        - local_data_connector
+
+        fl_server must accept at minimum:
+        - number_of_iterations: int
+
+        Any other parameters that fl_client/ fl_server declare will automatically
+        become pipeline inputs and be forwarded along.
+        """
+        # Introspect client/server signatures
+        client_sig = inspect.signature(fl_client)
+        server_sig = inspect.signature(fl_server)
+
+        # Mandatory params
+        client_req = {'server_address', 'local_data_connector'}
+        server_req = {'number_of_iterations'}
+
+        # Find any extra parameters
+        client_extra = [p for p in client_sig.parameters if p not in client_req]
+        server_extra = [p for p in server_sig.parameters if p not in server_req]
+        extra_params = list(dict.fromkeys(client_extra + server_extra))
+
+        #create compoent from func
+        setup_links = KubeflowPlugin.create_component_from_func(KubeflowPlugin.create_service)
+        release_links=KubeflowPlugin.create_component_from_func(KubeflowPlugin.delete_service)
+
+        @dsl.pipeline(
+            name='Federated Learning Pipeline',
+            description='Dynamically generated FL pipeline'
+        )
+        def flpipeline(local_data_connectors: list,
+                    number_of_iterations: int,
+                    run_id="{{workflow.uid}}",
+                    **kwargs):
+            # Validate we got all extras
+            missing = [p for p in extra_params if p not in kwargs]
+            if missing:
+                raise ValueError(f"Missing pipeline parameters: {missing}")
+
+            srv_name = f"flserver-{run_id}"
+            # 1. create the k8s Service
+            setup_task = setup_links(name=srv_name)
+
+            # 2. start the FL server
+            server_params = {p: kwargs[p] for p in server_extra}
+            server_task = fl_server(
+                number_of_iterations=number_of_iterations,
+                server_address=setup_task.output,
+                **server_params
+            ).after(setup_task)
+
+            # 3. fan-out clients in parallel
+            client_params = {p: kwargs[p] for p in client_extra}
+            with dsl.ParallelFor(local_data_connectors) as connector:
+                fl_client(
+                    server_address=setup_task.output,
+                    local_data_connector=connector,
+                    **client_params
+                ).after(setup_task)
+
+            # 4. tear down once the server is done
+            release_links(
+                service_name=setup_task.output
+            ).after(server_task)
+
+        return flpipeline
     @staticmethod
     def create_fl_component_from_func(
-            func,
-            output_component_file=None,
-            base_image=None,
-            packages_to_install=None,
-            annotations: Optional[Mapping[str, str]] = None,
-            container_port=8080,
-            pod_label_name="app",
+        func,
+        output_component_file=None,
+        base_image=None,
+        packages_to_install=None,
+        annotations: Optional[Mapping[str, str]] = None,
+        container_port=8080,
     ):
         """
         Create a component from a Python function with additional configurations
@@ -566,40 +639,67 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        def wrap_function_with_service(func):
-            """
-            Wraps a function to ensure service creation and deletion
-            tied to the pod unique ID.
-            """
-            sig = inspect.signature(func)
-            run_id_param = inspect.Parameter(
+
+        sig = inspect.signature(func)
+        run_id_param = inspect.Parameter(
                                 name="srv_name",
                                 kind=inspect.Parameter.KEYWORD_ONLY,
                                 default="{{workflow.uid}}",
                                 )
-            new_sig = sig.replace(
+        new_sig = sig.replace(
                         parameters=list(sig.parameters.values()) + [run_id_param]
-                    )
+        )
 
 
-            @functools.wraps(func)
-            def wrapped_func(*args, srv_name="{{workflow.uid}}", **kwargs):
-                srv_name = f"flserver-{srv_name}"
-                try:
-                    KubeflowPlugin().create_service(name=srv_name)
-                    return func(*args, **kwargs)
-                finally:
-                    try:
-                        KubeflowPlugin().delete_service(name=srv_name)
-                    except Exception as e:
-                        print(f"Failed to delete service '{srv_name}': {e}")
+        #@functools.wraps(func)
+        def wrapped_func(*args, srv_name:str="{{workflow.uid}}",**kwargs):
+            srv_name = f"flserver-{srv_name}"
+            import os
+            from kubernetes import client, config
+            pod_label=os.environ.get("POD_LABEL","FL")
+            # Load in-cluster config
+            config.load_incluster_config()
+            ns_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
+            default_namespace=""
+            if os.path.exists(ns_path):
+                with open(ns_path) as f:
+                    default_namespace= f.read().strip()
+                    
+            print(f'Crating endpoint...{default_namespace}')
+            # Define the service
+            service_spec = client.V1Service(
+                    api_version="v1",
+                    kind="Service",
+                    metadata=client.V1ObjectMeta(name=srv_name),
+                    spec=client.V1ServiceSpec(
+                        selector={"app": pod_label},
+                        ports=[client.V1ServicePort(protocol="TCP", port=8080, name="grpc",target_port=8080)],
+                        type="ClusterIP"
+                    )   
+                )
+                # Create the Kubernetes API client
+            api_instance = client.CoreV1Api()
+            try:
+                # Create the service
+                api_instance.create_namespaced_service(namespace=default_namespace,
+                                                    body=service_spec)
+                print(f"Service '{srvname}' created successfully.")
+                import time
+                time.sleep(30)
+            except client.exceptions.ApiException as e:
+                return f"Exception when creating service: {e}"
+            #KubeflowPlugin().create_service(name=srv_name)
+            try:
+                return func(*args, **kwargs)
+            finally:
+                api_instance.delete_namespaced_service(name=srv_name, namespace=default_namespace)
+                #KubeflowPlugin().delete_service(name=srv_name)
 
-            wrapped_func.__signature__ = new_sig
-            return wrapped_func
-
+        wrapped_func.__signature__ = new_sig
+            
         # Create the initial KFP component
         training_var = kfp.components.create_component_from_func(
-            func=wrap_function_with_service(func),
+            func=wrapped_func,
             output_component_file=output_component_file,
             base_image=base_image,
             packages_to_install=packages_to_install,
@@ -614,9 +714,15 @@ class KubeflowPlugin:
             component_op.container.add_port(
                 V1ContainerPort(container_port=container_port)
             )
-
+            #component_op.metadata.add_label("run_id", "{{workflow.uid}}")
             # Add model access configurations
             component_op = CogContainer.add_model_access(component_op)
+            
+            # Add run_id and pod label
+            run_id = f"flserver-{uuid.uuid4()}"
+            component_op.add_env_variable(V1EnvVar("POD_LABEL", value=run_id))
+            component_op.add_pod_label(name="app", value=run_id)
+
             return component_op
         
         wrapped_fl_component.component_spec = training_var.component_spec
@@ -656,9 +762,9 @@ class KubeflowPlugin:
         )
 
         # 2) Wrap the user's func so it *accepts* run_id (but just ignores it)
-        @functools.wraps(func)
+        #@functools.wraps(func)
         def func_with_run_id(*args, run_id="{{workflow.uid}}", **kwargs):
-            kwargs.update({"serveraddress": f"flserver-{run_id}"})
+            kwargs={"serveraddress": f"flserver-{run_id}"}|kwargs
             return func(*args, **kwargs)
 
         func_with_run_id.__signature__ = new_sig
