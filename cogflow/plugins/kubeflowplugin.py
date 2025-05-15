@@ -587,14 +587,14 @@ class KubeflowPlugin:
         )
         def flpipeline(local_data_connectors: list,
                     number_of_iterations: int,
-                    run_id="{{workflow.uid}}",
                     **kwargs):
             # Validate we got all extras
             missing = [p for p in extra_params if p not in kwargs]
             if missing:
                 raise ValueError(f"Missing pipeline parameters: {missing}")
 
-            srv_name = f"flserver-{run_id}"
+            #generate service name with run id later at runtime it will replaced by run id
+            srv_name = "flserver-"+"{{workflow.uid}}"
             # 1. create the k8s Service
             setup_task = setup_links(name=srv_name)
 
@@ -605,6 +605,7 @@ class KubeflowPlugin:
                 server_address=setup_task.output,
                 **server_params
             ).after(setup_task)
+            server_task.add_pod_label(name="app", value=srv_name)
 
             # 3. fan-out clients in parallel
             client_params = {p: kwargs[p] for p in client_extra}
