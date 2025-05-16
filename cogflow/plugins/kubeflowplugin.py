@@ -682,24 +682,24 @@ class KubeflowPlugin:
             srv_name = "flserver-" + "{{workflow.uid}}"
             # 1. create the k8s Service
             setup_task = setup_links(name=srv_name)
-
+            # 1.1. tear down once the server is done
+            release_links(name=srv_name)
             # 2. start the FL server
-
-            server_task = fl_server(
-                number_of_iterations=number_of_iterations, **server_kwargs
-            ).after(setup_task)
-            server_task.add_pod_label(name="app", value=srv_name)
-
-            # 3. fan-out clients in parallel
-            with dsl.ParallelFor(local_data_connectors) as connector:
-                fl_client(
-                    server_address=setup_task.output,
-                    local_data_connector=connector,
-                    **client_kwargs,
+            with dsl.ExitHandler(exit_task=release_links(name=srv_name)):
+                server_task = fl_server(
+                    number_of_iterations=number_of_iterations, **server_kwargs
                 ).after(setup_task)
+                server_task.add_pod_label(name="app", value=srv_name)
 
-            # 4. tear down once the server is done
-            release_links(name=setup_task.output).after(server_task)
+                # 3. fan-out clients in parallel
+                with dsl.ParallelFor(local_data_connectors) as connector:
+                    fl_client(
+                        server_address=setup_task.output,
+                        local_data_connector=connector,
+                        **client_kwargs,
+                    ).after(setup_task)
+
+
             # Attach the explicit signature so KFP can see all inputs
 
         fl_pipeline_func.__signature__ = pipeline_sig
