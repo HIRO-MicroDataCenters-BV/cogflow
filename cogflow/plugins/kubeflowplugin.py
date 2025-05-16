@@ -8,7 +8,7 @@ import os
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Mapping, Callable
-from inspect import Signature, signature,Parameter
+from inspect import Signature, signature, Parameter
 import kfp
 from kfp import dsl
 from kserve import (
@@ -548,7 +548,6 @@ class KubeflowPlugin:
         except client.exceptions.ApiException as e:
             print(f"Exception when deleting service: {e}")
 
-
     @staticmethod
     def create_fl_pipeline(fl_client, fl_server):
         """
@@ -565,21 +564,21 @@ class KubeflowPlugin:
         Any other parameters that fl_client/ fl_server declare will automatically
         become pipeline inputs and be forwarded along.
         """
-        
-        def setup_links_func(name:str)->str:
+
+        def setup_links_func(name: str) -> str:
             """
             Set up a service in the default namespace with the given name.
             Args:
                 name (str): Name of the service to be created.
             Returns:
                 str: Name of the created service.
-            """           
+            """
             from cogflow import KubeflowPlugin
+
             KubeflowPlugin().create_service(name=name)
             return name
-        
-        
-        def release_links_func(name:str):
+
+        def release_links_func(name: str):
             """
             Release a service created by `setup_links_func`.
             Deletes a previously created service by name in the default namespace.
@@ -589,26 +588,31 @@ class KubeflowPlugin:
                 str: Result message of service deletion.
             """
             from cogflow import KubeflowPlugin
+
             KubeflowPlugin().delete_service(name=name)
-        
+
         # Introspect client/server signatures
         client_sig = inspect.signature(fl_client)
         server_sig = inspect.signature(fl_server)
 
         # Mandatory params
-        client_req = {'server_address', 'local_data_connector'}
-        server_req = {'number_of_iterations'}
+        client_req = {"server_address", "local_data_connector"}
+        server_req = {"number_of_iterations"}
 
-            # ← CHANGE: only consider real kw/positional params, skip VAR_POSITIONAL and VAR_KEYWORD
+        # ← CHANGE: only consider real kw/positional params, skip VAR_POSITIONAL and VAR_KEYWORD
         def _valid_param_names(sig):
             return [
-                name for name, p in sig.parameters.items()
-                if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                            inspect.Parameter.KEYWORD_ONLY)
+                name
+                for name, p in sig.parameters.items()
+                if p.kind
+                in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
             ]
-        
-        client_params = _valid_param_names(client_sig)             # ← CHANGE
-        server_params = _valid_param_names(server_sig)             # ← CHANGE
+
+        client_params = _valid_param_names(client_sig)  # ← CHANGE
+        server_params = _valid_param_names(server_sig)  # ← CHANGE
 
         # Find any extra parameters
         client_extra = [p for p in client_params if p not in client_req]
@@ -620,17 +624,17 @@ class KubeflowPlugin:
         # 1) local_data_connectors
         sig_params.append(
             inspect.Parameter(
-                name='local_data_connectors',
+                name="local_data_connectors",
                 kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                annotation=list
+                annotation=list,
             )
         )
         # 2) number_of_iterations
         sig_params.append(
             Parameter(
-                name='number_of_iterations',
+                name="number_of_iterations",
                 kind=Parameter.POSITIONAL_OR_KEYWORD,
-                annotation=int
+                annotation=int,
             )
         )
         # 3) extras, preserving defaults & annotations
@@ -638,78 +642,74 @@ class KubeflowPlugin:
             # pick whichever component declares it
             param = client_sig.parameters.get(name, server_sig.parameters.get(name))
             default = (
-                param.default
-                if param.default is not inspect._empty
-                else inspect._empty
+                param.default if param.default is not inspect._empty else inspect._empty
             )
-            ann = (
-                param.annotation
-                if param.annotation is not inspect._empty
-                else None
-            )
+            ann = param.annotation if param.annotation is not inspect._empty else None
             sig_params.append(
                 Parameter(
                     name=name,
                     kind=Parameter.POSITIONAL_OR_KEYWORD,
                     annotation=ann,
-                    default=default
+                    default=default,
                 )
             )
         pipeline_sig = Signature(parameters=sig_params)
 
-        #create compoent from func
-        setup_links = KubeflowPlugin.create_component_from_func(setup_links_func,base_image="hiroregistry/cogflow:latest")
-        release_links=KubeflowPlugin.create_component_from_func(release_links_func,base_image="hiroregistry/cogflow:latest")
+        # create compoent from func
+        setup_links = KubeflowPlugin.create_component_from_func(
+            setup_links_func, base_image="hiroregistry/cogflow:latest"
+        )
+        release_links = KubeflowPlugin.create_component_from_func(
+            release_links_func, base_image="hiroregistry/cogflow:latest"
+        )
 
         def fl_pipeline_func(*args, **kwargs):
-                    # 2) bind positional → named arguments per our explicit signature
-            bound = fl_pipeline_func.__signature__.bind_partial(*args, **kwargs)  # ← CHANGE
-            bound.apply_defaults()                                      # ← CHANGE
-            args_map = bound.arguments                                  # ← CHANGE
+            # 2) bind positional → named arguments per our explicit signature
+            bound = fl_pipeline_func.__signature__.bind_partial(
+                *args, **kwargs
+            )  # ← CHANGE
+            bound.apply_defaults()  # ← CHANGE
+            args_map = bound.arguments  # ← CHANGE
             # extract required inputs
-            local_data_connectors = args_map['local_data_connectors']
-            number_of_iterations  = args_map['number_of_iterations']
+            local_data_connectors = args_map["local_data_connectors"]
+            number_of_iterations = args_map["number_of_iterations"]
 
             # split extras for client & server
             server_kwargs = {k: args_map[k] for k in server_extra}
             client_kwargs = {k: args_map[k] for k in client_extra}
 
-            #generate service name with run id later at runtime it will replaced by run id
-            srv_name = "flserver-"+"{{workflow.uid}}"
+            # generate service name with run id later at runtime it will replaced by run id
+            srv_name = "flserver-" + "{{workflow.uid}}"
             # 1. create the k8s Service
             setup_task = setup_links(name=srv_name)
 
             # 2. start the FL server
-            
+
             server_task = fl_server(
-                number_of_iterations=number_of_iterations,
-                **server_kwargs
+                number_of_iterations=number_of_iterations, **server_kwargs
             ).after(setup_task)
             server_task.add_pod_label(name="app", value=srv_name)
 
             # 3. fan-out clients in parallel
             with dsl.ParallelFor(local_data_connectors) as connector:
-
                 fl_client(
                     server_address=setup_task.output,
                     local_data_connector=connector,
-                    **client_kwargs
+                    **client_kwargs,
                 ).after(setup_task)
 
             # 4. tear down once the server is done
-            release_links(
-                name=setup_task.output
-            ).after(server_task)
+            release_links(name=setup_task.output).after(server_task)
             # Attach the explicit signature so KFP can see all inputs
-        
+
         fl_pipeline_func.__signature__ = pipeline_sig
 
         # Decorate as a pipeline
         flpipeline = dsl.pipeline(
-            name='Federated Learning Pipeline',
-            description='Auto-generated FL pipeline'
-            )(fl_pipeline_func)
+            name="Federated Learning Pipeline", description="Auto-generated FL pipeline"
+        )(fl_pipeline_func)
         return flpipeline
+
     @staticmethod
     def create_fl_component_from_func(
         func,
@@ -761,7 +761,6 @@ class KubeflowPlugin:
                 ns_path = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
                 default_namespace = ""
                 if os.path.exists(ns_path):
-
                     with open(ns_path, encoding="utf-8") as f:
                         default_namespace = f.read().strip()
 
@@ -805,7 +804,7 @@ class KubeflowPlugin:
                 #     KubeflowPlugin().delete_service(name=srv_name)
 
         wrapped_func.__signature__ = new_sig
-            
+
         # Create the initial KFP component
         training_var = kfp.components.create_component_from_func(
             func=wrapped_func,
@@ -816,7 +815,6 @@ class KubeflowPlugin:
         )
 
         def wrapped_fl_component(*args, **kwargs):
-
             run_id = "{{workflow.uid}}"
 
             component_op = training_var(*args, **kwargs)
@@ -829,7 +827,7 @@ class KubeflowPlugin:
 
             # Add model access configurations
             component_op = CogContainer.add_model_access(component_op)
-            
+
             # Add run_id and pod label
             run_id = f"flserver-{uuid.uuid4()}"
             component_op.add_env_variable(V1EnvVar("POD_LABEL", value=run_id))
@@ -872,9 +870,8 @@ class KubeflowPlugin:
         new_sig = sig.replace(parameters=list(sig.parameters.values()) + [run_id_param])
 
         # 2) Wrap the user's func so it *accepts* run_id (but just ignores it)
-        #@functools.wraps(func)
+        # @functools.wraps(func)
         def func_with_run_id(*args, run_id="{{workflow.uid}}", **kwargs):
-
             kwargs.update({"serveraddress": f"flserver-{run_id}"})
             return func(*args, **kwargs)
 
@@ -890,7 +887,6 @@ class KubeflowPlugin:
         )
 
         def wrapped_fl_client_component(*args, run_id="{{workflow.uid}}", **kwargs):
-
             component_op = training_var(*args, run_id=run_id, **kwargs)
 
             # Add model access configurations
@@ -933,7 +929,6 @@ class KubeflowPlugin:
         )
 
         def wrapped_fl_client_component(*args, run_id="{{workflow.uid}}", **kwargs):
-
             component_op = training_var(*args, run_id=run_id, **kwargs)
 
             # Add model access configurations
