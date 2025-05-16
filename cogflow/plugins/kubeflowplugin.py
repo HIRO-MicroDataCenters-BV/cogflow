@@ -565,6 +565,32 @@ class KubeflowPlugin:
         Any other parameters that fl_client/ fl_server declare will automatically
         become pipeline inputs and be forwarded along.
         """
+        
+        def setup_links_func(name:str)->str:
+            """
+            Set up a service in the default namespace with the given name.
+            Args:
+                name (str): Name of the service to be created.
+            Returns:
+                str: Name of the created service.
+            """           
+            from cogflow import KubeflowPlugin
+            KubeflowPlugin().create_service(name=name)
+            return name
+        
+        
+        def release_links_func(name:str):
+            """
+            Release a service created by `setup_links_func`.
+            Deletes a previously created service by name in the default namespace.
+            Args:
+                name (str): Name of the service to be deleted.
+            Returns:
+                str: Result message of service deletion.
+            """
+            from cogflow import KubeflowPlugin
+            KubeflowPlugin().delete_service(name=name)
+        
         # Introspect client/server signatures
         client_sig = inspect.signature(fl_client)
         server_sig = inspect.signature(fl_server)
@@ -630,9 +656,10 @@ class KubeflowPlugin:
                 )
             )
         pipeline_sig = Signature(parameters=sig_params)
+
         #create compoent from func
-        setup_links = KubeflowPlugin.create_component_from_func(KubeflowPlugin.create_service)
-        release_links=KubeflowPlugin.create_component_from_func(KubeflowPlugin.delete_service)
+        setup_links = KubeflowPlugin.create_component_from_func(setup_links_func,base_image="hiroregistry/cogflow:latest")
+        release_links=KubeflowPlugin.create_component_from_func(release_links_func,base_image="hiroregistry/cogflow:latest")
 
         def fl_pipeline_func(*args, **kwargs):
                     # 2) bind positional → named arguments per our explicit signature
