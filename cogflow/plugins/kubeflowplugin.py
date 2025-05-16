@@ -683,9 +683,9 @@ class KubeflowPlugin:
             # 1. create the k8s Service
             setup_task = setup_links(name=srv_name)
             # 1.1. tear down once the server is done
-            release_links(name=srv_name)
+            cleanup_task = release_links(name=srv_name)
             # 2. start the FL server
-            with dsl.ExitHandler(exit_task=release_links(name=srv_name)):
+            with dsl.ExitHandler(cleanup_task):
                 server_task = fl_server(
                     number_of_iterations=number_of_iterations, **server_kwargs
                 ).after(setup_task)
