@@ -8,6 +8,7 @@ import os
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Mapping, Callable
+from inspect import Signature, signature,Parameter
 import kfp
 from kfp import dsl
 from kserve import (
@@ -572,26 +573,79 @@ class KubeflowPlugin:
         client_req = {'server_address', 'local_data_connector'}
         server_req = {'number_of_iterations'}
 
+            # ← CHANGE: only consider real kw/positional params, skip VAR_POSITIONAL and VAR_KEYWORD
+        def _valid_param_names(sig):
+            return [
+                name for name, p in sig.parameters.items()
+                if p.kind in (inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                            inspect.Parameter.KEYWORD_ONLY)
+            ]
+        
+        client_params = _valid_param_names(client_sig)             # ← CHANGE
+        server_params = _valid_param_names(server_sig)             # ← CHANGE
+
         # Find any extra parameters
-        client_extra = [p for p in client_sig.parameters if p not in client_req]
-        server_extra = [p for p in server_sig.parameters if p not in server_req]
+        client_extra = [p for p in client_params if p not in client_req]
+        server_extra = [p for p in server_params if p not in server_req]
         extra_params = list(dict.fromkeys(client_extra + server_extra))
 
+        # Build a list of inspect.Parameter for the pipeline signature
+        sig_params = []
+        # 1) local_data_connectors
+        sig_params.append(
+            inspect.Parameter(
+                name='local_data_connectors',
+                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=list
+            )
+        )
+        # 2) number_of_iterations
+        sig_params.append(
+            Parameter(
+                name='number_of_iterations',
+                kind=Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=int
+            )
+        )
+        # 3) extras, preserving defaults & annotations
+        for name in extra_params:
+            # pick whichever component declares it
+            param = client_sig.parameters.get(name, server_sig.parameters.get(name))
+            default = (
+                param.default
+                if param.default is not inspect._empty
+                else inspect._empty
+            )
+            ann = (
+                param.annotation
+                if param.annotation is not inspect._empty
+                else None
+            )
+            sig_params.append(
+                Parameter(
+                    name=name,
+                    kind=Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=ann,
+                    default=default
+                )
+            )
+        pipeline_sig = Signature(parameters=sig_params)
         #create compoent from func
         setup_links = KubeflowPlugin.create_component_from_func(KubeflowPlugin.create_service)
         release_links=KubeflowPlugin.create_component_from_func(KubeflowPlugin.delete_service)
 
-        @dsl.pipeline(
-            name='Federated Learning Pipeline',
-            description='Dynamically generated FL pipeline'
-        )
-        def flpipeline(local_data_connectors: list,
-                    number_of_iterations: int,
-                    **kwargs):
-            # Validate we got all extras
-            missing = [p for p in extra_params if p not in kwargs]
-            if missing:
-                raise ValueError(f"Missing pipeline parameters: {missing}")
+        def fl_pipeline_func(*args, **kwargs):
+                    # 2) bind positional → named arguments per our explicit signature
+            bound = fl_pipeline_func.__signature__.bind_partial(*args, **kwargs)  # ← CHANGE
+            bound.apply_defaults()                                      # ← CHANGE
+            args_map = bound.arguments                                  # ← CHANGE
+            # extract required inputs
+            local_data_connectors = args_map['local_data_connectors']
+            number_of_iterations  = args_map['number_of_iterations']
+
+            # split extras for client & server
+            server_kwargs = {k: args_map[k] for k in server_extra}
+            client_kwargs = {k: args_map[k] for k in client_extra}
 
             #generate service name with run id later at runtime it will replaced by run id
             srv_name = "flserver-"+"{{workflow.uid}}"
@@ -599,28 +653,35 @@ class KubeflowPlugin:
             setup_task = setup_links(name=srv_name)
 
             # 2. start the FL server
-            server_params = {p: kwargs[p] for p in server_extra}
+            
             server_task = fl_server(
                 number_of_iterations=number_of_iterations,
-                server_address=setup_task.output,
-                **server_params
+                **server_kwargs
             ).after(setup_task)
             server_task.add_pod_label(name="app", value=srv_name)
 
             # 3. fan-out clients in parallel
-            client_params = {p: kwargs[p] for p in client_extra}
             with dsl.ParallelFor(local_data_connectors) as connector:
+
                 fl_client(
                     server_address=setup_task.output,
                     local_data_connector=connector,
-                    **client_params
+                    **client_kwargs
                 ).after(setup_task)
 
             # 4. tear down once the server is done
             release_links(
-                service_name=setup_task.output
+                name=setup_task.output
             ).after(server_task)
+            # Attach the explicit signature so KFP can see all inputs
+        
+        fl_pipeline_func.__signature__ = pipeline_sig
 
+        # Decorate as a pipeline
+        flpipeline = dsl.pipeline(
+            name='Federated Learning Pipeline',
+            description='Auto-generated FL pipeline'
+            )(fl_pipeline_func)
         return flpipeline
     @staticmethod
     def create_fl_component_from_func(
@@ -795,6 +856,49 @@ class KubeflowPlugin:
         # 3) Create the initial KFP component
         training_var = kfp.components.create_component_from_func(
             func=func_with_run_id,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+        )
+
+        def wrapped_fl_client_component(*args, run_id="{{workflow.uid}}", **kwargs):
+
+            component_op = training_var(*args, run_id=run_id, **kwargs)
+
+            # Add model access configurations
+            component_op = CogContainer.add_model_access(component_op)
+            return component_op
+
+        wrapped_fl_client_component.component_spec = training_var.component_spec
+        return wrapped_fl_client_component
+
+    @staticmethod
+    def create_fl_base_component(
+        func,
+        annotations: Optional[Mapping[str, str]] = None,
+        output_component_file=None,
+        base_image=None,
+        packages_to_install=None,
+    ) -> Callable:
+        """
+        Decorator to mark and execute an FL client function.
+
+        Args:
+            annotations (dict, optional): Arbitrary metadata to tag the component.
+            func : Wraps a function
+            output_component_file (str, optional): The output file for the component.
+            base_image (str, optional): The base image to use. Defaults to
+            "hiroregistry/cogflow:dev".
+            packages_to_install (list, optional): List of packages to install.
+
+        Returns:
+            Callable: The original function, executed when called.
+        """
+
+        # 3) Create the initial KFP component
+        training_var = kfp.components.create_component_from_func(
+            func=func,
             output_component_file=output_component_file,
             base_image=base_image,
             packages_to_install=packages_to_install,
