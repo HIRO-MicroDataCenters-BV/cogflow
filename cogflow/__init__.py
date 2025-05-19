@@ -76,7 +76,7 @@ register_dataset: Register a dataset.
 
 import json
 import os
-from typing import Union, Any, List, Optional, Dict, Mapping
+from typing import Callable, Union, Any, List, Optional, Dict, Mapping
 import random
 import string
 import time
@@ -286,9 +286,7 @@ def evaluate(
     # Capture final CPU and memory usage metrics
     final_cpu_percent = psutil.cpu_percent(interval=1)
     final_memory_info = psutil.virtual_memory()
-    final_memory_used_mb = round(
-        final_memory_info.used / (1024**2), 2
-    )  # Convert to MB
+    final_memory_used_mb = round(final_memory_info.used / (1024**2), 2)  # Convert to MB
 
     # Attempt to make POST requests, continue regardless of success or failure
     try:
@@ -1851,7 +1849,7 @@ def get_deployments(namespace=KubeflowPlugin().get_default_namespace()):
 def create_fl_component_from_func(
     func,
     output_component_file=None,
-    base_image=plugin_config.FLSERVER_BASE_IMAGE,
+    base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
     container_port=8080,
@@ -1879,9 +1877,9 @@ def create_fl_component_from_func(
     )
 
 
-def flservercomponent(
+def fl_server_component(
     output_component_file=None,
-    base_image=plugin_config.FLSERVER_BASE_IMAGE,
+    base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
     container_port=8080,
@@ -1912,10 +1910,28 @@ def flservercomponent(
     return decorator
 
 
+def create_fl_pipeline(fl_client: Callable, fl_server: Callable):
+    """
+    Returns a KFP pipeline function that wires up:
+    setup_links → fl_server → many fl_client → release_links
+
+    fl_client must accept at minimum:
+    - server_address: str
+    - local_data_connector
+
+    fl_server must accept at minimum:
+    - number_of_iterations: int
+
+    Any other parameters that fl_client/ fl_server declare will automatically
+    become pipeline inputs and be forwarded along.
+    """
+    return KubeflowPlugin().create_fl_pipeline(fl_client=fl_client, fl_server=fl_server)
+
+
 def create_fl_client_component(
     func,
     output_component_file=None,
-    base_image=plugin_config.FLCLIENT_BASE_IMAGE,
+    base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
 ):
@@ -1939,9 +1955,9 @@ def create_fl_client_component(
     )
 
 
-def flclientcomponent(
+def fl_client_component(
     output_component_file=None,
-    base_image=plugin_config.FLCLIENT_BASE_IMAGE,
+    base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
 ):
@@ -1951,7 +1967,7 @@ def flclientcomponent(
     Args:
         output_component_file (str, optional): The output file for the component.
         base_image (str, optional): The base image to use. Defaults to
-        "hiroregistry/flclient:latest".
+        "hiroregistry/flcogflow:latest".
         packages_to_install (list, optional): List of packages to install.
         annotations: Optional. Allows adding arbitrary key-value data to the
         component specification.
