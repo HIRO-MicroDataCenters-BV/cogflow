@@ -699,7 +699,6 @@ class KubeflowPlugin:
                         **client_kwargs,
                     ).after(setup_task)
 
-
             # Attach the explicit signature so KFP can see all inputs
 
         fl_pipeline_func.__signature__ = pipeline_sig
@@ -735,7 +734,7 @@ class KubeflowPlugin:
         )
 
         def wrapped_fl_component(*args, **kwargs):
-            run_id = "fl-server-"+"{{workflow.uid}}"
+            run_id = "fl-server-" + "{{workflow.uid}}"
 
             component_op = training_var(*args, **kwargs)
 
@@ -793,7 +792,7 @@ class KubeflowPlugin:
             # Add model access configurations
             component_op = CogContainer.add_model_access(component_op)
             return component_op
-        
+
         wrapped_fl_client_component.__signature__ = inspect.signature(training_var)
         wrapped_fl_client_component.component_spec = training_var.component_spec
         return wrapped_fl_client_component
