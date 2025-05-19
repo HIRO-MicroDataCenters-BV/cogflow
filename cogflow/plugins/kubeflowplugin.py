@@ -2,13 +2,12 @@
 This module provides functionality related to Kubeflow Pipelines.
 """
 
-import functools
 import inspect
 import os
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Mapping, Callable
-from inspect import Signature, signature, Parameter
+from inspect import Signature, Parameter
 import kfp
 from kfp import dsl
 from kserve import (
@@ -655,7 +654,7 @@ class KubeflowPlugin:
             )
         pipeline_sig = Signature(parameters=sig_params)
 
-        # create compoent from func
+        # create component from func
         setup_links = KubeflowPlugin.create_component_from_func(
             setup_links_func, base_image="hiroregistry/cogflow:latest"
         )
@@ -747,7 +746,7 @@ class KubeflowPlugin:
             component_op = CogContainer.add_model_access(component_op)
 
             # Add run_id and pod label
-            component_op.add_pod_label(name="app", value=run_id)
+            component_op.add_pod_label(name=pod_label_name, value=run_id)
 
             return component_op
 
@@ -771,7 +770,7 @@ class KubeflowPlugin:
             func : Wraps a function
             output_component_file (str, optional): The output file for the component.
             base_image (str, optional): The base image to use. Defaults to
-            "hiroregistry/cogflow:dev".
+            "hiroregistry/cogflow:latest".
             packages_to_install (list, optional): List of packages to install.
 
         Returns:
@@ -813,7 +812,7 @@ class KubeflowPlugin:
             func : Wraps a function
             output_component_file (str, optional): The output file for the component.
             base_image (str, optional): The base image to use. Defaults to
-            "hiroregistry/cogflow:dev".
+            "hiroregistry/cogflow:latest".
             packages_to_install (list, optional): List of packages to install.
 
         Returns:
