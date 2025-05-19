@@ -726,7 +726,7 @@ class KubeflowPlugin:
 
         # Create the initial KFP component
         training_var = kfp.components.create_component_from_func(
-            func=wrapped_func,
+            func=func,
             output_component_file=output_component_file,
             base_image=base_image,
             packages_to_install=packages_to_install,
