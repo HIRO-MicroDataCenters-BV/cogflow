@@ -152,7 +152,8 @@ class KubeflowPlugin:
             component_op = training_var(*args, **kwargs)
             component_op = CogContainer.add_model_access(component_op)
             return component_op
-
+        
+        wrapped_component.__signature__ = inspect.signature(training_var)
         wrapped_component.component_spec = training_var.component_spec
         return wrapped_component
 
