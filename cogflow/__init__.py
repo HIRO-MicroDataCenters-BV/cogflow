@@ -1910,7 +1910,11 @@ def fl_server_component(
     return decorator
 
 
-def create_fl_pipeline(fl_client: Callable, fl_server: Callable):
+def create_fl_pipeline(
+        fl_client: Callable, 
+        fl_server: Callable,  
+        connectors: list, 
+        node_enforce: bool = True):
     """
     Returns a KFP pipeline function that wires up:
     setup_links → fl_server → many fl_client → release_links
@@ -1925,7 +1929,10 @@ def create_fl_pipeline(fl_client: Callable, fl_server: Callable):
     Any other parameters that fl_client/ fl_server declare will automatically
     become pipeline inputs and be forwarded along.
     """
-    return KubeflowPlugin().create_fl_pipeline(fl_client=fl_client, fl_server=fl_server)
+    return KubeflowPlugin().create_fl_pipeline(fl_client=fl_client, 
+                                               fl_server=fl_server,
+                                               connectors=connectors, 
+                                               node_enforce=node_enforce)
 
 
 def create_fl_client_component(

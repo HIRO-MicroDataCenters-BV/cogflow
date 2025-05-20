@@ -548,7 +548,11 @@ class KubeflowPlugin:
             print(f"Exception when deleting service: {e}")
 
     @staticmethod
-    def create_fl_pipeline(fl_client, fl_server):
+    def create_fl_pipeline(
+            fl_client, 
+            fl_server,
+            connectors: list, 
+            node_enforce: bool = True):
         """
         Returns a KFP pipeline function that wires up:
         setup_links → fl_server → many fl_client → release_links
@@ -620,14 +624,7 @@ class KubeflowPlugin:
 
         # Build a list of inspect.Parameter for the pipeline signature
         sig_params = []
-        # 1) local_data_connectors
-        sig_params.append(
-            inspect.Parameter(
-                name="local_data_connectors",
-                kind=inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                annotation=list,
-            )
-        )
+        # 1) local_data_connectors --removed
         # 2) number_of_iterations
         sig_params.append(
             Parameter(
@@ -662,7 +659,7 @@ class KubeflowPlugin:
             release_links_func, base_image="hiroregistry/cogflow:latest"
         )
 
-        def fl_pipeline_func(*args, **kwargs):
+        def fl_pipeline_func(*args, _node_enforce=node_enforce, **kwargs):
             # 2) bind positional → named arguments per our explicit signature
             bound = fl_pipeline_func.__signature__.bind_partial(
                 *args, **kwargs
@@ -670,7 +667,7 @@ class KubeflowPlugin:
             bound.apply_defaults()  # ← CHANGE
             args_map = bound.arguments  # ← CHANGE
             # extract required inputs
-            local_data_connectors = args_map["local_data_connectors"]
+            #local_data_connectors = args_map["local_data_connectors"]
             number_of_iterations = args_map["number_of_iterations"]
 
             # split extras for client & server
@@ -690,13 +687,24 @@ class KubeflowPlugin:
                 ).after(setup_task)
                 server_task.add_pod_label(name="app", value=srv_name)
 
-                # 3. fan-out clients in parallel
-                with dsl.ParallelFor(local_data_connectors) as connector:
-                    fl_client(
+                # 3. fan-out clients in parallel -- We will revert back to this after v2
+                # supported grouping added later on kfp v2
+                #with dsl.ParallelFor(local_data_connectors) as connector:
+                for connector in connectors:
+                    client_op=fl_client(
                         server_address=setup_task.output,
-                        local_data_connector=connector,
+                        local_data_connector=connector.link,
                         **client_kwargs,
                     ).after(setup_task)
+
+                    region = getattr(connector, 'region', '') 
+                    # ← CHANGE: only add node selector if enforcement is enabled
+                    if _node_enforce:
+                        client_op.add_node_selector_constraint("region", region)
+
+                    client_op.set_display_name(            # ← CHANGE: moved inside loop
+                        f"client:{region}"       # ← CHANGE: display region
+            )
 
             # Attach the explicit signature so KFP can see all inputs
 
