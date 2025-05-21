@@ -549,10 +549,8 @@ class KubeflowPlugin:
 
     @staticmethod
     def create_fl_pipeline(
-            fl_client, 
-            fl_server,
-            connectors: list, 
-            node_enforce: bool = True):
+        fl_client, fl_server, connectors: list, node_enforce: bool = True
+    ):
         """
         Returns a KFP pipeline function that wires up:
         setup_links → fl_server → many fl_client → release_links
@@ -667,7 +665,7 @@ class KubeflowPlugin:
             bound.apply_defaults()  # ← CHANGE
             args_map = bound.arguments  # ← CHANGE
             # extract required inputs
-            #local_data_connectors = args_map["local_data_connectors"]
+            # local_data_connectors = args_map["local_data_connectors"]
             number_of_iterations = args_map["number_of_iterations"]
 
             # split extras for client & server
@@ -689,22 +687,22 @@ class KubeflowPlugin:
 
                 # 3. fan-out clients in parallel -- We will revert back to this after v2
                 # supported grouping added later on kfp v2
-                #with dsl.ParallelFor(local_data_connectors) as connector:
+                # with dsl.ParallelFor(local_data_connectors) as connector:
                 for connector in connectors:
-                    client_op=fl_client(
+                    client_op = fl_client(
                         server_address=setup_task.output,
                         local_data_connector=connector.link,
                         **client_kwargs,
                     ).after(setup_task)
 
-                    region = getattr(connector, 'region', '') 
+                    region = getattr(connector, "region", "")
                     # ← CHANGE: only add node selector if enforcement is enabled
                     if _node_enforce:
                         client_op.add_node_selector_constraint("region", region)
 
-                    client_op.set_display_name(            # ← CHANGE: moved inside loop
-                        f"client:{region}"       # ← CHANGE: display region
-            )
+                    client_op.set_display_name(  # ← CHANGE: moved inside loop
+                        f"client:{region}"  # ← CHANGE: display region
+                    )
 
             # Attach the explicit signature so KFP can see all inputs
 
