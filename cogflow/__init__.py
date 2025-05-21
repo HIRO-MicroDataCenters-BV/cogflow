@@ -286,7 +286,9 @@ def evaluate(
     # Capture final CPU and memory usage metrics
     final_cpu_percent = psutil.cpu_percent(interval=1)
     final_memory_info = psutil.virtual_memory()
-    final_memory_used_mb = round(final_memory_info.used / (1024**2), 2)  # Convert to MB
+    final_memory_used_mb = round(
+        final_memory_info.used / (1024**2), 2
+    )  # Convert to MB
 
     # Attempt to make POST requests, continue regardless of success or failure
     try:
@@ -1911,10 +1913,11 @@ def fl_server_component(
 
 
 def create_fl_pipeline(
-        fl_client: Callable, 
-        fl_server: Callable,  
-        connectors: list, 
-        node_enforce: bool = True):
+    fl_client: Callable,
+    fl_server: Callable,
+    connectors: list,
+    node_enforce: bool = True,
+):
     """
     Returns a KFP pipeline function that wires up:
     setup_links → fl_server → many fl_client → release_links
@@ -1929,16 +1932,20 @@ def create_fl_pipeline(
     Any other parameters that fl_client/ fl_server declare will automatically
     become pipeline inputs and be forwarded along.
     """
-    return KubeflowPlugin().create_fl_pipeline(fl_client=fl_client, 
-                                               fl_server=fl_server,
-                                               connectors=connectors, 
-                                               node_enforce=node_enforce)
+    return KubeflowPlugin().create_fl_pipeline(
+        fl_client=fl_client,
+        fl_server=fl_server,
+        connectors=connectors,
+        node_enforce=node_enforce,
+    )
+
 
 def create_fl_recipe(
-        fl_client: Callable, 
-        fl_server: Callable,  
-        connectors: list, 
-        node_enforce: bool = True):
+    fl_client: Callable,
+    fl_server: Callable,
+    connectors: list,
+    node_enforce: bool = True,
+):
     """
     Returns a KFP pipeline function that wires up:
     setup_links → fl_server → many fl_client → release_links
@@ -1953,10 +1960,12 @@ def create_fl_recipe(
     Any other parameters that fl_client/ fl_server declare will automatically
     become pipeline inputs and be forwarded along.
     """
-    return KubeflowPlugin().create_fl_pipeline(fl_client=fl_client, 
-                                               fl_server=fl_server,
-                                               connectors=connectors, 
-                                               node_enforce=node_enforce)
+    return KubeflowPlugin().create_fl_pipeline(
+        fl_client=fl_client,
+        fl_server=fl_server,
+        connectors=connectors,
+        node_enforce=node_enforce,
+    )
 
 
 def create_fl_client_component(
