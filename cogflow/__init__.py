@@ -1934,6 +1934,30 @@ def create_fl_pipeline(
                                                connectors=connectors, 
                                                node_enforce=node_enforce)
 
+def create_fl_recipe(
+        fl_client: Callable, 
+        fl_server: Callable,  
+        connectors: list, 
+        node_enforce: bool = True):
+    """
+    Returns a KFP pipeline function that wires up:
+    setup_links → fl_server → many fl_client → release_links
+
+    fl_client must accept at minimum:
+    - server_address: str
+    - local_data_connector
+
+    fl_server must accept at minimum:
+    - number_of_iterations: int
+
+    Any other parameters that fl_client/ fl_server declare will automatically
+    become pipeline inputs and be forwarded along.
+    """
+    return KubeflowPlugin().create_fl_pipeline(fl_client=fl_client, 
+                                               fl_server=fl_server,
+                                               connectors=connectors, 
+                                               node_enforce=node_enforce)
+
 
 def create_fl_client_component(
     func,

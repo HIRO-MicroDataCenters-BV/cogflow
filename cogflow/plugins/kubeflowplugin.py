@@ -651,10 +651,10 @@ class KubeflowPlugin:
 
         # create component from func
         setup_links = KubeflowPlugin.create_component_from_func(
-            setup_links_func, base_image="hiroregistry/cogflow:latest"
+            setup_links_func, base_image="hiroregistry/cogflow_lite:latest"
         )
         release_links = KubeflowPlugin.create_component_from_func(
-            release_links_func, base_image="hiroregistry/cogflow:latest"
+            release_links_func, base_image="hiroregistry/cogflow_lite:latest"
         )
 
         def fl_pipeline_func(*args, _node_enforce=node_enforce, **kwargs):
