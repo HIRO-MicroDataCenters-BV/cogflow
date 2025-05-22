@@ -15,7 +15,9 @@ class ComponentPlugin:
 
     def __init__(self):
         self.minio_endpoint = os.getenv(plugin_config.MINIO_ENDPOINT_URL)
-        if self.minio_endpoint and self.minio_endpoint.startswith(("http://", "https://")):
+        if self.minio_endpoint and self.minio_endpoint.startswith(
+            ("http://", "https://")
+        ):
             protocol_end_index = self.minio_endpoint.find("//") + 2
             self.minio_endpoint = self.minio_endpoint[protocol_end_index:]
         self.minio_access_key = os.getenv(plugin_config.MINIO_ACCESS_KEY)
@@ -54,7 +56,7 @@ class ComponentPlugin:
             object_name,
             io.BytesIO(content),
             len(content),
-            content_type="application/x-yaml"
+            content_type="application/x-yaml",
         )
         url = minio_client.presigned_get_object(bucket_name, object_name)
         return url, object_name
@@ -68,7 +70,7 @@ class ComponentPlugin:
         data = {
             "name": parsed["name"],
             "input_path": minio_url,
-            "output_path": object_name
+            "output_path": object_name,
         }
         headers = {"Content-Type": "application/json"}
         if api_key:
