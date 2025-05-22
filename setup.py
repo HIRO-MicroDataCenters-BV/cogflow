@@ -30,7 +30,7 @@ with open("LICENSE.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="cogflow",
-    version="1.10.7",
+    version="1.10.8",
     author="Sai_kireeti",
     author_email="sai.kireeti@hiro-microdatacenters.nl",
     description="COG modules",
@@ -49,7 +49,7 @@ setup(
         "scikit-learn==1.2.0",
         "awscli",
         "s3fs",
-        "setuptools",
+        "setuptools==68.2.2",
         "kserve==0.12.0",
         "tensorflow",
         "ray==2.9.3",
