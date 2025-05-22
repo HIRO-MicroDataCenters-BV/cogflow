@@ -49,7 +49,7 @@ setup(
         "scikit-learn==1.2.0",
         "awscli",
         "s3fs",
-        "setuptools",
+        "setuptools==68.2.2",
         "kserve==0.12.0",
         "tensorflow",
         "ray==2.9.3",
