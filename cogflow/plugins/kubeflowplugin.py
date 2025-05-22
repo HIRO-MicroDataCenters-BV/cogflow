@@ -834,6 +834,7 @@ class KubeflowPlugin:
             packages_to_install=packages_to_install,
             annotations=annotations,
         )
+
         def wrapped_fl_client_component(*args, **kwargs):
             component_op = training_var(*args, **kwargs)
 
