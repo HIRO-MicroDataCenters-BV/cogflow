@@ -6,7 +6,6 @@ import functools
 import inspect
 import os
 import time
-import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any, Mapping, Callable
 import kfp
@@ -550,13 +549,13 @@ class KubeflowPlugin:
 
     @staticmethod
     def create_fl_component_from_func(
-            func,
-            output_component_file=None,
-            base_image=None,
-            packages_to_install=None,
-            annotations: Optional[Mapping[str, str]] = None,
-            container_port=8080,
-            pod_label_name="app",
+        func,
+        output_component_file=None,
+        base_image=None,
+        packages_to_install=None,
+        annotations: Optional[Mapping[str, str]] = None,
+        container_port=8080,
+        pod_label_name="app",
     ):
         """
         Create a component from a Python function with additional configurations
@@ -573,14 +572,13 @@ class KubeflowPlugin:
             """
             sig = inspect.signature(func)
             run_id_param = inspect.Parameter(
-                                name="srv_name",
-                                kind=inspect.Parameter.KEYWORD_ONLY,
-                                default="{{workflow.uid}}",
-                                )
+                name="srv_name",
+                kind=inspect.Parameter.KEYWORD_ONLY,
+                default="{{workflow.uid}}",
+            )
             new_sig = sig.replace(
-                        parameters=list(sig.parameters.values()) + [run_id_param]
-                    )
-
+                parameters=list(sig.parameters.values()) + [run_id_param]
+            )
 
             @functools.wraps(func)
             def wrapped_func(*args, srv_name="{{workflow.uid}}", **kwargs):
@@ -606,7 +604,7 @@ class KubeflowPlugin:
             annotations=annotations,
         )
 
-        def wrapped_fl_component(*args,  **kwargs):
+        def wrapped_fl_component(*args, **kwargs):
 
             component_op = training_var(*args, **kwargs)
 
@@ -618,7 +616,7 @@ class KubeflowPlugin:
             # Add model access configurations
             component_op = CogContainer.add_model_access(component_op)
             return component_op
-        
+
         wrapped_fl_component.component_spec = training_var.component_spec
         return wrapped_fl_component
 
@@ -651,9 +649,7 @@ class KubeflowPlugin:
             kind=inspect.Parameter.KEYWORD_ONLY,
             default="{{workflow.uid}}",
         )
-        new_sig = sig.replace(
-            parameters=list(sig.parameters.values()) + [run_id_param]
-        )
+        new_sig = sig.replace(parameters=list(sig.parameters.values()) + [run_id_param])
 
         # 2) Wrap the user's func so it *accepts* run_id (but just ignores it)
         @functools.wraps(func)
@@ -671,9 +667,10 @@ class KubeflowPlugin:
             packages_to_install=packages_to_install,
             annotations=annotations,
         )
-        def wrapped_fl_client_component(*args,run_id="{{workflow.uid}}", **kwargs):
 
-            component_op = training_var(*args,run_id=run_id, **kwargs)
+        def wrapped_fl_client_component(*args, run_id="{{workflow.uid}}", **kwargs):
+
+            component_op = training_var(*args, run_id=run_id, **kwargs)
 
             # Add model access configurations
             component_op = CogContainer.add_model_access(component_op)
