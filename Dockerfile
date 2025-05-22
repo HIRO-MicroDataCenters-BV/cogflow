@@ -6,7 +6,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip
 
 # Install specific version of cogflow
 
-RUN pip3 install --ignore-installed cogflow==1.10.7
+RUN pip3 install --ignore-installed cogflow==1.10.8
 
 # Install additional Python packages (shap, xgboost)
 RUN pip3 install --ignore-requires-python shap xgboost
