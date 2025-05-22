@@ -2,10 +2,12 @@
 This module provides functionality related to Kubeflow Pipelines.
 """
 
+import inspect
 import os
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, Mapping
+from typing import Optional, Dict, Any, Mapping, Callable
+from inspect import Signature, Parameter
 import kfp
 from kfp import dsl
 from kserve import (
@@ -19,9 +21,10 @@ from kserve import (
     constants,
     utils,
 )
-from kubernetes import client
-from kubernetes.client import V1ObjectMeta
+from kubernetes import client, config
+from kubernetes.client import V1ObjectMeta, V1ContainerPort
 from kubernetes.client.models import V1EnvVar
+from kubernetes.config import ConfigException
 from tenacity import retry, wait_exponential, stop_after_attempt
 
 from .. import plugin_config
@@ -49,9 +52,28 @@ class CogContainer(kfp.dsl._container_op.Container):
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        # Adding environment variables
-        for key, value in os.environ.items():
-            self.add_env_variable(V1EnvVar(name=key, value=value))
+        env_vars = [
+            "DB_HOST",
+            "DB_PORT",
+            "DB_USER",
+            "DB_PASSWORD",
+            "DB_NAME",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "MINIO_BUCKET_NAME",
+            "BASE_PATH",
+            "MLFLOW_TRACKING_URI",
+            "KF_PIPELINES_SA_TOKEN_PATH",
+            "MINIO_ENDPOINT_URL",
+            "MLFLOW_S3_ENDPOINT_URL",
+        ]
+
+        # Adding only environment variables present in the image
+        for key in env_vars:
+            value = os.environ.get(key)
+            if value:
+                self.add_env_variable(V1EnvVar(name=key, value=value))
+
         return self
 
 
@@ -131,6 +153,7 @@ class KubeflowPlugin:
             component_op = CogContainer.add_model_access(component_op)
             return component_op
 
+        wrapped_component.__signature__ = inspect.signature(training_var)
         wrapped_component.component_spec = training_var.component_spec
         return wrapped_component
 
@@ -429,3 +452,396 @@ class KubeflowPlugin:
         """
         for run in run_ids:
             KubeflowPlugin.client().runs.delete_run(id=run)
+
+    @staticmethod
+    def get_default_namespace() -> str:
+        """
+        Retrieve the default namespace from the current Kubernetes configuration.
+        Returns:
+            str: The default namespace.
+        """
+        try:
+            config.load_incluster_config()
+            with open(
+                "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+                "r",
+                encoding="utf-8",
+            ) as f:
+                return f.read().strip()
+        except (FileNotFoundError, ConfigException):
+            try:
+                config.load_kube_config()
+                current_context = config.list_kube_config_contexts()[1]
+                return current_context["context"].get("namespace", "default")
+            except ConfigException:
+                return "default"
+
+    @staticmethod
+    def create_service(name: str) -> str:
+        """
+        Create a Kubernetes service for the component in the default namespace.
+        Args:
+            name (str): Name of the service to be created.
+        Returns:
+            str: Name of the created service.
+        """
+        namespace = KubeflowPlugin().get_default_namespace()
+        srvname = name
+
+        print(f"Creating service in namespace '{namespace}'...")
+
+        # Define the service
+        service_spec = client.V1Service(
+            api_version="v1",
+            kind="Service",
+            metadata=client.V1ObjectMeta(
+                name=srvname,
+                annotations={
+                    "service.alpha.kubernetes.io/app-protocols": '{"grpc":"HTTP2"}'
+                },
+            ),
+            spec=client.V1ServiceSpec(
+                selector={"app": name},
+                ports=[
+                    client.V1ServicePort(
+                        protocol="TCP", port=8080, name="grpc", target_port=8080
+                    )
+                ],
+                type="ClusterIP",
+            ),
+        )
+
+        # Create the Kubernetes API client
+        api_instance = client.CoreV1Api()
+
+        try:
+            # Create the service
+            api_instance.create_namespaced_service(
+                namespace=namespace, body=service_spec
+            )
+            print(
+                f"Service '{srvname}' created successfully in namespace '{namespace}'."
+            )
+        except client.exceptions.ApiException as e:
+            raise RuntimeError(f"Exception when creating service: {e}")
+
+        return srvname
+
+    @staticmethod
+    def delete_service(name: str):
+        """
+        Delete a Kubernetes service by name in the default namespace.
+        Args:
+            name (str): Name of the service to be deleted.
+        """
+        namespace = KubeflowPlugin().get_default_namespace()
+        srvname = name
+        print(f"Deleting service '{srvname}' from namespace '{namespace}'...")
+
+        api_instance = client.CoreV1Api()
+
+        try:
+            api_instance.delete_namespaced_service(name=srvname, namespace=namespace)
+            print(
+                f"Service '{srvname}' deleted successfully from namespace '{namespace}'."
+            )
+        except client.exceptions.ApiException as e:
+            print(f"Exception when deleting service: {e}")
+
+    @staticmethod
+    def create_fl_pipeline(
+        fl_client, fl_server, connectors: list, node_enforce: bool = True
+    ):
+        """
+        Returns a KFP pipeline function that wires up:
+        setup_links → fl_server → many fl_client → release_links
+
+        fl_client must accept at minimum:
+        - server_address: str
+        - local_data_connector
+
+        fl_server must accept at minimum:
+        - number_of_iterations: int
+
+        Any other parameters that fl_client/ fl_server declare will automatically
+        become pipeline inputs and be forwarded along.
+        """
+
+        def setup_links_func(name: str) -> str:
+            """
+            Set up a service in the default namespace with the given name.
+            Args:
+                name (str): Name of the service to be created.
+            Returns:
+                str: Name of the created service.
+            """
+            from cogflow import KubeflowPlugin
+
+            KubeflowPlugin().create_service(name=name)
+            return name
+
+        def release_links_func(name: str):
+            """
+            Release a service created by `setup_links_func`.
+            Deletes a previously created service by name in the default namespace.
+            Args:
+                name (str): Name of the service to be deleted.
+            Returns:
+                str: Result message of service deletion.
+            """
+            from cogflow import KubeflowPlugin
+
+            KubeflowPlugin().delete_service(name=name)
+
+        # Introspect client/server signatures
+        client_sig = inspect.signature(fl_client)
+        server_sig = inspect.signature(fl_server)
+
+        # Mandatory params
+        client_req = {"server_address", "local_data_connector"}
+        server_req = {"number_of_iterations"}
+
+        # ← CHANGE: only consider real kw/positional params, skip VAR_POSITIONAL and VAR_KEYWORD
+        def _valid_param_names(sig):
+            return [
+                name
+                for name, p in sig.parameters.items()
+                if p.kind
+                in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            ]
+
+        client_params = _valid_param_names(client_sig)  # ← CHANGE
+        server_params = _valid_param_names(server_sig)  # ← CHANGE
+
+        # Find any extra parameters
+        client_extra = [p for p in client_params if p not in client_req]
+        server_extra = [p for p in server_params if p not in server_req]
+        extra_params = list(dict.fromkeys(client_extra + server_extra))
+
+        # Build a list of inspect.Parameter for the pipeline signature
+        sig_params = []
+        # 1) local_data_connectors --removed
+        # 2) number_of_iterations
+        sig_params.append(
+            Parameter(
+                name="number_of_iterations",
+                kind=Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=int,
+            )
+        )
+        # 3) extras, preserving defaults & annotations
+        for name in extra_params:
+            # pick whichever component declares it
+            param = client_sig.parameters.get(name, server_sig.parameters.get(name))
+            default = (
+                param.default if param.default is not inspect._empty else inspect._empty
+            )
+            ann = param.annotation if param.annotation is not inspect._empty else None
+            sig_params.append(
+                Parameter(
+                    name=name,
+                    kind=Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=ann,
+                    default=default,
+                )
+            )
+        pipeline_sig = Signature(parameters=sig_params)
+
+        # create component from func
+        setup_links = KubeflowPlugin.create_component_from_func(
+            setup_links_func, base_image="hiroregistry/cogflow_lite:latest"
+        )
+        release_links = KubeflowPlugin.create_component_from_func(
+            release_links_func, base_image="hiroregistry/cogflow_lite:latest"
+        )
+
+        def fl_pipeline_func(*args, _node_enforce=node_enforce, **kwargs):
+            # 2) bind positional → named arguments per our explicit signature
+            bound = fl_pipeline_func.__signature__.bind_partial(
+                *args, **kwargs
+            )  # ← CHANGE
+            bound.apply_defaults()  # ← CHANGE
+            args_map = bound.arguments  # ← CHANGE
+            # extract required inputs
+            # local_data_connectors = args_map["local_data_connectors"]
+            number_of_iterations = args_map["number_of_iterations"]
+
+            # split extras for client & server
+            server_kwargs = {k: args_map[k] for k in server_extra}
+            client_kwargs = {k: args_map[k] for k in client_extra}
+
+            # generate service name with run id later at runtime it will replaced by run id
+            srv_name = "flserver-" + "{{workflow.uid}}"
+            # 1. create the k8s Service
+            setup_task = setup_links(name=srv_name)
+            # 1.1. tear down once the server is done
+            cleanup_task = release_links(name=srv_name)
+            # 2. start the FL server
+            with dsl.ExitHandler(cleanup_task):
+                server_task = fl_server(
+                    number_of_iterations=number_of_iterations, **server_kwargs
+                ).after(setup_task)
+                server_task.add_pod_label(name="app", value=srv_name)
+
+                # 3. fan-out clients in parallel -- We will revert back to this after v2
+                # supported grouping added later on kfp v2
+                # with dsl.ParallelFor(local_data_connectors) as connector:
+                for connector in connectors:
+                    client_op = fl_client(
+                        server_address=setup_task.output,
+                        local_data_connector=connector.link,
+                        **client_kwargs,
+                    ).after(setup_task)
+
+                    region = getattr(connector, "region", "")
+                    # ← CHANGE: only add node selector if enforcement is enabled
+                    if _node_enforce:
+                        client_op.add_node_selector_constraint("region", region)
+
+                    client_op.set_display_name(  # ← CHANGE: moved inside loop
+                        f"client:{region}"  # ← CHANGE: display region
+                    )
+
+            # Attach the explicit signature so KFP can see all inputs
+
+        fl_pipeline_func.__signature__ = pipeline_sig
+
+        # Decorate as a pipeline
+        flpipeline = dsl.pipeline(
+            name="Federated Learning Pipeline", description="Auto-generated FL pipeline"
+        )(fl_pipeline_func)
+        return flpipeline
+
+    @staticmethod
+    def create_fl_component_from_func(
+        func,
+        output_component_file=None,
+        base_image=None,
+        packages_to_install=None,
+        annotations: Optional[Mapping[str, str]] = None,
+        container_port=8080,
+        pod_label_name="app",
+    ):
+        """
+        Create a component from a Python function with additional configurations
+        for ports and pod labels using Pod UID to ensure unique run_id.
+        """
+
+        # Create the initial KFP component
+        training_var = kfp.components.create_component_from_func(
+            func=func,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+        )
+
+        def wrapped_fl_component(*args, **kwargs):
+            run_id = "fl-server-" + "{{workflow.uid}}"
+
+            component_op = training_var(*args, **kwargs)
+
+            # Add container port and pod labels
+            component_op.container.add_port(
+                V1ContainerPort(container_port=container_port)
+            )
+
+            # Add model access configurations
+            component_op = CogContainer.add_model_access(component_op)
+
+            # Add run_id and pod label
+            component_op.add_pod_label(name=pod_label_name, value=run_id)
+
+            return component_op
+
+        wrapped_fl_component.__signature__ = inspect.signature(training_var)
+        wrapped_fl_component.component_spec = training_var.component_spec
+        return wrapped_fl_component
+
+    @staticmethod
+    def create_fl_client_component(
+        func,
+        annotations: Optional[Mapping[str, str]] = None,
+        output_component_file=None,
+        base_image=None,
+        packages_to_install=None,
+    ) -> Callable:
+        """
+        Decorator to mark and execute an FL client function.
+
+        Args:
+            annotations (dict, optional): Arbitrary metadata to tag the component.
+            func : Wraps a function
+            output_component_file (str, optional): The output file for the component.
+            base_image (str, optional): The base image to use. Defaults to
+            "hiroregistry/cogflow:latest".
+            packages_to_install (list, optional): List of packages to install.
+
+        Returns:
+            Callable: The original function, executed when called.
+        """
+        # 3) Create the initial KFP component
+        training_var = kfp.components.create_component_from_func(
+            func=func,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+        )
+
+        def wrapped_fl_client_component(*args, **kwargs):
+            component_op = training_var(*args, **kwargs)
+
+            # Add model access configurations
+            component_op = CogContainer.add_model_access(component_op)
+            return component_op
+
+        wrapped_fl_client_component.__signature__ = inspect.signature(training_var)
+        wrapped_fl_client_component.component_spec = training_var.component_spec
+        return wrapped_fl_client_component
+
+    @staticmethod
+    def create_fl_base_component(
+        func,
+        annotations: Optional[Mapping[str, str]] = None,
+        output_component_file=None,
+        base_image=None,
+        packages_to_install=None,
+    ) -> Callable:
+        """
+        Decorator to mark and execute an FL client function.
+
+        Args:
+            annotations (dict, optional): Arbitrary metadata to tag the component.
+            func : Wraps a function
+            output_component_file (str, optional): The output file for the component.
+            base_image (str, optional): The base image to use. Defaults to
+            "hiroregistry/cogflow:latest".
+            packages_to_install (list, optional): List of packages to install.
+
+        Returns:
+            Callable: The original function, executed when called.
+        """
+
+        # 3) Create the initial KFP component
+        training_var = kfp.components.create_component_from_func(
+            func=func,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+        )
+
+        def wrapped_fl_client_component(*args, **kwargs):
+            component_op = training_var(*args, **kwargs)
+
+            # Add model access configurations
+            component_op = CogContainer.add_model_access(component_op)
+            return component_op
+
+        wrapped_fl_client_component.__signature__ = inspect.signature(training_var)
+        wrapped_fl_client_component.component_spec = training_var.component_spec
+        return wrapped_fl_client_component

@@ -53,7 +53,7 @@ Pipeline and Component Management
 pipeline: Create a new Kubeflow pipeline.
 create_component_from_func: Create a Kubeflow component from a function.
 client: Get the Kubeflow client.
-load_component_from_url: Load a Kubeflow component from a URL.
+load_component: Load a Kubeflow component from a URL/file/text.
 
 Model Serving
 
@@ -76,10 +76,11 @@ register_dataset: Register a dataset.
 
 import json
 import os
-import time
-from typing import Union, Any, List, Optional, Dict, Mapping
+from typing import Callable, Union, Any, List, Optional, Dict, Mapping
 import random
 import string
+import time
+import psutil
 import numpy as np
 import pandas as pd
 import requests
@@ -88,6 +89,9 @@ from mlflow.models import ModelSignature, ModelInputExample
 from scipy.sparse import csr_matrix, csc_matrix
 from kfp.components import InputPath, OutputPath
 from kfp.dsl import ParallelFor
+
+from .kafka.consumer import stop_consumer, start_consumer_thread
+from .plugins.message_broker_dataset_plugin import MessageBrokerDatasetPlugin
 from .v2 import *
 from . import pluginmanager, plugin_config
 from .plugin_config import (
@@ -97,28 +101,17 @@ from .plugin_config import (
     ACCESS_KEY_ID,
     SECRET_ACCESS_KEY,
     S3_ENDPOINT_URL,
-    ML_DB_USERNAME,
-    ML_DB_PASSWORD,
-    ML_DB_HOST,
-    ML_DB_PORT,
-    ML_DB_NAME,
-    COGFLOW_DB_USERNAME,
-    COGFLOW_DB_PASSWORD,
-    COGFLOW_DB_HOST,
-    COGFLOW_DB_PORT,
-    COGFLOW_DB_NAME,
     MINIO_ENDPOINT_URL,
     MINIO_ACCESS_KEY,
     MINIO_SECRET_ACCESS_KEY,
     API_BASEPATH,
 )
+from .pluginmanager import PluginManager
 from .plugins.dataset_plugin import DatasetMetadata, DatasetPlugin
 from .plugins.kubeflowplugin import CogContainer, KubeflowPlugin
 from .plugins.mlflowplugin import MlflowPlugin
 from .plugins.notebook_plugin import NotebookPlugin
-from .pluginmanager import PluginManager
 from .util import make_post_request, is_valid_s3_uri
-
 
 pyfunc = MlflowPlugin().pyfunc
 mlflow = MlflowPlugin().mlflow
@@ -290,12 +283,24 @@ def evaluate(
     url_artifacts = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
         "validation_artifacts"
     )
+    # Capture final CPU and memory usage metrics
+    final_cpu_percent = psutil.cpu_percent(interval=1)
+    final_memory_info = psutil.virtual_memory()
+    final_memory_used_mb = round(final_memory_info.used / (1024**2), 2)  # Convert to MB
 
     # Attempt to make POST requests, continue regardless of success or failure
     try:
         metrics = result.metrics
-        metrics.update({"model_name": model_name})
-        make_post_request(url_metrics, data=metrics)
+        metrics.update(
+            {
+                "model_name": model_name,
+                "cpu_consumption": final_cpu_percent,
+                "memory_utilization": final_memory_used_mb,
+            }
+        )
+        print("metrics", metrics)
+        response = requests.post(url=url_metrics, json=metrics, timeout=100)
+        response.raise_for_status()
     except Exception as exp:
         print(f"Failed to post metrics: {exp}")
 
@@ -303,10 +308,13 @@ def evaluate(
 
     # Update artifacts with model name
     serialized_artifacts.update({"model_name": model_name})
-
     # Now you can use serialized_artifacts in your HTTP request
     try:
-        make_post_request(url_artifacts, data=serialized_artifacts)
+        # make_post_request(url_artifacts, data=serialized_artifacts)
+        response = requests.post(
+            url=url_artifacts, json=serialized_artifacts, timeout=100
+        )
+        response.raise_for_status()
     except Exception as exp:
         print(f"Failed to post artifacts: {exp}")
 
@@ -668,7 +676,6 @@ def log_model(
     )
 
     try:
-
         # If registered_model_name is not provided, generate it
         if registered_model_name is None:
             # Check if sk_model is a string
@@ -864,7 +871,7 @@ def pipeline(name=None, description=None):
 def create_component_from_func(
     func,
     output_component_file=None,
-    base_image="hiroregistry/cogflow:latest",
+    base_image=plugin_config.BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
 ):
@@ -875,7 +882,7 @@ def create_component_from_func(
         func: The function to create the component from.
         output_component_file (str, optional): The output file for the component.
         base_image (str, optional): The base image to use. Defaults to
-        "hiroregistry/cogflow:latest".
+        "hiroregistry/cogflow:dev".
         packages_to_install (list, optional): List of packages to install.
         annotations: Optional. Allows adding arbitrary key-value data to the
         component specification.
@@ -1024,7 +1031,7 @@ def delete_pipeline(pipeline_id):
 
 def cogcomponent(
     output_component_file=None,
-    base_image="hiroregistry/cogflow:latest",
+    base_image=plugin_config.BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
 ):
@@ -1035,7 +1042,7 @@ def cogcomponent(
         output_component_file (str, optional): Path to save the component YAML file.
         Defaults to None.
         base_image (str, optional): Base Docker image for the component. Defaults to
-        "hiroregistry/cogflow:latest".
+        "hiroregistry/cogflow:dev".
         packages_to_install (List[str], optional): List of additional Python packages
         to install in the component.
         Defaults to None.
@@ -1096,9 +1103,9 @@ def create_run_from_pipeline_func(
         print(f"Run {run_details.run_id} status: {status}")
         time.sleep(plugin_config.TIMER_IN_SEC)
 
-    details = get_pipeline_and_experiment_details(run_details.run_id)
-    print("details of upload pipeline", details)
-    NotebookPlugin().save_pipeline_details_to_db(details)
+    # details = get_pipeline_and_experiment_details(run_details.run_id)
+    # print("details of upload pipeline", details)
+    # NotebookPlugin().save_pipeline_details_to_db(details)
     return run_details
 
 
@@ -1114,6 +1121,24 @@ def get_pipeline_and_experiment_details(run_id):
         # Extract run details
         run = run_detail.run
         pipeline_id = run.pipeline_spec.pipeline_id
+        workflow_manifest = run_detail.pipeline_runtime.workflow_manifest
+
+        # Try to parse the workflow manifest if it's a valid JSON string
+        try:
+            # Parse the string to a dictionary (if it's a valid JSON string)
+            workflow_manifest_dict = json.loads(workflow_manifest)
+
+            # Get the workflow name from the metadata section
+            workflow_name = workflow_manifest_dict.get("metadata", {}).get("name", None)
+
+            # If pipeline_id is None, set it to the workflow_name
+            if pipeline_id is None:
+                pipeline_id = workflow_name
+
+            # print(f"Pipeline ID: {pipeline_id}")
+
+        except json.JSONDecodeError:
+            print("Error: workflow_manifest is not a valid JSON string")
         experiment_id = run.resource_references[0].key.id
         run_details = {
             "uuid": run.id,
@@ -1140,17 +1165,34 @@ def get_pipeline_and_experiment_details(run_id):
             "createdAt_in_sec": experiment.created_at,
         }
 
-        # Get pipeline details using the pipeline_id
-        pipeline_info = KubeflowPlugin().client().get_pipeline(pipeline_id=pipeline_id)
+        if run.pipeline_spec.pipeline_id:
+            # Get pipeline details using the pipeline_id
+            pipeline_info = (
+                KubeflowPlugin().client().get_pipeline(pipeline_id=pipeline_id)
+            )
 
+            pipeline_details = {
+                "uuid": pipeline_info.id,
+                "createdAt_in_sec": pipeline_info.created_at,
+                "name": pipeline_info.name,
+                "description": pipeline_info.description,
+                "experiment_uuid": experiment.id,
+                "status": run.status,
+            }
+
+        pipeline_spec = json.loads(
+            workflow_manifest_dict["metadata"].get(
+                "pipelines.kubeflow.org/pipeline_spec", "{}"
+            )
+        )
         pipeline_details = {
-            "uuid": pipeline_info.id,
-            "createdAt_in_sec": pipeline_info.created_at,
-            "name": pipeline_info.name,
-            "description": pipeline_info.description,
-            "parameters": pipeline_info.parameters,
+            "uuid": pipeline_id,
+            "createdAt_in_sec": workflow_manifest_dict["metadata"].get(
+                "creationTimestamp", None
+            ),
+            "name": workflow_manifest_dict["metadata"].get("name", None),
+            "description": pipeline_spec.get("description", "No description available"),
             "experiment_uuid": experiment.id,
-            "pipeline_spec": run.pipeline_spec.workflow_manifest,
             "status": run.status,
         }
 
@@ -1176,13 +1218,13 @@ def get_pipeline_and_experiment_details(run_id):
         steps = workflow["status"]["nodes"]
         model_uris = []
 
-        for step_name, step_info in steps.items():
-            print(f"step={step_name}")
+        for step_info in steps.items():
+            # print(f"step={step_name}")
             if step_info["type"] == "Pod":
                 outputs = step_info.get("outputs", {}).get("parameters", [])
                 for output in outputs:
-                    print(f"Artifact: {output['name']}")
-                    print(f"URI: {output['value']}")
+                    # print(f"Artifact: {output['name']}")
+                    # print(f"URI: {output['value']}")
                     if is_valid_s3_uri(output["value"]):
                         model_uris.append(output["value"])
                     else:
@@ -1196,11 +1238,9 @@ def get_pipeline_and_experiment_details(run_id):
             url = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
                 "models_uri"
             )
-            data = {"uri": model_uri}
-            json_data = json.dumps(data)
-            headers = {"Content-Type": "application/json"}
+            query_params = {"uri": model_uri}
             # Make the GET request
-            response = requests.get(url, data=json_data, headers=headers, timeout=100)
+            response = requests.get(url, params=query_params, timeout=100)
 
             # Check if the request was successful
             if response.status_code == 200:
@@ -1295,7 +1335,6 @@ def custom_log_model(
     )
 
     try:
-
         # If registered_model_name is not provided, generate it
         if registered_model_name is None:
             # Check if sk_model is a string
@@ -1434,6 +1473,557 @@ def list_pipelines_by_name(pipeline_name):
     """
 
     return NotebookPlugin().list_pipelines_by_name(pipeline_name=pipeline_name)
+
+
+def model_recommender(model_name=None, classification_score=None):
+    """
+    Calls the model recommender API and returns the response.
+
+    Args:
+    - model_name (str): The name of the model to recommend (optional).
+    - classification_score (list): A list of classification scores to consider(e.g., accuracy_score, f1_score,
+     recall_score, log_loss, roc_auc, precision_score, example_count, score.). (optional).
+
+    Returns:
+    - dict: The response from the model recommender API.
+    """
+
+    return NotebookPlugin().model_recommender(
+        model_name=model_name, classification_score=classification_score
+    )
+
+
+def get_pipeline_task_sequence_by_run_id(run_id):
+    """
+    Fetches the pipeline workflow and task sequence for a given run in Kubeflow.
+
+    Args:
+        run_id (str): The ID of the pipeline run to fetch details for.
+
+    Returns:
+        tuple: A tuple containing:
+            - pipeline_workflow_name (str): The name of the pipeline's workflow (root node of the DAG).
+            - task_structure (dict): A dictionary representing the task structure of the pipeline, with each node
+                                     containing information such as task ID, pod name, status, inputs, outputs,
+                                     and resource duration.
+
+    The task structure contains the following fields for each node:
+        - id (str): The unique ID of the task (node).
+        - podName (str): The name of the pod associated with the task.
+        - name (str): The display name of the task.
+        - inputs (list): A list of input parameters for the task.
+        - outputs (list): A list of outputs produced by the task.
+        - status (str): The phase/status of the task (e.g., 'Succeeded', 'Failed').
+        - startedAt (str): The timestamp when the task started.
+        - finishedAt (str): The timestamp when the task finished.
+        - resourcesDuration (dict): A dictionary representing the resources used (e.g., CPU, memory).
+        - children (list): A list of child tasks (if any) in the DAG.
+
+    Example:
+        >>> run_id = "afcf98bb-a9af-4a34-a512-1236110150ae"
+        >>> pipeline_name, task_structure = get_pipeline_and_task_sequence_by_run(run_id)
+        >>> print(f"Pipeline Workflow Name: {pipeline_name}")
+        >>> print("Task Structure:", task_structure)
+
+    Raises:
+        ValueError: If the root node (DAG) is not found in the pipeline.
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_run_id(run_id=run_id)
+
+
+def list_all_pipelines():
+    """
+    Lists all pipelines along with their IDs, handling pagination.
+
+    Returns:
+        list: A list of tuples containing (pipeline_name, pipeline_id).
+    """
+    return NotebookPlugin().list_all_pipelines()
+
+
+def get_pipeline_task_sequence_by_pipeline_id(pipeline_id):
+    """
+    Fetches the task structures of all pipeline runs based on the provided pipeline_id.
+
+    Args:
+        pipeline_id (str): The ID of the pipeline to fetch task structures for.
+
+    Returns:
+        list: A list of dictionaries containing pipeline workflow names and task structures for each run.
+    Example:
+        >>>pipeline_id = "1000537e-b101-4432-a779-768ec479c2b0"  # Replace with your actual pipeline_id
+        >>>all_task_structures = get_pipeline_task_sequence_by_pipeline_id(pipeline_id)
+        >>>for details in all_task_structures:
+            >>>print(f'Run ID: {details["run_id"]}')
+            >>>print(f'Pipeline Workflow Name: {details["pipeline_workflow_name"]}')
+            >>>print("Task Structure:")
+            >>>print(json.dumps(details["task_structure"], indent=4))
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_pipeline_id(
+        pipeline_id=pipeline_id
+    )
+
+
+def get_latest_run_id_by_pipeline_id(pipeline_id):
+    """
+    Fetches the run_id of the latest pipeline run by its pipeline_id.
+
+    Args:
+        pipeline_id (str): The ID of the pipeline to search for.
+
+    Returns:
+        str: The run_id of the latest run if found, otherwise None.
+    """
+    NotebookPlugin().get_run_ids_by_pipeline_id(pipeline_id=pipeline_id)
+
+
+def get_pipeline_task_sequence_by_run_name(run_name):
+    """
+    Fetches the task structure of a pipeline run based on its name.
+
+    Args:
+        run_name (str): The name of the pipeline run to fetch task structure for.
+
+    Returns:
+        tuple: (pipeline_workflow_name, task_structure)
+    Example:
+        >>>run_name = "Run of test_pipeline (ad001)"
+        >>>pipeline_name, task_structure = get_pipeline_task_sequence_by_name(run_name)
+        >>>print(f'Pipeline Workflow Name: {pipeline_name}')
+        >>>print("Task Structure:")
+        >>>print(json.dumps(task_structure, indent=4))
+    """
+    return NotebookPlugin().get_pipeline_task_sequence_by_run_name(run_name=run_name)
+
+
+def get_run_id_by_run_name(run_name):
+    """
+    Fetches the run_id of a pipeline run by its name, traversing all pages if necessary.
+
+    Args:
+        run_name (str): The name of the pipeline run to search for.
+
+    Returns:
+        str: The run_id if found, otherwise None.
+    """
+    return NotebookPlugin().get_run_id_by_run_name(run_name=run_name)
+
+
+def get_run_ids_by_pipeline_name(pipeline_name):
+    """
+    Fetches all run_ids for a given pipeline name.
+
+    Args:
+        pipeline_name (str): The name of the pipeline to search for.
+
+    Returns:
+        list: A list of run_ids for the matching pipeline name.
+    """
+    return NotebookPlugin().get_run_ids_by_pipeline_name(pipeline_name=pipeline_name)
+
+
+def get_pipeline_task_sequence(pipeline_name=None, pipeline_workflow_name=None):
+    """
+    Fetches the task structures of all pipeline runs based on the provided pipeline name or pipeline workflow name.
+
+    Args:
+        pipeline_name (str, optional): The name of the pipeline to fetch task structures for.
+        pipeline_workflow_name (str, optional): The workflow name of the pipeline to fetch task structures for.
+
+    Returns:
+        list: A list with details of task structures for each run.
+    Example:
+        >>> pipeline_workflow_name = "pipeline-vzn7z"
+        >>> all_task_structures = get_pipeline_task_sequence(pipeline_workflow_name=pipeline_workflow_name)
+        >>> for details in all_task_structures:
+                >>> print(f'Run ID: {details["run_id"]}')
+                >>> print(f'Pipeline Workflow Name: {details["pipeline_workflow_name"]}')
+                >>> print("Task Structure:")
+                >>> print(json.dumps(details["task_structure"], indent=4))
+
+    Raises:
+        ValueError: If neither pipeline_name nor pipeline_workflow_name is provided.
+    """
+    return NotebookPlugin().get_pipeline_task_sequence(
+        pipeline_name=pipeline_name, pipeline_workflow_name=pipeline_workflow_name
+    )
+
+
+def get_all_run_ids():
+    """
+    Fetches all run_ids available in the system.
+
+    Returns:
+        list: A list of all run_ids.
+    """
+    return NotebookPlugin().get_all_run_ids()
+
+
+def get_run_ids_by_name(run_name):
+    """
+    Fetches run_ids by run name.
+
+    Args:
+        run_name (str): The name of the run to search for.
+
+    Returns:
+        list: A list of run_ids matching the run_name.
+    """
+    return NotebookPlugin().get_run_ids_by_name(run_name=run_name)
+
+
+def get_task_structure_by_task_id(task_id, run_id=None, run_name=None):
+    """
+    Fetches the task structure of a specific task ID, optionally filtered by run_id or run_name.
+
+    Args:
+        task_id (str): The task ID to look for.
+        run_id (str, optional): The specific run ID to filter by. Defaults to None.
+        run_name (str, optional): The specific run name to filter by. Defaults to None.
+
+    Returns:
+        list: A list of dictionaries containing run IDs and their corresponding task info if found.
+    Example:
+        >>>task_id = "test-pipeline-749dn-2534915009"
+        >>>run_id = None  # "afcf98bb-a9af-4a34-a512-1236110150ae"
+        >>>run_name = "Run of test_pipeline (ad001)"
+    """
+    return NotebookPlugin().get_task_structure_by_task_id(
+        task_id=task_id, run_id=run_id, run_name=run_name
+    )
+
+
+def register_message_broker(
+    dataset_name: str,
+    broker_name: str,
+    broker_ip: str,
+    broker_port: int,
+    topic_name: str,
+):
+    """
+    Registers a Message Broker dataset by creating and submitting a registration request.
+
+    This function constructs a `Request` object with details about the dataset,
+    such as dataset name, Kafka host name, server IP, and topic details, then submits
+    this request to register the dataset using the `KafkaDatasetPlugin`. If any error
+    occurs during the process, it logs the exception message.
+
+    Parameters:
+    - dataset_name (str): The name of the dataset to be registered.
+    - broker_name (str): Host name of the Broker server.
+    - broker_ip (str): IP address of the Broker server.
+    - broker_port (int): Port address of the Broker server.
+    - topic_name (str): Name of the Broker topic associated with this dataset.
+
+    Returns:
+    - Response from the `BrokerDatasetPlugin` upon successful registration, or None if an error occurs.
+
+    Exceptions:
+    - Catches any exceptions and logs an error message detailing the failure.
+
+    """
+    try:
+        print(f"Start creating dataset {dataset_name}")
+        message_broker_dataset_plugin = MessageBrokerDatasetPlugin()
+        message_broker_dataset_plugin.register_message_broker_dataset(
+            dataset_name, broker_name, broker_ip, topic_name, broker_port
+        )
+    except Exception as ex:
+        print(f"Error registering message broker server dataset details: {str(ex)}")
+
+
+def read_message_broker_data(dataset_id: int):
+    """
+    Initiates reading messages from a specified message broker topic.
+
+    This function calls `start_consumer_thread` with the provided message broker URL,
+    topic name, and consumer group ID to initiate the reading process. It starts a
+    consumer thread to continuously listen for and process incoming messages on the
+    specified topic, managed under the provided consumer group for load balancing
+    and offset tracking.
+
+    Parameters:
+    - dataset_id (str): The name of the dataset that need to be read data from.
+
+    Returns:
+    - None
+    """
+    print(f"Reading message from dataset {dataset_id}")
+    message_broker_dataset_plugin = MessageBrokerDatasetPlugin()
+    message_broker_topic_detail = (
+        message_broker_dataset_plugin.get_message_broker_details(dataset_id)
+    )
+    print(f"start reading message from topic {message_broker_topic_detail}")
+    kafka_broker_url = (
+        message_broker_topic_detail.broker_ip
+        + ":"
+        + str(message_broker_topic_detail.broker_port)
+    )
+    read_from_kafka_topic(
+        kafka_broker_url,
+        message_broker_topic_detail.topic_name,
+        "aces_metrics_consumer",
+    )
+
+
+def read_from_kafka_topic(kafka_broker_url, topic_name, group_id):
+    """
+    Initiates reading messages from a specified Kafka topic.
+
+    This function calls `start_consumer_thread` with the provided Kafka broker URL,
+    topic name, and consumer group ID to initiate the reading process. It starts a
+    consumer thread to continuously listen for and process incoming messages on the
+    specified topic, managed under the provided consumer group for load balancing
+    and offset tracking.
+
+    Parameters:
+    - kafka_broker_url (str): The URL of the Kafka broker to connect to.
+    - topic_name (str): The name of the Kafka topic to read messages from.
+    - group_id (str): The consumer group ID for managing offsets and load balancing.
+
+    Returns:
+    - None
+    """
+
+    start_consumer_thread(kafka_broker_url, topic_name, group_id)
+
+
+def stop_kafka_consumer():
+    """
+    Stops the Kafka consumer gracefully.
+
+    This function initiates the process to stop the Kafka consumer by printing a log
+    message and calling the `stop_consumer` function. This is useful in scenarios where
+    the consumer needs to be terminated without abruptly closing the connection,
+    ensuring any active resources are released appropriately.
+
+    Behavior:
+    - Logs a message to indicate that a stop request for the Kafka consumer has been received.
+    - Calls `stop_consumer()` to perform the stop operation.
+
+    Returns:
+    - None
+    """
+    print("Stop kafka consumer request received....")
+    stop_consumer()
+
+
+def get_model_uri(model_name, version):
+    """
+        return the model_uri given the model name and version
+    :param model_name: name of the model
+    :param version: version of the model
+    :return: model_uri
+    """
+    return MlflowPlugin().get_model_uri(model_name=model_name, version=version)
+
+
+def get_artifacts(model_name, version):
+    """
+        return the model_uri given the model name and version
+    :param model_name: name of the model
+    :param version: version of the model
+    :return: model_uri
+    """
+    artifacts_complete = MlflowPlugin().get_model_uri(
+        model_name=model_name, version=version
+    )
+    artifacts = "/".join(artifacts_complete.split("/")[:-1])
+
+    return artifacts
+
+
+def get_deployments(namespace=KubeflowPlugin().get_default_namespace()):
+    """
+    Fetches details of all InferenceServices in the given namespace and formats them.
+
+    Args:
+    - namespace (str): The Kubernetes namespace where InferenceServices are deployed. Defaults to "default".
+
+    Returns:
+    - list of dicts: A list of dictionaries with InferenceService details.
+    """
+    return NotebookPlugin().get_deployments(namespace=namespace)
+
+
+def create_fl_component_from_func(
+    func,
+    output_component_file=None,
+    base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
+    container_port=8080,
+):
+    """
+    Create a component from a Python function with additional configurations
+    for ports and pod labels.
+    Args:
+        func (Callable): Python function to convert into a component.
+        output_component_file (str, optional): Path to save the component YAML file. Defaults to None.
+        base_image (str, optional): Base Docker image for the component. Defaults to None.
+        packages_to_install (List[str], optional): List of additional Python packages to install.
+        annotations: Optional. Adds arbitrary key-value data to the component specification.
+        container_port (int, optional): Container port to expose. Defaults to 8080.
+    Returns:
+        kfp.components.ComponentSpec: Component specification.
+    """
+    return KubeflowPlugin().create_fl_component_from_func(
+        func=func,
+        output_component_file=output_component_file,
+        base_image=base_image,
+        packages_to_install=packages_to_install,
+        annotations=annotations,
+        container_port=container_port,
+    )
+
+
+def fl_server_component(
+    output_component_file=None,
+    base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
+    container_port=8080,
+):
+    """
+    Decorator to create a Kubeflow component from a Python function.
+
+    Args:
+        output_component_file (str, optional): Path to save the component YAML file. Defaults to None.
+        base_image (str, optional): Base Docker image for the component. Defaults to None.
+        packages_to_install (List[str], optional): List of additional Python packages to install.
+        annotations: Optional. Adds arbitrary key-value data to the component specification.
+        container_port (int, optional): Container port to expose. Defaults to 8080.
+    Returns:
+        Callable: A wrapped function that is now a Kubeflow component.
+    """
+
+    def decorator(func):
+        return create_fl_component_from_func(
+            func=func,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+            container_port=container_port,
+        )
+
+    return decorator
+
+
+def create_fl_pipeline(
+    fl_client: Callable,
+    fl_server: Callable,
+    connectors: list,
+    node_enforce: bool = True,
+):
+    """
+    Returns a KFP pipeline function that wires up:
+    setup_links → fl_server → many fl_client → release_links
+
+    fl_client must accept at minimum:
+    - server_address: str
+    - local_data_connector
+
+    fl_server must accept at minimum:
+    - number_of_iterations: int
+
+    Any other parameters that fl_client/ fl_server declare will automatically
+    become pipeline inputs and be forwarded along.
+    """
+    return KubeflowPlugin().create_fl_pipeline(
+        fl_client=fl_client,
+        fl_server=fl_server,
+        connectors=connectors,
+        node_enforce=node_enforce,
+    )
+
+
+def create_fl_recipe(
+    fl_client: Callable,
+    fl_server: Callable,
+    connectors: list,
+    node_enforce: bool = True,
+):
+    """
+    Returns a KFP pipeline function that wires up:
+    setup_links → fl_server → many fl_client → release_links
+
+    fl_client must accept at minimum:
+    - server_address: str
+    - local_data_connector
+
+    fl_server must accept at minimum:
+    - number_of_iterations: int
+
+    Any other parameters that fl_client/ fl_server declare will automatically
+    become pipeline inputs and be forwarded along.
+    """
+    return KubeflowPlugin().create_fl_pipeline(
+        fl_client=fl_client,
+        fl_server=fl_server,
+        connectors=connectors,
+        node_enforce=node_enforce,
+    )
+
+
+def create_fl_client_component(
+    func,
+    output_component_file=None,
+    base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
+):
+    """
+    Create a component from a Python function with additional configurations.
+    Args:
+        func (Callable): Python function to convert into a component.
+        output_component_file (str, optional): Path to save the component YAML file. Defaults to None.
+        base_image (str, optional): Base Docker image for the component. Defaults to None.
+        packages_to_install (List[str], optional): List of additional Python packages to install.
+        annotations: Optional. Adds arbitrary key-value data to the component specification.
+    Returns:
+        kfp.components.ComponentSpec: Component specification.
+    """
+    return KubeflowPlugin().create_fl_client_component(
+        func=func,
+        output_component_file=output_component_file,
+        base_image=base_image,
+        packages_to_install=packages_to_install,
+        annotations=annotations,
+    )
+
+
+def fl_client_component(
+    output_component_file=None,
+    base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
+    packages_to_install=None,
+    annotations: Optional[Mapping[str, str]] = None,
+):
+    """
+    Creates a Kubeflow component from a function.
+
+    Args:
+        output_component_file (str, optional): The output file for the component.
+        base_image (str, optional): The base image to use. Defaults to
+        "hiroregistry/flcogflow:latest".
+        packages_to_install (list, optional): List of packages to install.
+        annotations: Optional. Allows adding arbitrary key-value data to the
+        component specification.
+
+    Returns:
+        str: Information message confirming the component creation.
+    """
+
+    def decorator(func):
+        return create_fl_client_component(
+            func=func,
+            output_component_file=output_component_file,
+            base_image=base_image,
+            packages_to_install=packages_to_install,
+            annotations=annotations,
+        )
+
+    return decorator
 
 
 __all__ = [
