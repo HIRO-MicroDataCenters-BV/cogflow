@@ -54,7 +54,7 @@ setup(
         "tensorflow",
         "ray==2.9.3",
         "kafka-python==2.0.2",
-        "yaml",
+        "pyyaml",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",
