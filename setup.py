@@ -51,7 +51,7 @@ setup(
         "s3fs",
         "setuptools==68.2.2",
         "kserve==0.12.0",
-        "tensorflow",
+        "shap",
         "ray==2.9.3",
         "kafka-python==2.0.2",
         "pyyaml",
