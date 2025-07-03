@@ -22,7 +22,6 @@ delete_registered_model: Delete a registered model.
 create_registered_model: Create a new registered model.
 create_model_version: Create a new version of a registered model.
 
-
 Run Management
 
 start_run: Start a new.
