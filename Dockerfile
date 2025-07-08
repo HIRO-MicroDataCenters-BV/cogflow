@@ -1,5 +1,5 @@
 # Use the official Python image as the base image
-FROM python:3.10-slim
+FROM python:3.11.10-slim
 
 # Install Python packages
 RUN python3 -m pip install --no-cache-dir --upgrade pip
