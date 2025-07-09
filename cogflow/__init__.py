@@ -1346,13 +1346,10 @@ def custom_log_model(
                     random.choices(string.ascii_letters + string.digits, k=10)
                 )
         response = NotebookPlugin().save_model_details_to_db(registered_model_name)
-        # print("response", response)
         model_id = response["data"]["id"]
-        # print("model_id", model_id)
         if result.model_uri:
             artifact_uri = get_artifact_uri(artifact_path=result.artifact_path)
             # Construct the model URI
-            # print("model_uri", artifact_uri)
             NotebookPlugin().save_model_uri_to_db(model_id, model_uri=artifact_uri)
     except Exception as exp:
         print(f"Failed to log model details to DB: {exp}")
