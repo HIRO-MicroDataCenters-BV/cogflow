@@ -7,6 +7,7 @@ import yaml
 import requests
 from ..pluginmanager import PluginManager
 from .dataset_plugin import DatasetPlugin
+from ..plugin_config import API_BASEPATH
 
 
 class ComponentPlugin:
@@ -76,15 +77,18 @@ class ComponentPlugin:
         url = minio_client.presigned_get_object(bucket_name, object_name)
         return url, object_name
 
-    def register_component(self, yaml_path, bucket_name, api_base_url, api_key=None):
+    def register_component(
+        self, yaml_path, bucket_name, category=None, creator=None, api_key=None
+    ):
         """
         Registers a component by uploading its YAML definition to MinIO and
         posting its metadata to a registry API.
 
         Args:
+            category: category of component.
+            creator: creator of component.
             yaml_path (str): Path to the component YAML file.
             bucket_name (str): MinIO bucket to upload the YAML.
-            api_base_url (str): Base URL of the component registration API.
             api_key (str, optional): Bearer token for authorization. Defaults to None.
 
         Returns:
@@ -100,14 +104,17 @@ class ComponentPlugin:
         # Prepare data for API
         data = {
             "name": parsed["name"],
-            "input_path": minio_url,
-            "output_path": object_name,
+            "input_path": parsed["inputs"],
+            "output_path": parsed["outputs"],
+            "component_file": minio_url,
+            "category": category,
+            "creator": creator,
         }
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         components = PluginManager().load_path("components")
-        url = f"{api_base_url}{components}"
+        url = f"{API_BASEPATH}{components}"
         response = requests.post(url, json=data, headers=headers, timeout=10)
         response.raise_for_status()
         return response.json()
