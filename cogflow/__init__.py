@@ -2026,15 +2026,18 @@ def fl_client_component(
     return decorator
 
 
-def register_component(yaml_path, bucket_name, api_base_url, api_key=None):
+def register_component(
+    yaml_path, bucket_name, category=None, creator=None, api_key=None
+):
     """
     Registers a component by uploading its YAML definition to MinIO and
     posting its metadata to a registry API.
 
     Args:
+        category: category of component.
+        creator: creator of component.
         yaml_path (str): Path to the component YAML file.
         bucket_name (str): MinIO bucket to upload the YAML.
-        api_base_url (str): Base URL of the component registration API.
         api_key (str, optional): Bearer token for authorization. Defaults to None.
 
     Returns:
@@ -2046,7 +2049,8 @@ def register_component(yaml_path, bucket_name, api_base_url, api_key=None):
     return ComponentPlugin().register_component(
         yaml_path=yaml_path,
         bucket_name=bucket_name,
-        api_base_url=api_base_url,
+        category=category,
+        creator=creator,
         api_key=api_key,
     )
 
