@@ -845,3 +845,22 @@ class KubeflowPlugin:
         wrapped_fl_client_component.__signature__ = inspect.signature(training_var)
         wrapped_fl_client_component.component_spec = training_var.component_spec
         return wrapped_fl_client_component
+
+    @staticmethod
+    def load_k8s_config() -> None:
+        """
+        Loads the Kubernetes configuration.
+
+        This method tries to load the in-cluster configuration if the code is running inside a pod.
+        If it fails (e.g., if the code is running outside the cluster), it loads the kubeconfig file
+        from the default location.
+
+        Raises:
+            config.config_exception.ConfigException: If the configuration could not be loaded.
+        """
+        try:
+            # Load in-cluster config if running in a pod
+            config.load_incluster_config()
+        except config.config_exception.ConfigException:
+            # If not running in a pod, load the kubeconfig file
+            config.load_kube_config()
