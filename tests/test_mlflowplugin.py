@@ -413,7 +413,7 @@ class TestMlflowPlugin(unittest.TestCase):
         :return:
         """
         # Define inputs
-        sk_model = MagicMock()
+        model_name = MagicMock()
         artifact_path = "model"
         # Define any other necessary inputs for the log_model method
 
@@ -431,7 +431,7 @@ class TestMlflowPlugin(unittest.TestCase):
 
         mock_model_version.return_value = 1
         # Call the method under test
-        log_model(sk_model=sk_model, artifact_path=artifact_path)
+        log_model(model_name=model_name, artifact_path=artifact_path)
         # Assert that log_model was called with the correct arguments
         mock_log_model.assert_called_once()
         mock_plugin_activation.assert_called()
@@ -449,7 +449,7 @@ class TestMlflowPlugin(unittest.TestCase):
         :return:
         """
         # Define inputs
-        sk_model = MagicMock()
+        model_name = MagicMock()
         artifact_path = "model"
         # Define any other necessary inputs for the log_model method
 
@@ -467,7 +467,9 @@ class TestMlflowPlugin(unittest.TestCase):
 
         # Call the method under test and assert that it raises an exception
         with self.assertRaises(MlflowException):
-            self.mlflow_plugin.log_model(sk_model=sk_model, artifact_path=artifact_path)
+            self.mlflow_plugin.log_model(
+                sk_model=model_name, artifact_path=artifact_path
+            )
         mock_plugin_activation.assert_called_once()
 
     @patch("mlflow.MlflowClient.search_model_versions")

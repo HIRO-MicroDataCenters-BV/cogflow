@@ -73,6 +73,7 @@ Dataset Registration
 register_dataset: Register a dataset.
 """
 
+import inspect
 import json
 import os
 from typing import Callable, Union, Any, List, Optional, Dict, Mapping
@@ -616,12 +617,12 @@ def log_metric(
 
 
 def log_model(
-    sk_model,
+    model_name,
     artifact_path,
+    registered_model_name=None,
     conda_env=None,
     code_paths=None,
     serialization_format="cloudpickle",
-    registered_model_name=None,
     signature: ModelSignature = None,
     input_example: Union[
         pd.DataFrame,
@@ -644,12 +645,12 @@ def log_model(
     Logs a model.
 
     Args:
-        sk_model: The scikit-learn model to log.
+        model_name: The model to log.
         artifact_path (str): The artifact path to log the model to.
+        registered_model_name (str, optional): The name to register the model under.
         conda_env (str, optional): The conda environment to use.
         code_paths (list, optional): List of paths to include in the model.
         serialization_format (str, optional): The format to use for serialization.
-        registered_model_name (str, optional): The name to register the model under.
         signature (ModelSignature, optional): The signature of the model.
         input_example (Union[pd.DataFrame, np.ndarray, dict, list, csr_matrix, csc_matrix, str,
          bytes, tuple], optional): Example input.
@@ -659,44 +660,63 @@ def log_model(
         pyfunc_predict_fn (str, optional): The prediction function to use.
         metadata (dict, optional): Metadata for the model.
     """
-    result = MlflowPlugin().log_model(
-        sk_model=sk_model,
-        artifact_path=artifact_path,
-        conda_env=conda_env,
-        code_paths=code_paths,
-        serialization_format=serialization_format,
-        registered_model_name=registered_model_name,
-        signature=signature,
-        input_example=input_example,
-        await_registration_for=await_registration_for,
-        pip_requirements=pip_requirements,
-        extra_pip_requirements=extra_pip_requirements,
-        pyfunc_predict_fn=pyfunc_predict_fn,
-        metadata=metadata,
+    is_custom_pyfunc_model = isinstance(model_name, pyfunc.PythonModel) or (
+        inspect.isclass(model_name) and issubclass(model_name, pyfunc.PythonModel)
     )
 
-    try:
-        # If registered_model_name is not provided, generate it
-        if registered_model_name is None:
-            # Check if sk_model is a string
-            if isinstance(sk_model, str):
-                registered_model_name = sk_model
-            else:
-                # Generate a random string to use as the model name
-                registered_model_name = "".join(
-                    random.choices(string.ascii_letters + string.digits, k=10)
-                )
-        response = NotebookPlugin().save_model_details_to_db(registered_model_name)
-        # print("response", response)
-        model_id = response["data"]["id"]
-        # print("model_id", model_id)
-        if result.model_uri:
-            artifact_uri = get_artifact_uri(artifact_path=result.artifact_path)
-            # Construct the model URI
-            # print("model_uri", artifact_uri)
-            NotebookPlugin().save_model_uri_to_db(model_id, model_uri=artifact_uri)
-    except Exception as exp:
-        print(f"Failed to log model details to DB: {exp}")
+    if is_custom_pyfunc_model:
+        # Log using pyfunc flavor
+        result = custom_log_model(
+            artifact_path=artifact_path,
+            python_model=model_name,
+            code_path=code_paths,
+            conda_env=conda_env,
+            signature=signature,
+            input_example=input_example,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            metadata=metadata,
+        )
+    else:
+        # Log using MLflowPlugin (e.g., sklearn, XGBoost, etc.)
+        result = MlflowPlugin().log_model(
+            sk_model=model_name,
+            artifact_path=artifact_path,
+            conda_env=conda_env,
+            code_paths=code_paths,
+            serialization_format=serialization_format,
+            registered_model_name=registered_model_name,
+            signature=signature,
+            input_example=input_example,
+            await_registration_for=await_registration_for,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            pyfunc_predict_fn=pyfunc_predict_fn,
+            metadata=metadata,
+        )
+
+        try:
+            # If registered_model_name is not provided, generate it
+            if registered_model_name is None:
+                # Check if sk_model is a string
+                if isinstance(model_name, str):
+                    registered_model_name = model_name
+                else:
+                    # Generate a random string to use as the model name
+                    registered_model_name = "".join(
+                        random.choices(string.ascii_letters + string.digits, k=10)
+                    )
+            response = NotebookPlugin().save_model_details_to_db(registered_model_name)
+            # print("response", response)
+            model_id = response["data"]["id"]
+            # print("model_id", model_id)
+            if result.model_uri:
+                artifact_uri = get_artifact_uri(artifact_path=result.artifact_path)
+                # Construct the model URI
+                # print("model_uri", artifact_uri)
+                NotebookPlugin().save_model_uri_to_db(model_id, model_uri=artifact_uri)
+        except Exception as exp:
+            print(f"Failed to log model details to DB: {exp}")
 
     return result
 
