@@ -165,9 +165,9 @@ class KnativePlugin:
         namespace,
         bootstrap_server,
         topic,
-        source_name="iris-events-source-seq",
-        consumer_group="iris-kserve-group",
-        sequence_name="iris-prediction-sequence",
+        source_name=None,
+        consumer_group=None,
+        sequence_name=None,
     ):
         """
         Deploy a Knative KafkaSource to consume messages from a Kafka topic
@@ -181,10 +181,10 @@ class KnativePlugin:
             namespace (str): Kubernetes namespace where the KafkaSource and Sequence exist.
             bootstrap_server (str): Kafka bootstrap server address (e.g., "kafka-cluster-kafka-bootstrap.kafka:9092").
             topic (str): Kafka topic name to subscribe to.
-            source_name (str, optional): Name for the KafkaSource resource. Defaults to "iris-events-source-seq".
-            consumer_group (str, optional): Kafka consumer group ID. Defaults to "iris-kserve-group".
+            source_name (str, optional): Name for the KafkaSource resource. Defaults to None.
+            consumer_group (str, optional): Kafka consumer group ID. Defaults to None.
             sequence_name (str, optional): Name of the Knative Sequence to use as the sink.
-            Defaults to "iris-prediction-sequence".
+            Defaults to None.
 
         Returns:
             None
@@ -515,43 +515,49 @@ class KnativePlugin:
             return
         # If both are valid streaming datasets
         else:
+            # Check for broker and topic details
+            (
+                source_exists,
+                source_broker_name,
+                source_broker_port,
+                source_topic,
+            ) = KnativePlugin().get_broker_and_topic_by_dataset_id(
+                api_url=dataset_url,
+                dataset_id=source_info["id"],
+                query_params={"limit": 10},
+            )
+
+            (
+                dest_exists,
+                _,
+                _,
+                _,
+            ) = KnativePlugin().get_broker_and_topic_by_dataset_id(
+                api_url=dataset_url,
+                dataset_id=dest_info["id"],
+                query_params={"limit": 10},
+            )
             if (
-                source_info["data_source_type"] == 2
-                and dest_info["data_source_type"] == 2
+                source_info["data_source_type"] == 11
+                and dest_info["data_source_type"] == 11
             ):
-                print(
-                    f"Both {source_dataset} and {destination_dataset} are valid KAFKA streaming datasets."
-                )
-                print(f"source_dataset_id = {source_info['id']}")
-                print(f"destination_dataset_id = {dest_info['id']}")
-                # Check for broker and topic details
-                (
-                    source_exists,
-                    source_broker_name,
-                    source_broker_port,
-                    source_topic,
-                ) = KnativePlugin().get_broker_and_topic_by_dataset_id(
-                    api_url=dataset_url,
-                    dataset_id=source_info["id"],
-                    query_params={"limit": 10},
+
+                KnativePlugin().create_configmap_nats_kafka_bridge(
+                    namespace=namespace,
+                    configmap_name="nats-kafka-config",
+                    config_data=plugin_config.NATS_KAFKA_CONNECTOR_JSON,
                 )
 
-                (
-                    dest_exists,
-                    dest_broker_name,
-                    _,
-                    dest_topic,
-                ) = KnativePlugin().get_broker_and_topic_by_dataset_id(
-                    api_url=dataset_url,
-                    dataset_id=dest_info["id"],
-                    query_params={"limit": 10},
+                KnativePlugin().deploy_nats_kafka_bridge_deployment(
+                    namespace=namespace,
+                    deployment_name="nats-kafka-bridge",
+                    configmap_name="nats-kafka-config",
                 )
+            elif source_info["data_source_type"] in [10, 11] and dest_info[
+                "data_source_type"
+            ] in [10, 11]:
+
                 if source_exists and dest_exists:
-                    print(f"source_broker_name: {source_broker_name}")
-                    print(f"source_broker_port: {source_broker_port}")
-                    print(f"source_topic: {source_topic}")
-                    print(f"dest_broker: {dest_broker_name}")
-                    print(f"dest_topic: {dest_topic}")
                     try:
                         KnativePlugin().deploy_kafka_sink(
                             name=f"{source_topic}-sink",
@@ -563,9 +569,12 @@ class KnativePlugin:
                             namespace=namespace,
                             bootstrap_server=f"{source_broker_name}:{source_broker_port}",
                             topic=f"{source_topic}",
+                            source_name=f"{source_dataset}-events-source-seq",
+                            consumer_group=f"{source_dataset}-kserve-group",
+                            sequence_name=f"{source_dataset}-prediction-sequence",
                         )
                         KnativePlugin().deploy_sequence(
-                            sequence_name="iris-prediction-sequence",
+                            sequence_name=f"{source_dataset}-prediction-sequence",
                             namespace=namespace,
                             model_isvc_name=model_isvc,
                             kafka_sink_name=f"{source_topic}-sink",
@@ -575,4 +584,3 @@ class KnativePlugin:
 
                 else:
                     print("No matching dataset or invalid response")
-                    # Proceed with further logic...
