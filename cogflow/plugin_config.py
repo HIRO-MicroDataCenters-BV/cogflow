@@ -21,6 +21,7 @@ Attributes:
      MINIO_SECRET_ACCESS_KEY for secure access to MinIO.
     MINIO_SECRET_ACCESS_KEY (str): The secret access key for MinIO authentication. Combined with
      MINIO_ACCESS_KEY for secure access.
+     nats_kafka_connector_json (str): nats_kafka_connector_json
 """
 
 COGFLOW_CONFIG_FILE_PATH = "COGFLOW_CONFIG_FILE_PATH"
@@ -52,3 +53,49 @@ MESSAGE_BROKER_DATASETS_REGISTER = "/broker/register"
 MESSAGE_BROKER_TOPIC_REGISTER = "/topic/register"
 MESSAGE_BROKER_TOPIC_DATASETS_REGISTER = "/message/register"
 MESSAGE_BROKER_TOPIC_DATASETS_DETAILS = "/message/details"
+
+# KNATIVE PLUGIN
+NATS_KAFKA_CONNECTOR_JSON = """
+reconnectinterval: 5000,
+
+connecttimeout: 5000,
+
+logging: {
+  time: true,
+  debug: false,
+  trace: false,
+  colors: true,
+  pid: false,
+}
+
+monitoring: {
+  httpport: 9222,
+}
+
+nats: {
+  Servers: ["nats://cog-nats.nats.svc.cluster.local:4222"],
+  ConnectTimeout: 5000,
+  MaxReconnects: 120,
+  ReconnectWait: 5000,
+}
+
+
+connect: [
+  {
+    id: "IRISNATs"
+    type: "NATSToKafka",
+    subject: "iris.stream",
+    topic: "iris-requests",
+    brokers: ["kafka-cluster-kafka-bootstrap.kafka:9092"],
+  },
+  {
+    type: "JetStreamToKafka",
+    brokers: ["kafka-cluster-kafka-bootstrap.kafka:9092"]
+    id: "irisstream-1",
+    topic: "iris-requests-1",
+    subject: "iris.stream",
+    durablename: "durable_iris_consumer",
+    queuename: "iris_consumers"
+  },
+]
+"""
