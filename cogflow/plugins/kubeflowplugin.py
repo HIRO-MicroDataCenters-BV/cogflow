@@ -22,7 +22,7 @@ from kserve import (
     utils,
 )
 from kubernetes import client, config
-from kubernetes.client import V1ObjectMeta, V1ContainerPort
+from kubernetes.client import V1ObjectMeta, V1ContainerPort, ApiException
 from kubernetes.client.models import V1EnvVar
 from kubernetes.config import ConfigException
 from tenacity import retry, wait_exponential, stop_after_attempt
@@ -202,37 +202,40 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        namespace = utils.get_default_target_namespace()
-        if name is None:
-            now = datetime.now()
-            date = now.strftime("%d%M")
-            name = f"predictormodel{date}"
-        isvc_name = name
-        predictor = V1beta1PredictorSpec(
-            service_account_name="kserve-controller-s3",
-            min_replicas=1,
-            model=V1beta1ModelSpec(
-                model_format=V1beta1ModelFormat(
-                    name=plugin_config.ML_TOOL,
+        try:
+            namespace = utils.get_default_target_namespace()
+            if name is None:
+                now = datetime.now()
+                date = now.strftime("%d%M")
+                name = f"predictormodel{date}"
+            isvc_name = name
+            predictor = V1beta1PredictorSpec(
+                service_account_name="kserve-controller-s3",
+                min_replicas=1,
+                model=V1beta1ModelSpec(
+                    model_format=V1beta1ModelFormat(
+                        name=plugin_config.ML_TOOL,
+                    ),
+                    storage_uri=model_uri,
+                    protocol_version="v2",
                 ),
-                storage_uri=model_uri,
-                protocol_version="v2",
-            ),
-        )
+            )
 
-        isvc = V1beta1InferenceService(
-            api_version=constants.KSERVE_V1BETA1,
-            kind=constants.KSERVE_KIND,
-            metadata=client.V1ObjectMeta(
-                name=isvc_name,
-                namespace=namespace,
-                annotations={"sidecar.istio.io/inject": "false"},
-            ),
-            spec=V1beta1InferenceServiceSpec(predictor=predictor),
-        )
-        kserve = KServeClient()
-        kserve.create(isvc)
-        time.sleep(plugin_config.TIMER_IN_SEC)
+            isvc = V1beta1InferenceService(
+                api_version=constants.KSERVE_V1BETA1,
+                kind=constants.KSERVE_KIND,
+                metadata=client.V1ObjectMeta(
+                    name=isvc_name,
+                    namespace=namespace,
+                    annotations={"sidecar.istio.io/inject": "false"},
+                ),
+                spec=V1beta1InferenceServiceSpec(predictor=predictor),
+            )
+            kserve = KServeClient()
+            kserve.create(isvc)
+            time.sleep(plugin_config.TIMER_IN_SEC)
+        except ApiException as e:
+            raise e
 
     @staticmethod
     def serve_model_v1(model_uri: str, name: str = None):
@@ -250,27 +253,30 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        isvc_name = name
-        namespace = utils.get_default_target_namespace()
-        isvc = V1beta1InferenceService(
-            api_version=constants.KSERVE_V1BETA1,
-            kind=constants.KSERVE_KIND,
-            metadata=V1ObjectMeta(
-                name=isvc_name,
-                namespace=namespace,
-                annotations={"sidecar.istio.io/inject": "false"},
-            ),
-            spec=V1beta1InferenceServiceSpec(
-                predictor=V1beta1PredictorSpec(
-                    service_account_name="kserve-controller-s3",
-                    sklearn=V1beta1SKLearnSpec(storage_uri=model_uri),
-                )
-            ),
-        )
+        try:
+            isvc_name = name
+            namespace = utils.get_default_target_namespace()
+            isvc = V1beta1InferenceService(
+                api_version=constants.KSERVE_V1BETA1,
+                kind=constants.KSERVE_KIND,
+                metadata=V1ObjectMeta(
+                    name=isvc_name,
+                    namespace=namespace,
+                    annotations={"sidecar.istio.io/inject": "false"},
+                ),
+                spec=V1beta1InferenceServiceSpec(
+                    predictor=V1beta1PredictorSpec(
+                        service_account_name="kserve-controller-s3",
+                        sklearn=V1beta1SKLearnSpec(storage_uri=model_uri),
+                    )
+                ),
+            )
 
-        kclient = KServeClient()
-        kclient.create(isvc)
-        time.sleep(plugin_config.TIMER_IN_SEC)
+            kclient = KServeClient()
+            kclient.create(isvc)
+            time.sleep(plugin_config.TIMER_IN_SEC)
+        except ApiException as e:
+            raise e
 
     @staticmethod
     def get_served_model_url(isvc_name: str):
