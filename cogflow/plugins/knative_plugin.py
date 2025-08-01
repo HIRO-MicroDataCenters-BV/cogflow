@@ -506,7 +506,9 @@ class KnativePlugin:
         source_info = source_matched[0]
         dest_info = destination_matched[0]
 
-        if source_info["data_source_type"] != 2 or dest_info["data_source_type"] != 2:
+        if source_info["data_source_type"] not in [10, 11] or dest_info[
+            "data_source_type"
+        ] not in [10, 11]:
             print("Both datasets must be of streaming type.")
             return
         # Check if both have same data_source_type
