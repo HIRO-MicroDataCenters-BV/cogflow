@@ -929,32 +929,32 @@ def client():
     return KubeflowPlugin().client()
 
 
-def serve_model_v2(model_uri: str, name: str = None):
+def serve_model_v2(model_uri: str, isvc_name: str = None):
     """
     Serves a model using Kubeflow V2.
 
     Args:
         model_uri (str): The URI of the model to serve.
-        name (str, optional): The name of the model to serve.
+        isvc_name (str, optional): The name of the model to serve.
 
     Returns:
         str: Information message confirming the model serving.
     """
-    return KubeflowPlugin().serve_model_v2(model_uri=model_uri, name=name)
+    return KubeflowPlugin().serve_model_v2(model_uri=model_uri, isvc_name=isvc_name)
 
 
-def serve_model_v1(model_uri: str, name: str = None):
+def serve_model_v1(model_uri: str, isvc_name: str = None):
     """
     Serves a model using Kubeflow V1.
 
     Args:
         model_uri (str): The URI of the model to serve.
-        name (str, optional): The name of the model to serve.
+        isvc_name (str, optional): The name of the model to serve.
 
     Returns:
         str: Information message confirming the model serving.
     """
-    return KubeflowPlugin().serve_model_v1(model_uri=model_uri, name=name)
+    return KubeflowPlugin().serve_model_v1(model_uri=model_uri, isvc_name=isvc_name)
 
 
 def get_model_url(model_name: str):
@@ -1422,26 +1422,26 @@ def serve_model_v2_url(model_uri: str, name: str = None):
         str: Information message confirming the model serving.
     """
     try:
-        KubeflowPlugin().serve_model_v2(model_uri=model_uri, name=name)
+        KubeflowPlugin().serve_model_v2(model_uri=model_uri, isvc_name=name)
         return get_served_model_url(isvc_name=name)
     except Exception as exp:
         return f"Failed to serve model: {exp}"
 
 
-def serve_model_v1_url(model_uri: str, name: str = None):
+def serve_model_v1_url(model_uri: str, isvc_name: str = None):
     """
     Serves a model using Kubeflow V1.
 
     Args:
         model_uri (str): The URI of the model to serve.
-        name (str, optional): The name of the model to serve.
+        isvc_name (str, optional): The name of the model to serve.
 
     Returns:
         str: Information message confirming the model serving.
     """
     try:
-        KubeflowPlugin().serve_model_v1(model_uri=model_uri, name=name)
-        return get_served_model_url(isvc_name=name)
+        KubeflowPlugin().serve_model_v1(model_uri=model_uri, isvc_name=isvc_name)
+        return get_served_model_url(isvc_name=isvc_name)
     except Exception as exp:
         return f"Failed to serve model: {exp}"
 
@@ -2069,6 +2069,86 @@ def register_component(yaml_path, bucket_name, api_base_url, api_key=None):
         api_base_url=api_base_url,
         api_key=api_key,
     )
+
+
+def get_full_model_uri_from_run_or_registry(
+    run_id: str = None,
+    artifact_path: str = None,
+    model_name: str = None,
+    model_version: str = None,
+) -> str:
+    """
+    Returns the full model URI from either run_id or a model registry entry.
+
+    Args:
+        run_id (str, optional): The run ID or model_id.
+        artifact_path (str, optional): Specific artifact_path name (e.g., 'model').
+        model_name (str, optional): Name of the registered model.
+        model_version (str, optional): Version of the registered model.
+
+    Returns:
+        str: Full model URI like s3://.../artifacts/artifact_path
+
+    Raises:
+        Exception: If neither valid run_id nor model registry info is provided or valid.
+    """
+
+    return MlflowPlugin().get_full_model_uri_from_run_or_registry(
+        run_id=run_id,
+        artifact_path=artifact_path,
+        model_name=model_name,
+        model_version=model_version,
+    )
+
+
+def serve_model(
+    run_id: str = None,
+    artifact_path: str = None,
+    model_name: str = None,
+    model_version: str = None,
+    isvc_name: str = None,
+):
+    """
+    Create a kserve instance.
+
+    Args:
+        isvc_name (str, optional): Name of the kserve instance. If not provided,
+        a default name will be generated.
+        run_id (str, optional): Unique identifier for the model.
+        model_name (str, optional): Name of the registered model.
+        model_version (str, optional): Version of the registered model.
+        artifact_path (str, optional): Specific artifact path name (e.g., 'model').
+
+    Examples:
+        Serve using run ID (with or without artifact path):
+            >>> cogflow.serve_model(isvc_name="...", run_id="...")
+
+        Serve using registered model name and version:
+            >>> cogflow.serve_model(isvc_name="...", model_name="...", model_version="...")
+
+    Raises:
+        Exception: If model resolution or deployment fails.
+    """
+
+    try:
+        model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
+            run_id=run_id,
+            artifact_path=artifact_path,
+            model_name=model_name,
+            model_version=model_version,
+        )
+
+        KubeflowPlugin().serve_model_v2(
+            model_uri=model_details["model_uri"],
+            isvc_name=isvc_name,
+            model_id=model_details["run_id"],
+            model_name=model_details["model_name"],
+            model_version=model_details["model_version"],
+        )
+
+    except Exception as e:
+        print(f"Failed to serve model: {e}")
+        raise e
 
 
 __all__ = [
