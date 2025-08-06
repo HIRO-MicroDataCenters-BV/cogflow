@@ -2076,7 +2076,7 @@ def register_component(
 
 
 def get_full_model_uri_from_run_or_registry(
-    run_id: str = None,
+    model_id: str = None,
     artifact_path: str = None,
     model_name: str = None,
     model_version: str = None,
@@ -2085,7 +2085,7 @@ def get_full_model_uri_from_run_or_registry(
     Returns the full model URI from either run_id or a model registry entry.
 
     Args:
-        run_id (str, optional): The run ID or model_id.
+        model_id (str, optional): The run ID or model_id.
         artifact_path (str, optional): Specific artifact_path name (e.g., 'model').
         model_name (str, optional): Name of the registered model.
         model_version (str, optional): Version of the registered model.
@@ -2098,7 +2098,7 @@ def get_full_model_uri_from_run_or_registry(
     """
 
     return MlflowPlugin().get_full_model_uri_from_run_or_registry(
-        run_id=run_id,
+        model_id=model_id,
         artifact_path=artifact_path,
         model_name=model_name,
         model_version=model_version,
@@ -2106,7 +2106,7 @@ def get_full_model_uri_from_run_or_registry(
 
 
 def serve_model(
-    run_id: str = None,
+    model_id: str = None,
     artifact_path: str = None,
     model_name: str = None,
     model_version: str = None,
@@ -2118,17 +2118,17 @@ def serve_model(
     Args:
         isvc_name (str, optional): Name of the kserve instance. If not provided,
         a default name will be generated.
-        run_id (str, optional): Unique identifier for the model.
+        model_id (str, optional): Unique identifier for the model.
         model_name (str, optional): Name of the registered model.
         model_version (str, optional): Version of the registered model.
         artifact_path (str, optional): Specific artifact path name (e.g., 'model').
 
     Examples:
         Serve using run ID (with or without artifact path):
-            >>> cogflow.serve_model(isvc_name="...", run_id="...")
+            >>> serve_model(isvc_name="...", model_id="...")
 
         Serve using registered model name and version:
-            >>> cogflow.serve_model(isvc_name="...", model_name="...", model_version="...")
+            >>> serve_model(isvc_name="...", model_name="...", model_version="...")
 
     Raises:
         Exception: If model resolution or deployment fails.
@@ -2136,7 +2136,7 @@ def serve_model(
 
     try:
         model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
-            run_id=run_id,
+            model_id=model_id,
             artifact_path=artifact_path,
             model_name=model_name,
             model_version=model_version,
@@ -2145,7 +2145,7 @@ def serve_model(
         KubeflowPlugin().serve_model_v2(
             model_uri=model_details["model_uri"],
             isvc_name=isvc_name,
-            model_id=model_details["run_id"],
+            model_id=model_details["model_id"],
             model_name=model_details["model_name"],
             model_version=model_details["model_version"],
         )

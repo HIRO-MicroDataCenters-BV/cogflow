@@ -641,7 +641,7 @@ class MlflowPlugin:
 
     def get_full_model_uri_from_run_or_registry(
         self,
-        run_id: str = None,
+        model_id: str = None,
         artifact_path: str = None,
         model_name: str = None,
         model_version: str = None,
@@ -650,7 +650,7 @@ class MlflowPlugin:
         Returns model_uri, model_name, model_version, and run_id given either run_id or model_name/version.
 
         Args:
-            run_id (str, optional): MLflow run ID.
+            model_id (str, optional): MLflow run ID.
             artifact_path (str, optional): Path like 'model'.
             model_name (str, optional): Registered model name.
             model_version (str, optional): Registered model version.
@@ -669,7 +669,7 @@ class MlflowPlugin:
         client = self.cogclient
 
         # 1. If model_name & model_version provided → get run_id from registry
-        if not run_id:
+        if not model_id:
             if not (model_name and model_version):
                 raise ValueError(
                     "Either `run_id` or both `model_name` and `model_version` must be provided."
@@ -679,19 +679,19 @@ class MlflowPlugin:
                 mv = client.get_model_version(
                     name=model_name, version=str(model_version)
                 )
-                run_id = mv.run_id
+                model_id = mv.run_id
             except MlflowException as e:
                 raise Exception(f"Failed to fetch model version from registry: {e}")
 
         # 2. Get artifact URI from run
-        run = self.mlflow.get_run(run_id)
+        run = self.mlflow.get_run(model_id)
         artifact_uri = run.info.artifact_uri  # s3://mlflow/...
 
         # 3. If artifact_path is provided, build URI directly
         if artifact_path:
             model_uri = f"{artifact_uri}/{artifact_path}"
         else:
-            artifacts = client.list_artifacts(run_id)
+            artifacts = client.list_artifacts(model_id)
             dirs = [a for a in artifacts if a.is_dir]
             model_files = [
                 a
@@ -706,20 +706,20 @@ class MlflowPlugin:
             elif len(dirs) > 1:
                 dir_names = [d.path for d in dirs]
                 raise Exception(
-                    f"Multiple artifact paths found in run `{run_id}`: {dir_names}. "
+                    f"Multiple artifact paths found in run `{model_id}`: {dir_names}. "
                     f"Please specify the `artifact_path` explicitly."
                 )
             elif model_files:
                 model_uri = f"{artifact_uri}/{model_files[0].path}"
             else:
                 raise Exception(
-                    f"No model artifact_path or supported model file found in run `{run_id}`.\n"
+                    f"No model artifact_path or supported model file found in run `{model_id}`.\n"
                     f"Please provide the artifact_path explicitly using `artifact_path=`."
                 )
 
         # Step 4: If model_name/version is still unknown, resolve from registry
         if not model_name or not model_version:
-            results = self.search_model_versions(filter_string=f"run_id = '{run_id}'")
+            results = self.search_model_versions(filter_string=f"run_id = '{model_id}'")
             for mv in results:
                 model_name = mv.name
                 model_version = mv.version
@@ -729,5 +729,5 @@ class MlflowPlugin:
             "model_uri": model_uri,
             "model_name": model_name,
             "model_version": model_version,
-            "run_id": run_id,
+            "model_id": model_id,
         }
