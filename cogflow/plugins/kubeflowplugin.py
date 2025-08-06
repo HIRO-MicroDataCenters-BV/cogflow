@@ -187,14 +187,23 @@ class KubeflowPlugin:
         return kfp.components.load_component_from_url(url)
 
     @staticmethod
-    def serve_model_v2(model_uri: str, name: str = None):
+    def serve_model_v2(
+        model_uri: str,
+        isvc_name: str = None,
+        model_id: str = None,
+        model_name: str = None,
+        model_version: str = None,
+    ):
         """
         Create a kserve instance.
 
         Args:
             model_uri (str): URI of the model.
-            name (str, optional): Name of the kserve instance. If not provided,
+            isvc_name (str, optional): Name of the kserve instance. If not provided,
             a default name will be generated.
+            model_id (str, optional): Unique identifier for the model.
+            model_name (str, optional): Name of the registered model.
+            model_version (str, optional): Version of the registered model.
 
         Returns:
             None
@@ -204,11 +213,11 @@ class KubeflowPlugin:
 
         try:
             namespace = utils.get_default_target_namespace()
-            if name is None:
+            if isvc_name is None:
                 now = datetime.now()
                 date = now.strftime("%d%M")
-                name = f"predictormodel{date}"
-            isvc_name = name
+                inferencesvc_name = f"predictormodel{date}"
+                isvc_name = inferencesvc_name
             predictor = V1beta1PredictorSpec(
                 service_account_name="kserve-controller-s3",
                 min_replicas=1,
@@ -227,7 +236,12 @@ class KubeflowPlugin:
                 metadata=client.V1ObjectMeta(
                     name=isvc_name,
                     namespace=namespace,
-                    annotations={"sidecar.istio.io/inject": "false"},
+                    annotations={
+                        "sidecar.istio.io/inject": "false",
+                        "model_name": model_name,
+                        "model_version": model_version,
+                        "model_id": model_id,
+                    },
                 ),
                 spec=V1beta1InferenceServiceSpec(predictor=predictor),
             )
@@ -238,13 +252,13 @@ class KubeflowPlugin:
             raise e
 
     @staticmethod
-    def serve_model_v1(model_uri: str, name: str = None):
+    def serve_model_v1(model_uri: str, isvc_name: str = None):
         """
         Create a kserve instance version1.
 
         Args:
             model_uri (str): URI of the model.
-            name (str, optional): Name of the kserve instance. If not provided,
+            isvc_name (str, optional): Name of the kserve instance. If not provided,
             a default name will be generated.
 
         Returns:
@@ -254,7 +268,6 @@ class KubeflowPlugin:
         PluginManager().verify_activation(KubeflowPlugin().section)
 
         try:
-            isvc_name = name
             namespace = utils.get_default_target_namespace()
             isvc = V1beta1InferenceService(
                 api_version=constants.KSERVE_V1BETA1,
