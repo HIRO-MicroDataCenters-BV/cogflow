@@ -294,13 +294,14 @@ class KubeflowPlugin:
     @staticmethod
     def get_served_model_url(isvc_name: str):
         """
-        Retrieve the URL of a deployed model.
+        Retrieve comprehensive information about a deployed model.
 
         Args:
             isvc_name (str): Name of the deployed model.
 
         Returns:
-            str: URL of the deployed model.
+            dict: Model information containing model_name, model_id, model_version,
+                 creation_timestamp, served_model_url, status, and percentage.
         """
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
@@ -314,15 +315,45 @@ class KubeflowPlugin:
         )
         def assert_isvc_created(kserve_client, isvc_name):
             """Wait for the Inference Service to be created successfully."""
-            assert kserve_client.is_isvc_ready(
-                isvc_name
-            ), f"Failed to create Inference Service {isvc_name}."
+            is_ready = kserve_client.is_isvc_ready(isvc_name)
+            return "Ready" if is_ready else "Not ready"
 
         assert_isvc_created(kclient, isvc_name)
 
         isvc_resp = kclient.get(isvc_name)
-        isvc_url = isvc_resp["status"]["address"]["url"]
-        return isvc_url
+
+        annotations = isvc_resp.get("metadata", {}).get("annotations", {})
+
+        conditions = isvc_resp.get("status", {}).get("conditions", [])
+        status = (
+            "ready"
+            if any(
+                condition.get("type") == "Ready" and condition.get("status") == "True"
+                for condition in conditions
+            )
+            else "not_ready"
+        )
+
+        components = isvc_resp.get("status", {}).get("components", {})
+        predictor = components.get("predictor", {})
+        traffic = predictor.get("traffic", [])
+        percentage = traffic[0].get("percent", 100) if traffic else 100
+
+        response = {
+            "model_name": annotations.get("model_name"),
+            "model_id": annotations.get("model_id"),
+            "model_version": annotations.get("model_version"),
+            "creation_timestamp": isvc_resp.get("metadata", {}).get(
+                "creationTimestamp"
+            ),
+            "served_model_url": isvc_resp.get("status", {})
+            .get("address", {})
+            .get("url"),
+            "status": status,
+            "percentage": percentage,
+        }
+
+        return response
 
     @staticmethod
     def delete_served_model(isvc_name: str):
