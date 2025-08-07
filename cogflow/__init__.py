@@ -22,7 +22,6 @@ delete_registered_model: Delete a registered model.
 create_registered_model: Create a new registered model.
 create_model_version: Create a new version of a registered model.
 
-
 Run Management
 
 start_run: Start a new.
@@ -74,6 +73,7 @@ Dataset Registration
 register_dataset: Register a dataset.
 """
 
+import inspect
 import json
 import os
 from typing import Callable, Union, Any, List, Optional, Dict, Mapping
@@ -107,6 +107,7 @@ from .plugin_config import (
     API_BASEPATH,
 )
 from .pluginmanager import PluginManager
+from .plugins.component_plugin import ComponentPlugin
 from .plugins.dataset_plugin import DatasetMetadata, DatasetPlugin
 from .plugins.kubeflowplugin import CogContainer, KubeflowPlugin
 from .plugins.mlflowplugin import MlflowPlugin
@@ -616,12 +617,12 @@ def log_metric(
 
 
 def log_model(
-    sk_model,
+    model_name,
     artifact_path,
+    registered_model_name=None,
     conda_env=None,
     code_paths=None,
     serialization_format="cloudpickle",
-    registered_model_name=None,
     signature: ModelSignature = None,
     input_example: Union[
         pd.DataFrame,
@@ -644,12 +645,12 @@ def log_model(
     Logs a model.
 
     Args:
-        sk_model: The scikit-learn model to log.
+        model_name: The model to log.
         artifact_path (str): The artifact path to log the model to.
+        registered_model_name (str, optional): The name to register the model under.
         conda_env (str, optional): The conda environment to use.
         code_paths (list, optional): List of paths to include in the model.
         serialization_format (str, optional): The format to use for serialization.
-        registered_model_name (str, optional): The name to register the model under.
         signature (ModelSignature, optional): The signature of the model.
         input_example (Union[pd.DataFrame, np.ndarray, dict, list, csr_matrix, csc_matrix, str,
          bytes, tuple], optional): Example input.
@@ -659,44 +660,63 @@ def log_model(
         pyfunc_predict_fn (str, optional): The prediction function to use.
         metadata (dict, optional): Metadata for the model.
     """
-    result = MlflowPlugin().log_model(
-        sk_model=sk_model,
-        artifact_path=artifact_path,
-        conda_env=conda_env,
-        code_paths=code_paths,
-        serialization_format=serialization_format,
-        registered_model_name=registered_model_name,
-        signature=signature,
-        input_example=input_example,
-        await_registration_for=await_registration_for,
-        pip_requirements=pip_requirements,
-        extra_pip_requirements=extra_pip_requirements,
-        pyfunc_predict_fn=pyfunc_predict_fn,
-        metadata=metadata,
+    is_custom_pyfunc_model = isinstance(model_name, pyfunc.PythonModel) or (
+        inspect.isclass(model_name) and issubclass(model_name, pyfunc.PythonModel)
     )
 
-    try:
-        # If registered_model_name is not provided, generate it
-        if registered_model_name is None:
-            # Check if sk_model is a string
-            if isinstance(sk_model, str):
-                registered_model_name = sk_model
-            else:
-                # Generate a random string to use as the model name
-                registered_model_name = "".join(
-                    random.choices(string.ascii_letters + string.digits, k=10)
-                )
-        response = NotebookPlugin().save_model_details_to_db(registered_model_name)
-        # print("response", response)
-        model_id = response["data"]["id"]
-        # print("model_id", model_id)
-        if result.model_uri:
-            artifact_uri = get_artifact_uri(artifact_path=result.artifact_path)
-            # Construct the model URI
-            # print("model_uri", artifact_uri)
-            NotebookPlugin().save_model_uri_to_db(model_id, model_uri=artifact_uri)
-    except Exception as exp:
-        print(f"Failed to log model details to DB: {exp}")
+    if is_custom_pyfunc_model:
+        # Log using pyfunc flavor
+        result = custom_log_model(
+            artifact_path=artifact_path,
+            python_model=model_name,
+            code_path=code_paths,
+            conda_env=conda_env,
+            signature=signature,
+            input_example=input_example,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            metadata=metadata,
+        )
+    else:
+        # Log using MLflowPlugin (e.g., sklearn, XGBoost, etc.)
+        result = MlflowPlugin().log_model(
+            sk_model=model_name,
+            artifact_path=artifact_path,
+            conda_env=conda_env,
+            code_paths=code_paths,
+            serialization_format=serialization_format,
+            registered_model_name=registered_model_name,
+            signature=signature,
+            input_example=input_example,
+            await_registration_for=await_registration_for,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            pyfunc_predict_fn=pyfunc_predict_fn,
+            metadata=metadata,
+        )
+
+        try:
+            # If registered_model_name is not provided, generate it
+            if registered_model_name is None:
+                # Check if sk_model is a string
+                if isinstance(model_name, str):
+                    registered_model_name = model_name
+                else:
+                    # Generate a random string to use as the model name
+                    registered_model_name = "".join(
+                        random.choices(string.ascii_letters + string.digits, k=10)
+                    )
+            response = NotebookPlugin().save_model_details_to_db(registered_model_name)
+            # print("response", response)
+            model_id = response["data"]["id"]
+            # print("model_id", model_id)
+            if result.model_uri:
+                artifact_uri = get_artifact_uri(artifact_path=result.artifact_path)
+                # Construct the model URI
+                # print("model_uri", artifact_uri)
+                NotebookPlugin().save_model_uri_to_db(model_id, model_uri=artifact_uri)
+        except Exception as exp:
+            print(f"Failed to log model details to DB: {exp}")
 
     return result
 
@@ -909,32 +929,32 @@ def client():
     return KubeflowPlugin().client()
 
 
-def serve_model_v2(model_uri: str, name: str = None):
+def serve_model_v2(model_uri: str, isvc_name: str = None):
     """
     Serves a model using Kubeflow V2.
 
     Args:
         model_uri (str): The URI of the model to serve.
-        name (str, optional): The name of the model to serve.
+        isvc_name (str, optional): The name of the model to serve.
 
     Returns:
         str: Information message confirming the model serving.
     """
-    return KubeflowPlugin().serve_model_v2(model_uri=model_uri, name=name)
+    return KubeflowPlugin().serve_model_v2(model_uri=model_uri, isvc_name=isvc_name)
 
 
-def serve_model_v1(model_uri: str, name: str = None):
+def serve_model_v1(model_uri: str, isvc_name: str = None):
     """
     Serves a model using Kubeflow V1.
 
     Args:
         model_uri (str): The URI of the model to serve.
-        name (str, optional): The name of the model to serve.
+        isvc_name (str, optional): The name of the model to serve.
 
     Returns:
         str: Information message confirming the model serving.
     """
-    return KubeflowPlugin().serve_model_v1(model_uri=model_uri, name=name)
+    return KubeflowPlugin().serve_model_v1(model_uri=model_uri, isvc_name=isvc_name)
 
 
 def get_model_url(model_name: str):
@@ -1402,26 +1422,26 @@ def serve_model_v2_url(model_uri: str, name: str = None):
         str: Information message confirming the model serving.
     """
     try:
-        KubeflowPlugin().serve_model_v2(model_uri=model_uri, name=name)
+        KubeflowPlugin().serve_model_v2(model_uri=model_uri, isvc_name=name)
         return get_served_model_url(isvc_name=name)
     except Exception as exp:
         return f"Failed to serve model: {exp}"
 
 
-def serve_model_v1_url(model_uri: str, name: str = None):
+def serve_model_v1_url(model_uri: str, isvc_name: str = None):
     """
     Serves a model using Kubeflow V1.
 
     Args:
         model_uri (str): The URI of the model to serve.
-        name (str, optional): The name of the model to serve.
+        isvc_name (str, optional): The name of the model to serve.
 
     Returns:
         str: Information message confirming the model serving.
     """
     try:
-        KubeflowPlugin().serve_model_v1(model_uri=model_uri, name=name)
-        return get_served_model_url(isvc_name=name)
+        KubeflowPlugin().serve_model_v1(model_uri=model_uri, isvc_name=isvc_name)
+        return get_served_model_url(isvc_name=isvc_name)
     except Exception as exp:
         return f"Failed to serve model: {exp}"
 
@@ -2024,6 +2044,115 @@ def fl_client_component(
         )
 
     return decorator
+
+
+def register_component(
+    yaml_path, bucket_name, category=None, creator=None, api_key=None
+):
+    """
+    Registers a component by uploading its YAML definition to MinIO and
+    posting its metadata to a registry API.
+
+    Args:
+        category: category of component.
+        creator: creator of component.
+        yaml_path (str): Path to the component YAML file.
+        bucket_name (str): MinIO bucket to upload the YAML.
+        api_key (str, optional): Bearer token for authorization. Defaults to None.
+
+    Returns:
+        dict: JSON response from the registration API.
+
+    Raises:
+        requests.HTTPError: If the API returns an error status.
+    """
+    return ComponentPlugin().register_component(
+        yaml_path=yaml_path,
+        bucket_name=bucket_name,
+        category=category,
+        creator=creator,
+        api_key=api_key,
+    )
+
+
+def get_full_model_uri_from_run_or_registry(
+    model_id: str = None,
+    artifact_path: str = None,
+    model_name: str = None,
+    model_version: str = None,
+) -> str:
+    """
+    Returns the full model URI from either run_id or a model registry entry.
+
+    Args:
+        model_id (str, optional): The run ID or model_id.
+        artifact_path (str, optional): Specific artifact_path name (e.g., 'model').
+        model_name (str, optional): Name of the registered model.
+        model_version (str, optional): Version of the registered model.
+
+    Returns:
+        str: Full model URI like s3://.../artifacts/artifact_path
+
+    Raises:
+        Exception: If neither valid run_id nor model registry info is provided or valid.
+    """
+
+    return MlflowPlugin().get_full_model_uri_from_run_or_registry(
+        model_id=model_id,
+        artifact_path=artifact_path,
+        model_name=model_name,
+        model_version=model_version,
+    )
+
+
+def serve_model(
+    model_id: str = None,
+    artifact_path: str = None,
+    model_name: str = None,
+    model_version: str = None,
+    isvc_name: str = None,
+):
+    """
+    Create a kserve instance.
+
+    Args:
+        isvc_name (str, optional): Name of the kserve instance. If not provided,
+        a default name will be generated.
+        model_id (str, optional): Unique identifier for the model.
+        model_name (str, optional): Name of the registered model.
+        model_version (str, optional): Version of the registered model.
+        artifact_path (str, optional): Specific artifact path name (e.g., 'model').
+
+    Examples:
+        Serve using run ID (with or without artifact path):
+            >>> serve_model(isvc_name="...", model_id="...")
+
+        Serve using registered model name and version:
+            >>> serve_model(isvc_name="...", model_name="...", model_version="...")
+
+    Raises:
+        Exception: If model resolution or deployment fails.
+    """
+
+    try:
+        model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
+            model_id=model_id,
+            artifact_path=artifact_path,
+            model_name=model_name,
+            model_version=model_version,
+        )
+
+        KubeflowPlugin().serve_model_v2(
+            model_uri=model_details["model_uri"],
+            isvc_name=isvc_name,
+            model_id=model_details["model_id"],
+            model_name=model_details["model_name"],
+            model_version=model_details["model_version"],
+        )
+
+    except Exception as e:
+        print(f"Failed to serve model: {e}")
+        raise e
 
 
 __all__ = [

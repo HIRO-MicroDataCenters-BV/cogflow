@@ -22,7 +22,7 @@ from kserve import (
     utils,
 )
 from kubernetes import client, config
-from kubernetes.client import V1ObjectMeta, V1ContainerPort
+from kubernetes.client import V1ObjectMeta, V1ContainerPort, ApiException
 from kubernetes.client.models import V1EnvVar
 from kubernetes.config import ConfigException
 from tenacity import retry, wait_exponential, stop_after_attempt
@@ -187,14 +187,23 @@ class KubeflowPlugin:
         return kfp.components.load_component_from_url(url)
 
     @staticmethod
-    def serve_model_v2(model_uri: str, name: str = None):
+    def serve_model_v2(
+        model_uri: str,
+        isvc_name: str = None,
+        model_id: str = None,
+        model_name: str = None,
+        model_version: str = None,
+    ):
         """
         Create a kserve instance.
 
         Args:
             model_uri (str): URI of the model.
-            name (str, optional): Name of the kserve instance. If not provided,
+            isvc_name (str, optional): Name of the kserve instance. If not provided,
             a default name will be generated.
+            model_id (str, optional): Unique identifier for the model.
+            model_name (str, optional): Name of the registered model.
+            model_version (str, optional): Version of the registered model.
 
         Returns:
             None
@@ -202,46 +211,54 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        namespace = utils.get_default_target_namespace()
-        if name is None:
-            now = datetime.now()
-            date = now.strftime("%d%M")
-            name = f"predictormodel{date}"
-        isvc_name = name
-        predictor = V1beta1PredictorSpec(
-            service_account_name="kserve-controller-s3",
-            min_replicas=1,
-            model=V1beta1ModelSpec(
-                model_format=V1beta1ModelFormat(
-                    name=plugin_config.ML_TOOL,
+        try:
+            namespace = utils.get_default_target_namespace()
+            if isvc_name is None:
+                now = datetime.now()
+                date = now.strftime("%d%M")
+                inferencesvc_name = f"predictormodel{date}"
+                isvc_name = inferencesvc_name
+            predictor = V1beta1PredictorSpec(
+                service_account_name="kserve-controller-s3",
+                min_replicas=1,
+                model=V1beta1ModelSpec(
+                    model_format=V1beta1ModelFormat(
+                        name=plugin_config.ML_TOOL,
+                    ),
+                    storage_uri=model_uri,
+                    protocol_version="v2",
                 ),
-                storage_uri=model_uri,
-                protocol_version="v2",
-            ),
-        )
+            )
 
-        isvc = V1beta1InferenceService(
-            api_version=constants.KSERVE_V1BETA1,
-            kind=constants.KSERVE_KIND,
-            metadata=client.V1ObjectMeta(
-                name=isvc_name,
-                namespace=namespace,
-                annotations={"sidecar.istio.io/inject": "false"},
-            ),
-            spec=V1beta1InferenceServiceSpec(predictor=predictor),
-        )
-        kserve = KServeClient()
-        kserve.create(isvc)
-        time.sleep(plugin_config.TIMER_IN_SEC)
+            isvc = V1beta1InferenceService(
+                api_version=constants.KSERVE_V1BETA1,
+                kind=constants.KSERVE_KIND,
+                metadata=client.V1ObjectMeta(
+                    name=isvc_name,
+                    namespace=namespace,
+                    annotations={
+                        "sidecar.istio.io/inject": "false",
+                        "model_name": model_name,
+                        "model_version": model_version,
+                        "model_id": model_id,
+                    },
+                ),
+                spec=V1beta1InferenceServiceSpec(predictor=predictor),
+            )
+            kserve = KServeClient()
+            kserve.create(isvc)
+            time.sleep(plugin_config.TIMER_IN_SEC)
+        except ApiException as e:
+            raise e
 
     @staticmethod
-    def serve_model_v1(model_uri: str, name: str = None):
+    def serve_model_v1(model_uri: str, isvc_name: str = None):
         """
         Create a kserve instance version1.
 
         Args:
             model_uri (str): URI of the model.
-            name (str, optional): Name of the kserve instance. If not provided,
+            isvc_name (str, optional): Name of the kserve instance. If not provided,
             a default name will be generated.
 
         Returns:
@@ -250,38 +267,41 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        isvc_name = name
-        namespace = utils.get_default_target_namespace()
-        isvc = V1beta1InferenceService(
-            api_version=constants.KSERVE_V1BETA1,
-            kind=constants.KSERVE_KIND,
-            metadata=V1ObjectMeta(
-                name=isvc_name,
-                namespace=namespace,
-                annotations={"sidecar.istio.io/inject": "false"},
-            ),
-            spec=V1beta1InferenceServiceSpec(
-                predictor=V1beta1PredictorSpec(
-                    service_account_name="kserve-controller-s3",
-                    sklearn=V1beta1SKLearnSpec(storage_uri=model_uri),
-                )
-            ),
-        )
+        try:
+            namespace = utils.get_default_target_namespace()
+            isvc = V1beta1InferenceService(
+                api_version=constants.KSERVE_V1BETA1,
+                kind=constants.KSERVE_KIND,
+                metadata=V1ObjectMeta(
+                    name=isvc_name,
+                    namespace=namespace,
+                    annotations={"sidecar.istio.io/inject": "false"},
+                ),
+                spec=V1beta1InferenceServiceSpec(
+                    predictor=V1beta1PredictorSpec(
+                        service_account_name="kserve-controller-s3",
+                        sklearn=V1beta1SKLearnSpec(storage_uri=model_uri),
+                    )
+                ),
+            )
 
-        kclient = KServeClient()
-        kclient.create(isvc)
-        time.sleep(plugin_config.TIMER_IN_SEC)
+            kclient = KServeClient()
+            kclient.create(isvc)
+            time.sleep(plugin_config.TIMER_IN_SEC)
+        except ApiException as e:
+            raise e
 
     @staticmethod
     def get_served_model_url(isvc_name: str):
         """
-        Retrieve the URL of a deployed model.
+        Retrieve comprehensive information about a deployed model.
 
         Args:
             isvc_name (str): Name of the deployed model.
 
         Returns:
-            str: URL of the deployed model.
+            dict: Model information containing model_name, model_id, model_version,
+                 creation_timestamp, served_model_url, status, and percentage.
         """
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
@@ -295,15 +315,45 @@ class KubeflowPlugin:
         )
         def assert_isvc_created(kserve_client, isvc_name):
             """Wait for the Inference Service to be created successfully."""
-            assert kserve_client.is_isvc_ready(
-                isvc_name
-            ), f"Failed to create Inference Service {isvc_name}."
+            is_ready = kserve_client.is_isvc_ready(isvc_name)
+            return "Ready" if is_ready else "Not ready"
 
         assert_isvc_created(kclient, isvc_name)
 
         isvc_resp = kclient.get(isvc_name)
-        isvc_url = isvc_resp["status"]["address"]["url"]
-        return isvc_url
+
+        annotations = isvc_resp.get("metadata", {}).get("annotations", {})
+
+        conditions = isvc_resp.get("status", {}).get("conditions", [])
+        status = (
+            "ready"
+            if any(
+                condition.get("type") == "Ready" and condition.get("status") == "True"
+                for condition in conditions
+            )
+            else "not_ready"
+        )
+
+        components = isvc_resp.get("status", {}).get("components", {})
+        predictor = components.get("predictor", {})
+        traffic = predictor.get("traffic", [])
+        percentage = traffic[0].get("percent", 100) if traffic else 100
+
+        response = {
+            "model_name": annotations.get("model_name"),
+            "model_id": annotations.get("model_id"),
+            "model_version": annotations.get("model_version"),
+            "creation_timestamp": isvc_resp.get("metadata", {}).get(
+                "creationTimestamp"
+            ),
+            "served_model_url": isvc_resp.get("status", {})
+            .get("address", {})
+            .get("url"),
+            "status": status,
+            "percentage": percentage,
+        }
+
+        return response
 
     @staticmethod
     def delete_served_model(isvc_name: str):
@@ -845,3 +895,22 @@ class KubeflowPlugin:
         wrapped_fl_client_component.__signature__ = inspect.signature(training_var)
         wrapped_fl_client_component.component_spec = training_var.component_spec
         return wrapped_fl_client_component
+
+    @staticmethod
+    def load_k8s_config() -> None:
+        """
+        Loads the Kubernetes configuration.
+
+        This method tries to load the in-cluster configuration if the code is running inside a pod.
+        If it fails (e.g., if the code is running outside the cluster), it loads the kubeconfig file
+        from the default location.
+
+        Raises:
+            config.config_exception.ConfigException: If the configuration could not be loaded.
+        """
+        try:
+            # Load in-cluster config if running in a pod
+            config.load_incluster_config()
+        except config.config_exception.ConfigException:
+            # If not running in a pod, load the kubeconfig file
+            config.load_kube_config()
