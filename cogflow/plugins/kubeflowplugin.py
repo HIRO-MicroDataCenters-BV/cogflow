@@ -378,7 +378,8 @@ class KubeflowPlugin:
             # Debug: print the type and structure
             print(f"Debug: isvc_response type: {type(isvc_response)}")
             print(
-                f"Debug: isvc_response keys: {isvc_response.keys() if isinstance(isvc_response, dict) else 'Not a dict'}"
+                f"Debug: isvc_response keys: "
+                f"{isvc_response.keys() if isinstance(isvc_response, dict) else 'Not a dict'}"
             )
 
             # Extract the items list from the response
