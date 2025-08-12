@@ -1397,6 +1397,16 @@ def get_served_model_url(isvc_name: str):
     return KubeflowPlugin().get_served_model_url(isvc_name=isvc_name)
 
 
+def get_served_models():
+    """
+    Gets the URL of all served model.
+
+    Returns:
+        str: The list of all served models.
+    """
+    return KubeflowPlugin().get_served_models()
+
+
 def delete_served_model(isvc_name: str):
     """
     Deletes a served model.

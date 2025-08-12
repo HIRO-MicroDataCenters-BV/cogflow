@@ -356,6 +356,111 @@ class KubeflowPlugin:
         return response
 
     @staticmethod
+    def get_served_models():
+        """
+        List all served models in the admin namespace.
+
+        Returns:
+            list: List of model information dictionaries containing model_name,
+                 model_id, model_version, creation_timestamp, served_model_url,
+                 status, and percentage for each served model.
+        """
+        # Verify plugin activation
+        PluginManager().verify_activation(KubeflowPlugin().section)
+
+        kclient = KServeClient()
+
+        # Get all InferenceServices in admin namespace
+        try:
+            namespace = "admin"
+            isvc_response = kclient.get(namespace=namespace)
+
+            # Debug: print the type and structure
+            print(f"Debug: isvc_response type: {type(isvc_response)}")
+            print(
+                f"Debug: isvc_response keys: {isvc_response.keys() if isinstance(isvc_response, dict) else 'Not a dict'}"
+            )
+
+            # Extract the items list from the response
+            if isinstance(isvc_response, dict) and "items" in isvc_response:
+                isvc_list = isvc_response["items"]
+            elif hasattr(isvc_response, "items"):
+                # Handle case where it's an object with items attribute
+                isvc_list = (
+                    isvc_response.items
+                    if not callable(isvc_response.items)
+                    else isvc_response.items()
+                )
+            else:
+                # Fallback: treat as single item or empty
+                isvc_list = [isvc_response] if isvc_response else []
+
+            print(f"Debug: Processing {len(isvc_list)} inference services")
+
+            models = []
+            for isvc in isvc_list:
+                # Skip if isvc is not a dict
+                if not isinstance(isvc, dict):
+                    print(f"Debug: Skipping non-dict item: {type(isvc)} - {isvc}")
+                    continue
+
+                # Extract required fields for each model
+                metadata = isvc.get("metadata", {})
+                annotations = metadata.get("annotations", {})
+                status_dict = isvc.get("status", {})
+
+                # Get status from conditions - check for Ready condition
+                conditions = status_dict.get("conditions", [])
+                status = "not_ready"  # default
+
+                for condition in conditions:
+                    if condition.get("type") == "Ready":
+                        if condition.get("status") == "True":
+                            status = "ready"
+                        break
+
+                # Get traffic percentage (default 100 if not found)
+                components = status_dict.get("components", {})
+                predictor = components.get("predictor", {})
+                traffic = predictor.get("traffic", [])
+                percentage = 100  # default
+
+                if traffic and len(traffic) > 0:
+                    percentage = traffic[0].get("percent", 100)
+
+                # Get name from metadata.name if model_name annotation is not available
+                model_name = annotations.get("model_name") or metadata.get("name")
+
+                model_info = {
+                    "model_name": model_name,
+                    "model_id": annotations.get("model_id"),
+                    "model_version": annotations.get("model_version"),
+                    "creation_timestamp": metadata.get("creationTimestamp"),
+                    "served_model_url": status_dict.get("address", {}).get("url"),
+                    "status": status,
+                    "percentage": percentage,
+                }
+
+                print(f"Debug: Processed model: {model_name} - Status: {status}")
+                models.append(model_info)
+
+            # Sort models by creation_timestamp (newest first)
+            models.sort(key=lambda x: x.get("creation_timestamp") or "", reverse=True)
+
+            print(f"Debug: Returning {len(models)} models")
+            return models
+
+        except ApiException as exp:
+            print(f"API Exception: {exp}")
+            raise exp
+        except ConfigException as exp:
+            print(f"Config Exception: {exp}")
+            raise exp
+        except Exception as exp:
+            print(f"Unexpected Exception: {exp}")
+            raise exp
+
+    @staticmethod
     def delete_served_model(isvc_name: str):
         """
         Delete a deployed model by its ISVC name.
