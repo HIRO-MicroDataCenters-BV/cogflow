@@ -292,68 +292,136 @@ class KubeflowPlugin:
             raise e
 
     @staticmethod
-    def get_served_model_url(isvc_name: str):
+    def get_served_models(isvc_name: str = None):
         """
-        Retrieve comprehensive information about a deployed model.
+        Get served model(s) information from the default namespace.
 
         Args:
-            isvc_name (str): Name of the deployed model.
+            isvc_name (str, optional): Name of specific inference service of model.
+             If None, returns all inference services of models.
 
         Returns:
-            dict: Model information containing model_name, model_id, model_version,
-                 creation_timestamp, served_model_url, status, and percentage.
+            list: List of model information dictionaries. If isvc_name provided,
+                 returns list with single model. If isvc_name is None, returns
+                 list of all models. Each dict contains: model_name, model_id,
+                 model_version, creation_timestamp, served_model_url, status, traffic_percentage.
         """
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
         kclient = KServeClient()
 
-        @retry(
-            wait=wait_exponential(multiplier=2, min=1, max=10),
-            stop=stop_after_attempt(30),
-            reraise=True,
-        )
-        def assert_isvc_created(kserve_client, isvc_name):
-            """Wait for the Inference Service to be created successfully."""
-            is_ready = kserve_client.is_isvc_ready(isvc_name)
-            return "Ready" if is_ready else "Not ready"
+        try:
+            if isvc_name:
 
-        assert_isvc_created(kclient, isvc_name)
+                @retry(
+                    wait=wait_exponential(multiplier=2, min=1, max=10),
+                    stop=stop_after_attempt(30),
+                    reraise=True,
+                )
+                def assert_isvc_created(kserve_client, isvc_name):
+                    """Wait for the Inference Service to be created successfully."""
+                    is_ready = kserve_client.is_isvc_ready(isvc_name)
+                    return "Ready" if is_ready else "Not ready"
 
-        isvc_resp = kclient.get(isvc_name)
+                assert_isvc_created(kclient, isvc_name)
+                isvc_response = kclient.get(isvc_name)
 
-        annotations = isvc_resp.get("metadata", {}).get("annotations", {})
+                model_info = KubeflowPlugin._process_isvc(isvc_response)
+                return [model_info] if model_info else []
 
-        conditions = isvc_resp.get("status", {}).get("conditions", [])
-        status = (
-            "ready"
-            if any(
-                condition.get("type") == "Ready" and condition.get("status") == "True"
-                for condition in conditions
+            # Get all isvc from default namespace
+            isvc_response = kclient.get()
+
+            if isinstance(isvc_response, dict) and "items" in isvc_response:
+                isvc_list = isvc_response["items"]
+            elif hasattr(isvc_response, "items"):
+                isvc_list = (
+                    isvc_response.items
+                    if not callable(isvc_response.items)
+                    else isvc_response.items()
+                )
+            else:
+                isvc_list = [isvc_response] if isvc_response else []
+
+            print(f"Debug: Processing {len(isvc_list)} inference services")
+
+            served_models = []
+            for isvc in isvc_list:
+                if not isinstance(isvc, dict):
+                    print(f"Debug: Skipping non-dict item: {type(isvc)} - {isvc}")
+                    continue
+
+                isvc_info = KubeflowPlugin._process_isvc(isvc)
+                if isvc_info:
+                    served_models.append(isvc_info)
+
+            # Sort models by creation_timestamp (newest first)
+            served_models.sort(
+                key=lambda x: x.get("creation_timestamp") or "", reverse=True
             )
-            else "not_ready"
-        )
 
-        components = isvc_resp.get("status", {}).get("components", {})
+            print(f"Debug: Returning {len(served_models)} models")
+            return served_models
+
+        except ApiException as exp:
+            print(f"API Exception: {exp}")
+            raise exp
+        except ConfigException as exp:
+            print(f"Config Exception: {exp}")
+            raise exp
+        except Exception as exp:
+            print(f"Unexpected Exception: {exp}")
+            raise exp
+
+    @staticmethod
+    def _process_isvc(isvc):
+        """
+        Helper method to process an InferenceService and extract served model information.
+
+        Args:
+            isvc (dict):  InferenceService details
+
+        Returns:
+            dict: Processed model information
+        """
+
+        metadata = isvc.get("metadata", {})
+        annotations = metadata.get("annotations", {})
+        status_dict = isvc.get("status", {})
+
+        conditions = status_dict.get("conditions", [])
+        status = "not_ready"  # default
+
+        for condition in conditions:
+            if condition.get("type") == "Ready":
+                if condition.get("status") == "True":
+                    status = "ready"
+                break
+
+        # Get traffic percentage (default 100 if not found)
+        components = status_dict.get("components", {})
         predictor = components.get("predictor", {})
         traffic = predictor.get("traffic", [])
-        percentage = traffic[0].get("percent", 100) if traffic else 100
+        percentage = 100  # default
 
-        response = {
-            "model_name": annotations.get("model_name"),
+        if traffic and len(traffic) > 0:
+            percentage = traffic[0].get("percent", 100)
+
+        model_name = annotations.get("model_name") or metadata.get("name")
+
+        isvc_info = {
+            "model_name": model_name,
             "model_id": annotations.get("model_id"),
             "model_version": annotations.get("model_version"),
-            "creation_timestamp": isvc_resp.get("metadata", {}).get(
-                "creationTimestamp"
-            ),
-            "served_model_url": isvc_resp.get("status", {})
-            .get("address", {})
-            .get("url"),
+            "creation_timestamp": metadata.get("creationTimestamp"),
+            "served_model_url": status_dict.get("address", {}).get("url"),
             "status": status,
-            "percentage": percentage,
+            "traffic_percentage": percentage,
         }
 
-        return response
+        print(f"Debug: Processed model: {model_name} - Status: {status}")
+        return isvc_info
 
     @staticmethod
     def delete_served_model(isvc_name: str):
