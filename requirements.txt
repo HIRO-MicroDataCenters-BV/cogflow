@@ -1,4 +1,4 @@
-cogflow==1.10.9
+cogflow==1.10.10
 black==24.8.0
 pytest==8.3.2
 pytest-asyncio==0.18.3

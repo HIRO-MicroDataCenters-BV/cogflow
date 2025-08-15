@@ -957,19 +957,6 @@ def serve_model_v1(model_uri: str, isvc_name: str = None):
     return KubeflowPlugin().serve_model_v1(model_uri=model_uri, isvc_name=isvc_name)
 
 
-def get_model_url(model_name: str):
-    """
-    Gets the URL of a served model.
-
-    Args:
-        model_name (str): The name of the served model.
-
-    Returns:
-        str: The URL of the served model.
-    """
-    return KubeflowPlugin().get_served_model_url(isvc_name=model_name)
-
-
 def load_component(file_path=None, url=None, text=None):
     """Loads component from text, file or URL and creates a task factory
     function.
@@ -1384,17 +1371,19 @@ def custom_log_model(
 pyfunc.log_model = custom_log_model
 
 
-def get_served_model_url(isvc_name: str):
+def get_served_models(isvc_name: str = None):
     """
-    Gets the URL of a served model.
+    Gets information about inference service of served models
 
     Args:
-        isvc_name (str): The name of the served model.
+        isvc_name (str, optional): Name of served model. If None, returns all served models.
 
     Returns:
-        str: The URL of the served model.
+        list: List of model information dictionaries. Each dict contains:
+              model_name, model_id, model_version, creation_timestamp,
+              served_model_url, status, traffic_percentage.
     """
-    return KubeflowPlugin().get_served_model_url(isvc_name=isvc_name)
+    return KubeflowPlugin().get_served_models(isvc_name)
 
 
 def delete_served_model(isvc_name: str):
@@ -1423,7 +1412,7 @@ def serve_model_v2_url(model_uri: str, name: str = None):
     """
     try:
         KubeflowPlugin().serve_model_v2(model_uri=model_uri, isvc_name=name)
-        return get_served_model_url(isvc_name=name)
+        return get_served_models(isvc_name=name)
     except Exception as exp:
         return f"Failed to serve model: {exp}"
 
@@ -1441,7 +1430,7 @@ def serve_model_v1_url(model_uri: str, isvc_name: str = None):
     """
     try:
         KubeflowPlugin().serve_model_v1(model_uri=model_uri, isvc_name=isvc_name)
-        return get_served_model_url(isvc_name=isvc_name)
+        return get_served_models(isvc_name=isvc_name)
     except Exception as exp:
         return f"Failed to serve model: {exp}"
 
