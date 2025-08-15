@@ -297,7 +297,8 @@ class KubeflowPlugin:
         Get served model(s) information from the default namespace.
 
         Args:
-            isvc_name (str, optional): Name of specific model. If None, returns all models.
+            isvc_name (str, optional): Name of specific inference service of model.
+             If None, returns all inference services of models.
 
         Returns:
             list: List of model information dictionaries. If isvc_name provided,

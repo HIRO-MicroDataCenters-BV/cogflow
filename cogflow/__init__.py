@@ -1386,7 +1386,7 @@ pyfunc.log_model = custom_log_model
 
 def get_served_models(isvc_name: str = None):
     """
-    Gets information about served model(s).
+    Gets information about inference service of served models
 
     Args:
         isvc_name (str, optional): Name of served model. If None, returns all served models.
