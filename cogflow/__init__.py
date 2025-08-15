@@ -1383,6 +1383,7 @@ def custom_log_model(
 # Reassign the custom function to cogflow.pyfunc.log_model
 pyfunc.log_model = custom_log_model
 
+
 def get_served_models(isvc_name: str = None):
     """
     Gets information about served model(s).
@@ -1392,7 +1393,7 @@ def get_served_models(isvc_name: str = None):
 
     Returns:
         list: List of model information dictionaries. Each dict contains:
-              model_name, model_id, model_version, creation_timestamp, 
+              model_name, model_id, model_version, creation_timestamp,
               served_model_url, status, traffic_percentage.
     """
     return KubeflowPlugin().get_served_models(isvc_name)
