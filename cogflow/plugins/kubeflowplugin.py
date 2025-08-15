@@ -329,14 +329,12 @@ class KubeflowPlugin:
                 model_info = KubeflowPlugin._process_isvc(isvc_response)
                 return [model_info] if model_info else []
 
-            # Get all models from default namespace
+            # Get all isvc from default namespace
             isvc_response = kclient.get()
 
-            # Extract the items list from the response
             if isinstance(isvc_response, dict) and "items" in isvc_response:
                 isvc_list = isvc_response["items"]
             elif hasattr(isvc_response, "items"):
-                # Handle case where it's an object with items attribute
                 isvc_list = (
                     isvc_response.items
                     if not callable(isvc_response.items)
@@ -386,12 +384,11 @@ class KubeflowPlugin:
         Returns:
             dict: Processed model information
         """
-        # Extract required fields for each model
+
         metadata = isvc.get("metadata", {})
         annotations = metadata.get("annotations", {})
         status_dict = isvc.get("status", {})
 
-        # Get status from conditions - check for Ready condition
         conditions = status_dict.get("conditions", [])
         status = "not_ready"  # default
 
@@ -410,7 +407,6 @@ class KubeflowPlugin:
         if traffic and len(traffic) > 0:
             percentage = traffic[0].get("percent", 100)
 
-        # Get name from metadata.name if model_name annotation is not available
         model_name = annotations.get("model_name") or metadata.get("name")
 
         isvc_info = {
