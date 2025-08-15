@@ -957,17 +957,17 @@ def serve_model_v1(model_uri: str, isvc_name: str = None):
     return KubeflowPlugin().serve_model_v1(model_uri=model_uri, isvc_name=isvc_name)
 
 
-def get_model_url(model_name: str):
+def get_served_models(isvc_name: str):
     """
     Gets the URL of a served model.
 
     Args:
-        model_name (str): The name of the served model.
+        isvc_name (str): The name of the served model.
 
     Returns:
         str: The URL of the served model.
     """
-    return KubeflowPlugin().get_served_models(isvc_name=model_name)
+    return KubeflowPlugin().get_served_models(isvc_name=isvc_name)
 
 
 def load_component(file_path=None, url=None, text=None):
