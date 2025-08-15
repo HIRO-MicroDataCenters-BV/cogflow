@@ -1,5 +1,5 @@
 """
-Setup script for the COGFlow package.
+Setup script for the cogflow package.
 
 This script defines the metadata and dependencies for the COGFlow package,
 which includes various COG modules for machine learning workflow management.
