@@ -957,19 +957,6 @@ def serve_model_v1(model_uri: str, isvc_name: str = None):
     return KubeflowPlugin().serve_model_v1(model_uri=model_uri, isvc_name=isvc_name)
 
 
-def get_served_models(isvc_name: str):
-    """
-    Gets the URL of a served model.
-
-    Args:
-        isvc_name (str): The name of the served model.
-
-    Returns:
-        str: The URL of the served model.
-    """
-    return KubeflowPlugin().get_served_models(isvc_name=isvc_name)
-
-
 def load_component(file_path=None, url=None, text=None):
     """Loads component from text, file or URL and creates a task factory
     function.
