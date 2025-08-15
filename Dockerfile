@@ -6,10 +6,10 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip
 
 # Install specific version of cogflow
 
-RUN pip3 install --ignore-installed cogflow==1.10.9
+RUN pip3 install --ignore-installed cogflow==1.10.10
 
 # Install additional Python packages (shap, xgboost)
-RUN pip3 install --ignore-requires-python tensorflow xgboost
+RUN pip3 install --ignore-requires-python shap xgboost
 
 # Verify the installation of cogflow
 RUN python3 -c 'import cogflow'
