@@ -292,7 +292,7 @@ class KubeflowPlugin:
             raise e
 
     @staticmethod
-    def get_served_models(namespace:str , isvc_name: str = None):
+    def get_served_models(namespace: str = None, isvc_name: str = None):
         """
         Get served model(s) information from the default namespace.
 
@@ -326,7 +326,7 @@ class KubeflowPlugin:
                     return "Ready" if is_ready else "Not ready"
 
                 assert_isvc_created(kclient, isvc_name)
-                isvc_response = kclient.get(namespace=namespace,name=isvc_name)
+                isvc_response = kclient.get(namespace=namespace, name=isvc_name)
 
                 model_info = KubeflowPlugin._process_isvc(isvc_response)
                 return [model_info] if model_info else []

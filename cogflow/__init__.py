@@ -1371,7 +1371,10 @@ def custom_log_model(
 pyfunc.log_model = custom_log_model
 
 
-def get_served_models(namespace : str , isvc_name: str = None , ):
+def get_served_models(
+    namespace: str = None,
+    isvc_name: str = None,
+):
     """
     Gets information about inference service of served models
 
@@ -1384,7 +1387,7 @@ def get_served_models(namespace : str , isvc_name: str = None , ):
               model_name, model_id, model_version, creation_timestamp,
               served_model_url, status, traffic_percentage.
     """
-    return KubeflowPlugin().get_served_models(namespace,isvc_name)
+    return KubeflowPlugin().get_served_models(namespace, isvc_name)
 
 
 def delete_served_model(isvc_name: str):
