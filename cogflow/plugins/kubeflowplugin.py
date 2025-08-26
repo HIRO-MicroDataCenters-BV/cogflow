@@ -292,18 +292,19 @@ class KubeflowPlugin:
             raise e
 
     @staticmethod
-    def get_served_models(isvc_name: str = None):
+    def get_served_models(namespace: str = None, isvc_name: str = None):
         """
         Get served model(s) information from the default namespace.
 
         Args:
-            isvc_name (str, optional): Name of specific inference service of model.
-             If None, returns all inference services of models.
+            namespace(str): Namespace where the inference services are deployed.
+            isvc_name (str, optional): Name of model inference service.
+            If None, returns all inference services of models.
 
         Returns:
             list: List of model information dictionaries. If isvc_name provided,
-                 returns list with single model. If isvc_name is None, returns
-                 list of all models. Each dict contains: model_name, model_id,
+                 returns list with a single model. If isvc_name is None, returns
+                 a list of all models. Each dict contains: model_name, model_id,
                  model_version, creation_timestamp, served_model_url, status, traffic_percentage.
         """
         # Verify plugin activation
@@ -325,13 +326,13 @@ class KubeflowPlugin:
                     return "Ready" if is_ready else "Not ready"
 
                 assert_isvc_created(kclient, isvc_name)
-                isvc_response = kclient.get(isvc_name)
+                isvc_response = kclient.get(namespace=namespace, name=isvc_name)
 
                 model_info = KubeflowPlugin._process_isvc(isvc_response)
                 return [model_info] if model_info else []
 
             # Get all isvc from default namespace
-            isvc_response = kclient.get()
+            isvc_response = kclient.get(namespace=namespace)
 
             if isinstance(isvc_response, dict) and "items" in isvc_response:
                 isvc_list = isvc_response["items"]
