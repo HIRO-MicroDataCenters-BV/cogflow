@@ -80,6 +80,7 @@ from typing import Callable, Union, Any, List, Optional, Dict, Mapping
 import random
 import string
 import time
+from uuid import UUID
 import psutil
 import numpy as np
 import pandas as pd
@@ -89,7 +90,6 @@ from mlflow.models import ModelSignature, ModelInputExample
 from scipy.sparse import csr_matrix, csc_matrix
 from kfp.components import InputPath, OutputPath
 from kfp.dsl import ParallelFor
-
 from .kafka.consumer import stop_consumer, start_consumer_thread
 from .plugins.message_broker_dataset_plugin import MessageBrokerDatasetPlugin
 from .v2 import *
@@ -106,10 +106,11 @@ from .plugin_config import (
     MINIO_SECRET_ACCESS_KEY,
     API_BASEPATH,
 )
-from .pluginmanager import PluginManager
+from .pluginmanager import PluginManager, ConfigException
 from .plugins.component_plugin import ComponentPlugin
 from .plugins.dataset_plugin import DatasetMetadata, DatasetPlugin
 from .plugins.kubeflowplugin import CogContainer, KubeflowPlugin
+from .plugins.knative_plugin import KnativePlugin
 from .plugins.mlflowplugin import MlflowPlugin
 from .plugins.notebook_plugin import NotebookPlugin
 from .util import make_post_request, is_valid_s3_uri
@@ -224,7 +225,6 @@ def delete_registered_model(model_name):
 def evaluate(
     data,
     *,
-    model_name: str,
     model_uri: str,
     targets,
     model_type: str,
@@ -242,7 +242,6 @@ def evaluate(
     Evaluates a model.
 
     Args:
-        model_name: The name of model to evaluate.
         model_uri (str): The URI of the model.
         data: The data to evaluate the model on.
         model_type: The type of the model.
@@ -277,12 +276,19 @@ def evaluate(
     )
 
     PluginManager().load_config()
+    time_out = plugin_config.TIME_OUT
     # Construct URLs
-    url_metrics = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-        "validation_metrics"
+    run_id = model_uri.split("/")[4]
+    model_id = str(UUID(run_id))
+    url_metrics = (
+        os.getenv(plugin_config.API_BASEPATH)
+        + f"/models/{model_id}"
+        + PluginManager().load_path("validation_metrics")
     )
-    url_artifacts = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-        "validation_artifacts"
+    url_artifacts = (
+        os.getenv(plugin_config.API_BASEPATH)
+        + f"/models/{model_id}"
+        + PluginManager().load_path("validation_artifacts")
     )
     # Capture final CPU and memory usage metrics
     final_cpu_percent = psutil.cpu_percent(interval=1)
@@ -294,26 +300,21 @@ def evaluate(
         metrics = result.metrics
         metrics.update(
             {
-                "model_name": model_name,
                 "cpu_consumption": final_cpu_percent,
                 "memory_utilization": final_memory_used_mb,
             }
         )
         print("metrics", metrics)
-        response = requests.post(url=url_metrics, json=metrics, timeout=100)
+        response = requests.post(url=url_metrics, json=metrics, timeout=time_out)
         response.raise_for_status()
     except Exception as exp:
         print(f"Failed to post metrics: {exp}")
 
     serialized_artifacts = NotebookPlugin().serialize_artifacts(result.artifacts)
-
-    # Update artifacts with model name
-    serialized_artifacts.update({"model_name": model_name})
     # Now you can use serialized_artifacts in your HTTP request
     try:
-        # make_post_request(url_artifacts, data=serialized_artifacts)
         response = requests.post(
-            url=url_artifacts, json=serialized_artifacts, timeout=100
+            url=url_artifacts, json=serialized_artifacts, timeout=time_out
         )
         response.raise_for_status()
     except Exception as exp:
@@ -2145,6 +2146,29 @@ def serve_model(
 
     except Exception as e:
         print(f"Failed to serve model: {e}")
+        raise e
+
+
+def connect(source_dataset, model_isvc, destination_dataset):
+    """
+    normally in cogflow you check each dataset ,
+    1) all of them should be streaming type
+    2) then create sink and source and sequence for them
+    3) for source and destination if the type is nats , create bridge for each of them as well
+    """
+    try:
+        PluginManager().load_config()
+    except ConfigException as e:
+        print(f"[config] ERROR: {e}")
+
+    try:
+        KnativePlugin().connect(
+            source_dataset=source_dataset,
+            model_isvc=model_isvc,
+            destination_dataset=destination_dataset,
+        )
+    except Exception as e:
+        print(f"Failed to connect datasets: {e}")
         raise e
 
 

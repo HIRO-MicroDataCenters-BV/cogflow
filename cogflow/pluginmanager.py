@@ -15,6 +15,12 @@ from sqlalchemy.orm import declarative_base
 Base = declarative_base()
 
 
+class ConfigException(Exception):
+    """Raised when required configuration is missing or invalid."""
+
+    pass
+
+
 class PluginManager:
     """
     Class responsible for managing plugins.
@@ -145,7 +151,7 @@ class PluginManager:
         ]
         missing_vars = [var for var in required_vars if not os.getenv(var)]
         if missing_vars:
-            raise ValueError(
+            raise ConfigException(
                 f"The following environment variables are missing or not set: {', '.join(missing_vars)}"
             )
 
