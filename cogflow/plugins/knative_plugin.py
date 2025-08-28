@@ -2,6 +2,7 @@
 knative eventing plugin
 """
 
+import os
 import re
 from kubernetes import client, dynamic
 from kubernetes.dynamic import DynamicClient
@@ -113,6 +114,8 @@ class KnativePlugin:
         KubeflowPlugin().load_k8s_config()
         k8s_client = client.ApiClient()
         dyn_client = DynamicClient(k8s_client)
+
+        print(name, namespace, topic, bootstrap_server)
 
         kafka_sink_manifest = {
             "apiVersion": "eventing.knative.dev/v1alpha1",
@@ -475,13 +478,12 @@ class KnativePlugin:
         """
         normally in cogflow you check each dataset ,
         1) all of them should be streaming type
-        2) then create sink and source and sequnce for them
+        2) then create sink and source and sequence for them
         3) for source and destination if the type is nats , create bridge for each of them as well
         """
 
-        dataset_url = (
-            plugin_config.API_BASEPATH + plugin_config.MESSAGE_BROKER_DATASETS_URL
-        )
+        base_url = os.getenv(plugin_config.API_BASEPATH)
+        dataset_url = f"{base_url}{plugin_config.MESSAGE_BROKER_DATASETS_URL}"
         namespace = KubeflowPlugin().get_default_namespace()
 
         # check if source_dataset exists
@@ -495,11 +497,7 @@ class KnativePlugin:
         )
 
         # Ensure both exist
-        if not source_exists:
-            print(f"Source dataset {source_dataset} does not exist.")
-            return
-        if not destination_exists:
-            print(f"Destination dataset {destination_dataset} does not exist.")
+        if not source_exists or not destination_exists:
             return
 
         # Extract the first matched dataset info
@@ -531,9 +529,9 @@ class KnativePlugin:
 
             (
                 dest_exists,
-                _,
-                _,
-                _,
+                dest_broker_name,
+                dest_broker_port,
+                dest_topic,
             ) = KnativePlugin().get_broker_and_topic_by_dataset_id(
                 api_url=dataset_url,
                 dataset_id=dest_info["id"],
@@ -561,25 +559,27 @@ class KnativePlugin:
 
                 if source_exists and dest_exists:
                     try:
-                        KnativePlugin().deploy_kafka_sink(
-                            name=f"{source_topic}-sink",
-                            namespace=namespace,
-                            topic=f"{source_topic}",
-                            bootstrap_server=f"{source_broker_name}:{source_broker_port}",
-                        )
+                        # adapt with source_dataset
                         KnativePlugin().deploy_kafka_source(
                             namespace=namespace,
                             bootstrap_server=f"{source_broker_name}:{source_broker_port}",
                             topic=f"{source_topic}",
                             source_name=f"{source_dataset}-events-source-seq",
                             consumer_group=f"{source_dataset}-kserve-group",
-                            sequence_name=f"{source_dataset}-prediction-sequence",
+                            sequence_name=f"{dest_topic}-sequence",
+                        )
+                        # adapt with dest_dataset
+                        KnativePlugin().deploy_kafka_sink(
+                            name=f"{dest_topic}-sink",
+                            namespace=namespace,
+                            topic=f"{dest_topic}",
+                            bootstrap_server=f"{dest_broker_name}:{dest_broker_port}",
                         )
                         KnativePlugin().deploy_sequence(
-                            sequence_name=f"{source_dataset}-prediction-sequence",
+                            sequence_name=f"{dest_topic}-sequence",
                             namespace=namespace,
                             model_isvc_name=model_isvc,
-                            kafka_sink_name=f"{source_topic}-sink",
+                            kafka_sink_name=f"{dest_topic}-sink",
                         )
                     except Exception as e:
                         print(f"Error occurred during deployment: {e}")
