@@ -292,7 +292,9 @@ class KubeflowPlugin:
             raise e
 
     @staticmethod
-    def get_served_models(namespace: str = None, isvc_name: str = None):
+    def get_served_models(
+        namespace: Optional[str] = None, isvc_name: Optional[str] = None
+    ):
         """
         Get served model(s) information from the default namespace.
 
@@ -322,7 +324,9 @@ class KubeflowPlugin:
                 )
                 def assert_isvc_created(kserve_client, isvc_name):
                     """Wait for the Inference Service to be created successfully."""
-                    is_ready = kserve_client.is_isvc_ready(isvc_name)
+                    is_ready = kserve_client.is_isvc_ready(
+                        isvc_name, namespace=namespace
+                    )
                     return "Ready" if is_ready else "Not ready"
 
                 assert_isvc_created(kclient, isvc_name)
