@@ -115,8 +115,6 @@ class KnativePlugin:
         k8s_client = client.ApiClient()
         dyn_client = DynamicClient(k8s_client)
 
-        print(name, namespace, topic, bootstrap_server)
-
         kafka_sink_manifest = {
             "apiVersion": "eventing.knative.dev/v1alpha1",
             "kind": "KafkaSink",

@@ -106,7 +106,7 @@ from .plugin_config import (
     MINIO_SECRET_ACCESS_KEY,
     API_BASEPATH,
 )
-from .pluginmanager import PluginManager
+from .pluginmanager import PluginManager, ConfigException
 from .plugins.component_plugin import ComponentPlugin
 from .plugins.dataset_plugin import DatasetMetadata, DatasetPlugin
 from .plugins.kubeflowplugin import CogContainer, KubeflowPlugin
@@ -2152,7 +2152,11 @@ def connect(source_dataset, model_isvc, destination_dataset):
     2) then create sink and source and sequence for them
     3) for source and destination if the type is nats , create bridge for each of them as well
     """
-    PluginManager().load_config()
+    try:
+        PluginManager().load_config()
+    except ConfigException as e:
+        print(f"[config] ERROR: {e}")
+
     try:
         KnativePlugin().connect(
             source_dataset=source_dataset,
