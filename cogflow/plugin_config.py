@@ -43,6 +43,7 @@ TESTING_CONFIG = "config.app_config.TestingConfig"
 FILE_TYPE = 0
 
 API_BASEPATH = "API_BASEPATH"
+TIME_OUT = 300
 
 BASE_IMAGE = "hiroregistry/cogflow:latest"
 FL_COGFLOW_BASE_IMAGE = "hiroregistry/flcogflow:latest"

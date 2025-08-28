@@ -276,6 +276,7 @@ def evaluate(
     )
 
     PluginManager().load_config()
+    time_out = plugin_config.TIME_OUT
     # Construct URLs
     run_id = model_uri.split("/")[4]
     model_id = str(UUID(run_id))
@@ -304,7 +305,7 @@ def evaluate(
             }
         )
         print("metrics", metrics)
-        response = requests.post(url=url_metrics, json=metrics, timeout=100)
+        response = requests.post(url=url_metrics, json=metrics, timeout=time_out)
         response.raise_for_status()
     except Exception as exp:
         print(f"Failed to post metrics: {exp}")
@@ -313,7 +314,7 @@ def evaluate(
     # Now you can use serialized_artifacts in your HTTP request
     try:
         response = requests.post(
-            url=url_artifacts, json=serialized_artifacts, timeout=100
+            url=url_artifacts, json=serialized_artifacts, timeout=time_out
         )
         response.raise_for_status()
     except Exception as exp:
