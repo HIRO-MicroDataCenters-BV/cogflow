@@ -2172,6 +2172,88 @@ def connect(source_dataset, model_isvc, destination_dataset):
         raise e
 
 
+def register_model_api(
+    model_name,
+    artifact_path,
+    registered_model_name=None,
+    conda_env=None,
+    code_paths=None,
+    serialization_format="cloudpickle",
+    signature: ModelSignature = None,
+    input_example: Union[
+        pd.DataFrame,
+        np.ndarray,
+        dict,
+        list,
+        csr_matrix,
+        csc_matrix,
+        str,
+        bytes,
+        tuple,
+    ] = None,
+    await_registration_for=300,
+    pip_requirements=None,
+    extra_pip_requirements=None,
+    pyfunc_predict_fn="predict",
+    metadata=None,
+):
+    """
+    Logs a model.
+
+    Args:
+        model_name: The model to log.
+        artifact_path (str): The artifact path to log the model to.
+        registered_model_name (str, optional): The name to register the model under.
+        conda_env (str, optional): The conda environment to use.
+        code_paths (list, optional): List of paths to include in the model.
+        serialization_format (str, optional): The format to use for serialization.
+        signature (ModelSignature, optional): The signature of the model.
+        input_example (Union[pd.DataFrame, np.ndarray, dict, list, csr_matrix, csc_matrix, str,
+         bytes, tuple], optional): Example input.
+        await_registration_for (int, optional): Time to wait for registration.
+        pip_requirements (list, optional): List of pip requirements.
+        extra_pip_requirements (list, optional): List of extra pip requirements.
+        pyfunc_predict_fn (str, optional): The prediction function to use.
+        metadata (dict, optional): Metadata for the model.
+    """
+    is_custom_pyfunc_model = isinstance(model_name, pyfunc.PythonModel) or (
+        inspect.isclass(model_name) and issubclass(model_name, pyfunc.PythonModel)
+    )
+
+    if is_custom_pyfunc_model:
+        # Log using pyfunc flavor
+        result = custom_log_model(
+            artifact_path=artifact_path,
+            python_model=model_name,
+            code_path=code_paths,
+            conda_env=conda_env,
+            signature=signature,
+            input_example=input_example,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            metadata=metadata,
+        )
+    else:
+        # Log using MLflowPlugin (e.g., sklearn, XGBoost, etc.)
+        result = MlflowPlugin().log_model(
+            sk_model=model_name,
+            artifact_path=artifact_path,
+            conda_env=conda_env,
+            code_paths=code_paths,
+            serialization_format=serialization_format,
+            registered_model_name=registered_model_name,
+            signature=signature,
+            input_example=input_example,
+            await_registration_for=await_registration_for,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            pyfunc_predict_fn=pyfunc_predict_fn,
+            metadata=metadata,
+        )
+
+    return result
+
+
 __all__ = [
     # Methods from MlflowPlugin class
     "InputPath",
