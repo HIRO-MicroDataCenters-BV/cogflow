@@ -76,7 +76,6 @@ register_dataset: Register a dataset.
 import inspect
 import json
 import os
-import re
 from typing import Callable, Union, Any, List, Optional, Dict, Mapping
 import random
 import string
@@ -237,7 +236,7 @@ def evaluate(
     custom_artifacts=None,
     validation_thresholds=None,
     baseline_model=None,
-    env_manager="local",
+    env_manager=plugin_config.ENV_MANAGER,
 ):
     """
     Evaluates a model.
@@ -326,7 +325,7 @@ def evaluate(
 
 def search_registered_models(
     filter_string: Optional[str] = None,
-    max_results: int = 100,
+    max_results: int = plugin_config.MAX_RESULTS,
     order_by: Optional[List[str]] = None,
     page_token: Optional[str] = None,
 ):
@@ -377,7 +376,7 @@ def load_model(model_uri: str, dst_path=None):
 def register_model(
     model_uri: str,
     model_name: str,
-    await_registration_for: int = 300,
+    await_registration_for: int = plugin_config.AWAIT_REGISTRATION_FOR,
     *,
     tags: Optional[Dict[str, Any]] = None,
 ):
@@ -447,7 +446,7 @@ def create_model_version(
     tags: Optional[Dict[str, Any]] = None,
     run_link: Optional[str] = None,
     description: Optional[str] = None,
-    await_creation_for: int = 300,
+    await_creation_for: int = plugin_config.AWAIT_REGISTRATION_FOR,
 ):
     """
     Create a model version for a registered model in the Mlflow Model Registry.
@@ -624,7 +623,7 @@ def log_model(
     registered_model_name=None,
     conda_env=None,
     code_paths=None,
-    serialization_format="cloudpickle",
+    serialization_format=plugin_config.SERIALIZATION_FORMAT,
     signature: ModelSignature = None,
     input_example: Union[
         pd.DataFrame,
@@ -637,10 +636,10 @@ def log_model(
         bytes,
         tuple,
     ] = None,
-    await_registration_for=300,
+    await_registration_for=plugin_config.AWAIT_REGISTRATION_FOR,
     pip_requirements=None,
     extra_pip_requirements=None,
-    pyfunc_predict_fn="predict",
+    pyfunc_predict_fn=plugin_config.PYFUNC_PREDICT_FN,
     metadata=None,
 ):
     """
@@ -729,7 +728,7 @@ def log_model_with_dataset(
     dataset: DatasetMetadata,
     conda_env=None,
     code_paths=None,
-    serialization_format="cloudpickle",
+    serialization_format=plugin_config.SERIALIZATION_FORMAT,
     registered_model_name=None,
     signature: ModelSignature = None,
     input_example: Union[
@@ -743,10 +742,10 @@ def log_model_with_dataset(
         bytes,
         tuple,
     ] = None,
-    await_registration_for=300,
+    await_registration_for=plugin_config.AWAIT_REGISTRATION_FOR,
     pip_requirements=None,
     extra_pip_requirements=None,
-    pyfunc_predict_fn="predict",
+    pyfunc_predict_fn=plugin_config.PYFUNC_PREDICT_FN,
     metadata=None,
 ):
     """
@@ -1297,7 +1296,7 @@ def custom_log_model(
     artifacts=None,
     signature: ModelSignature = None,
     input_example: ModelInputExample = None,
-    await_registration_for=300,
+    await_registration_for=plugin_config.AWAIT_REGISTRATION_FOR,
     pip_requirements=None,
     extra_pip_requirements=None,
     metadata=None,
@@ -1867,7 +1866,7 @@ def create_fl_component_from_func(
     base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
-    container_port=8080,
+    container_port=plugin_config.CONTAINER_PORT,
 ):
     """
     Create a component from a Python function with additional configurations
@@ -1897,7 +1896,7 @@ def fl_server_component(
     base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
-    container_port=8080,
+    container_port=plugin_config.CONTAINER_PORT,
 ):
     """
     Decorator to create a Kubeflow component from a Python function.
@@ -2179,7 +2178,7 @@ def register_model_api(
     registered_model_name=None,
     conda_env=None,
     code_paths=None,
-    serialization_format="cloudpickle",
+    serialization_format=plugin_config.SERIALIZATION_FORMAT,
     signature: ModelSignature = None,
     input_example: Union[
         pd.DataFrame,
@@ -2192,10 +2191,10 @@ def register_model_api(
         bytes,
         tuple,
     ] = None,
-    await_registration_for=300,
+    await_registration_for=plugin_config.SERIALIZATION_FORMAT,
     pip_requirements=None,
     extra_pip_requirements=None,
-    pyfunc_predict_fn="predict",
+    pyfunc_predict_fn=plugin_config.PYFUNC_PREDICT_FN,
     metadata=None,
 ):
     """

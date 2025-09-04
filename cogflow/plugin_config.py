@@ -45,6 +45,22 @@ FILE_TYPE = 0
 API_BASEPATH = "API_BASEPATH"
 TIME_OUT = 300
 
+# log_model method parameters
+SERIALIZATION_FORMAT = "cloudpickle"
+AWAIT_REGISTRATION_FOR = 300
+PYFUNC_PREDICT_FN = "predict"
+
+# evaluate method parameters
+ENV_MANAGER = "local"
+
+# search_registered_models method parameters
+MAX_RESULTS = 100
+
+# create_fl_component_from_func method parameters
+CONTAINER_PORT = 8080
+
+
+# Docker images
 BASE_IMAGE = "hiroregistry/cogflow:latest"
 FL_COGFLOW_BASE_IMAGE = "hiroregistry/flcogflow:latest"
 
