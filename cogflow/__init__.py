@@ -2254,6 +2254,29 @@ def register_model_api(
     return result
 
 
+def update_served_model(
+    isvc_name: str,
+    model_name: str,
+    model_version: str,
+    namespace: Optional[str] = None,
+) -> str:
+    """
+    Update an existing KServe InferenceService to point at a new model version.
+
+    If the InferenceService does not exist, raises with a message to call `serve_model(...)` first.
+
+    Returns the served model url on success.
+    """
+
+    return KubeflowPlugin().update_served_model(
+        isvc_name=isvc_name,
+        model_name=model_name,
+        model_version=model_version,
+        model_uri=get_model_uri(model_name, model_version),
+        namespace=namespace,
+    )
+
+
 __all__ = [
     # Methods from MlflowPlugin class
     "InputPath",
