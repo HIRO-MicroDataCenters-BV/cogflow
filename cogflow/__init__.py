@@ -76,6 +76,7 @@ register_dataset: Register a dataset.
 import inspect
 import json
 import os
+import re
 from typing import Callable, Union, Any, List, Optional, Dict, Mapping
 import random
 import string
@@ -375,7 +376,7 @@ def load_model(model_uri: str, dst_path=None):
 
 def register_model(
     model_uri: str,
-    model: str,
+    model_name: str,
     await_registration_for: int = 300,
     *,
     tags: Optional[Dict[str, Any]] = None,
@@ -388,7 +389,7 @@ def register_model(
 
     Args:
         model_uri (str): The URI of the Mlflow model to register.
-        model (str): The name under which to register the model in the Mlflow Model Registry.
+        model_name (str): The name under which to register the model in the Mlflow Model Registry.
         await_registration_for (int, optional): The duration, in seconds, to wait for the model
         version to finish being created and be in the READY status. Defaults to 300 seconds.
         tags (Optional[Dict[str, Any]], optional): A dictionary of key-value pairs to tag the
@@ -399,7 +400,7 @@ def register_model(
         ModelVersion: An instance of `ModelVersion` representing the registered model version.
     """
     return MlflowPlugin().register_model(
-        model=model,
+        model=model_name,
         model_uri=model_uri,
         await_registration_for=await_registration_for,
         tags=tags,
@@ -2251,6 +2252,23 @@ def register_model_api(
             metadata=metadata,
         )
 
+    display_name = registered_model_name or model_name
+
+    reg = register_model(model_uri=result.model_uri, model_name=display_name)
+    result.model_name = reg.name
+    result.model_version = reg.version
+
+    # Fetch run tags
+    run = cogclient.get_run(result.run_id)
+    tags = run.data.tags
+
+    # Traverse all tags and append each one individually as an attribute
+    if tags:
+        for key, value in tags.items():
+            # normalize key: replace invalid characters with underscores
+            safe_key = key.replace(".", "_").replace("-", "_")
+            setattr(result, safe_key, value)
+
     return result
 
 
@@ -2275,6 +2293,22 @@ def update_served_model(
         model_uri=get_model_uri(model_name, model_version),
         namespace=namespace,
     )
+
+
+def set_tag(key: str, value: Any) -> None:
+    """
+    Set a tag under the current run. If no run is active, this method will create a
+    new active run.
+
+    :param key: Tag name (string). This string may only contain alphanumerics, underscores
+                (_), dashes (-), periods (.), spaces ( ), and slashes (/).
+                All backend stores will support keys up to length 250, but some may
+                support larger keys.
+    :param value: Tag value (string, but will be string-ified if not).
+                  All backend stores will support values up to length 5000, but some
+                  may support larger values.
+    """
+    return MlflowPlugin().set_tag(key=key, value=value)
 
 
 __all__ = [
