@@ -1373,8 +1373,8 @@ pyfunc.log_model = custom_log_model
 
 
 def get_served_models(
-    namespace: str = None,
     isvc_name: str = None,
+    namespace: str = None,
 ):
     """
     Gets information about inference service of served models
@@ -2308,6 +2308,28 @@ def set_tag(key: str, value: Any) -> None:
                   may support larger values.
     """
     return MlflowPlugin().set_tag(key=key, value=value)
+
+
+def get_model_url(
+    isvc_name: str,
+    namespace: str = None,
+) -> str:
+    """
+    Gets information about inference service of served models
+
+    Args:
+        namespace (str): Namespace where isvc is deployed.
+        isvc_name (str, optional): Name of served model.
+
+    Returns:
+        list: List of model information dictionaries. Each dict contains:
+              model_name, model_id, model_version, creation_timestamp,
+              served_model_url, status, traffic_percentage.
+    """
+    info = KubeflowPlugin().get_served_models(namespace, isvc_name)
+    if isinstance(info, list):  # sometimes returns [ { ... } ]
+        info = info[0]
+    return info["served_model_url"]
 
 
 __all__ = [
