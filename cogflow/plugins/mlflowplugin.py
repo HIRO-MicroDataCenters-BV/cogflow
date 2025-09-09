@@ -731,3 +731,18 @@ class MlflowPlugin:
             "model_version": model_version,
             "model_id": model_id,
         }
+
+    def set_tag(self, key: str, value: Any) -> None:
+        """
+        Set a tag under the current run. If no run is active, this method will create a
+        new active run.
+
+        :param key: Tag name (string). This string may only contain alphanumerics, underscores
+                    (_), dashes (-), periods (.), spaces ( ), and slashes (/).
+                    All backend stores will support keys up to length 250, but some may
+                    support larger keys.
+        :param value: Tag value (string, but will be string-ified if not).
+                      All backend stores will support values up to length 5000, but some
+                      may support larger values.
+        """
+        return self.mlflow.set_tag(key=key, value=value)

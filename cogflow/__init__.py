@@ -236,7 +236,7 @@ def evaluate(
     custom_artifacts=None,
     validation_thresholds=None,
     baseline_model=None,
-    env_manager="local",
+    env_manager=plugin_config.ENV_MANAGER,
 ):
     """
     Evaluates a model.
@@ -325,7 +325,7 @@ def evaluate(
 
 def search_registered_models(
     filter_string: Optional[str] = None,
-    max_results: int = 100,
+    max_results: int = plugin_config.MAX_RESULTS,
     order_by: Optional[List[str]] = None,
     page_token: Optional[str] = None,
 ):
@@ -375,8 +375,8 @@ def load_model(model_uri: str, dst_path=None):
 
 def register_model(
     model_uri: str,
-    model: str,
-    await_registration_for: int = 300,
+    model_name: str,
+    await_registration_for: int = plugin_config.AWAIT_REGISTRATION_FOR,
     *,
     tags: Optional[Dict[str, Any]] = None,
 ):
@@ -388,7 +388,7 @@ def register_model(
 
     Args:
         model_uri (str): The URI of the Mlflow model to register.
-        model (str): The name under which to register the model in the Mlflow Model Registry.
+        model_name (str): The name under which to register the model in the Mlflow Model Registry.
         await_registration_for (int, optional): The duration, in seconds, to wait for the model
         version to finish being created and be in the READY status. Defaults to 300 seconds.
         tags (Optional[Dict[str, Any]], optional): A dictionary of key-value pairs to tag the
@@ -399,7 +399,7 @@ def register_model(
         ModelVersion: An instance of `ModelVersion` representing the registered model version.
     """
     return MlflowPlugin().register_model(
-        model=model,
+        model=model_name,
         model_uri=model_uri,
         await_registration_for=await_registration_for,
         tags=tags,
@@ -446,7 +446,7 @@ def create_model_version(
     tags: Optional[Dict[str, Any]] = None,
     run_link: Optional[str] = None,
     description: Optional[str] = None,
-    await_creation_for: int = 300,
+    await_creation_for: int = plugin_config.AWAIT_REGISTRATION_FOR,
 ):
     """
     Create a model version for a registered model in the Mlflow Model Registry.
@@ -623,7 +623,7 @@ def log_model(
     registered_model_name=None,
     conda_env=None,
     code_paths=None,
-    serialization_format="cloudpickle",
+    serialization_format=plugin_config.SERIALIZATION_FORMAT,
     signature: ModelSignature = None,
     input_example: Union[
         pd.DataFrame,
@@ -636,10 +636,10 @@ def log_model(
         bytes,
         tuple,
     ] = None,
-    await_registration_for=300,
+    await_registration_for=plugin_config.AWAIT_REGISTRATION_FOR,
     pip_requirements=None,
     extra_pip_requirements=None,
-    pyfunc_predict_fn="predict",
+    pyfunc_predict_fn=plugin_config.PYFUNC_PREDICT_FN,
     metadata=None,
 ):
     """
@@ -728,7 +728,7 @@ def log_model_with_dataset(
     dataset: DatasetMetadata,
     conda_env=None,
     code_paths=None,
-    serialization_format="cloudpickle",
+    serialization_format=plugin_config.SERIALIZATION_FORMAT,
     registered_model_name=None,
     signature: ModelSignature = None,
     input_example: Union[
@@ -742,10 +742,10 @@ def log_model_with_dataset(
         bytes,
         tuple,
     ] = None,
-    await_registration_for=300,
+    await_registration_for=plugin_config.AWAIT_REGISTRATION_FOR,
     pip_requirements=None,
     extra_pip_requirements=None,
-    pyfunc_predict_fn="predict",
+    pyfunc_predict_fn=plugin_config.PYFUNC_PREDICT_FN,
     metadata=None,
 ):
     """
@@ -1296,7 +1296,7 @@ def custom_log_model(
     artifacts=None,
     signature: ModelSignature = None,
     input_example: ModelInputExample = None,
-    await_registration_for=300,
+    await_registration_for=plugin_config.AWAIT_REGISTRATION_FOR,
     pip_requirements=None,
     extra_pip_requirements=None,
     metadata=None,
@@ -1373,8 +1373,8 @@ pyfunc.log_model = custom_log_model
 
 
 def get_served_models(
-    namespace: str = None,
     isvc_name: str = None,
+    namespace: str = None,
 ):
     """
     Gets information about inference service of served models
@@ -1866,7 +1866,7 @@ def create_fl_component_from_func(
     base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
-    container_port=8080,
+    container_port=plugin_config.CONTAINER_PORT,
 ):
     """
     Create a component from a Python function with additional configurations
@@ -1896,7 +1896,7 @@ def fl_server_component(
     base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
-    container_port=8080,
+    container_port=plugin_config.CONTAINER_PORT,
 ):
     """
     Decorator to create a Kubeflow component from a Python function.
@@ -2170,6 +2170,166 @@ def connect(source_dataset, model_isvc, destination_dataset):
     except Exception as e:
         print(f"Failed to connect datasets: {e}")
         raise e
+
+
+def register_model_api(
+    model_name,
+    artifact_path,
+    registered_model_name=None,
+    conda_env=None,
+    code_paths=None,
+    serialization_format=plugin_config.SERIALIZATION_FORMAT,
+    signature: ModelSignature = None,
+    input_example: Union[
+        pd.DataFrame,
+        np.ndarray,
+        dict,
+        list,
+        csr_matrix,
+        csc_matrix,
+        str,
+        bytes,
+        tuple,
+    ] = None,
+    await_registration_for=plugin_config.SERIALIZATION_FORMAT,
+    pip_requirements=None,
+    extra_pip_requirements=None,
+    pyfunc_predict_fn=plugin_config.PYFUNC_PREDICT_FN,
+    metadata=None,
+):
+    """
+    Logs a model.
+
+    Args:
+        model_name: The model to log.
+        artifact_path (str): The artifact path to log the model to.
+        registered_model_name (str, optional): The name to register the model under.
+        conda_env (str, optional): The conda environment to use.
+        code_paths (list, optional): List of paths to include in the model.
+        serialization_format (str, optional): The format to use for serialization.
+        signature (ModelSignature, optional): The signature of the model.
+        input_example (Union[pd.DataFrame, np.ndarray, dict, list, csr_matrix, csc_matrix, str,
+         bytes, tuple], optional): Example input.
+        await_registration_for (int, optional): Time to wait for registration.
+        pip_requirements (list, optional): List of pip requirements.
+        extra_pip_requirements (list, optional): List of extra pip requirements.
+        pyfunc_predict_fn (str, optional): The prediction function to use.
+        metadata (dict, optional): Metadata for the model.
+    """
+    is_custom_pyfunc_model = isinstance(model_name, pyfunc.PythonModel) or (
+        inspect.isclass(model_name) and issubclass(model_name, pyfunc.PythonModel)
+    )
+
+    if is_custom_pyfunc_model:
+        # Log using pyfunc flavor
+        result = custom_log_model(
+            artifact_path=artifact_path,
+            python_model=model_name,
+            code_path=code_paths,
+            conda_env=conda_env,
+            signature=signature,
+            input_example=input_example,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            metadata=metadata,
+        )
+    else:
+        # Log using MLflowPlugin (e.g., sklearn, XGBoost, etc.)
+        result = MlflowPlugin().log_model(
+            sk_model=model_name,
+            artifact_path=artifact_path,
+            conda_env=conda_env,
+            code_paths=code_paths,
+            serialization_format=serialization_format,
+            registered_model_name=registered_model_name,
+            signature=signature,
+            input_example=input_example,
+            await_registration_for=await_registration_for,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            pyfunc_predict_fn=pyfunc_predict_fn,
+            metadata=metadata,
+        )
+
+    display_name = registered_model_name or model_name
+
+    reg = register_model(model_uri=result.model_uri, model_name=display_name)
+    result.model_name = reg.name
+    result.model_version = reg.version
+
+    # Fetch run tags
+    run = cogclient.get_run(result.run_id)
+    tags = run.data.tags
+
+    # Traverse all tags and append each one individually as an attribute
+    if tags:
+        for key, value in tags.items():
+            # normalize key: replace invalid characters with underscores
+            safe_key = key.replace(".", "_").replace("-", "_")
+            setattr(result, safe_key, value)
+
+    return result
+
+
+def update_served_model(
+    isvc_name: str,
+    model_name: str,
+    model_version: str,
+    namespace: Optional[str] = None,
+) -> str:
+    """
+    Update an existing KServe InferenceService to point at a new model version.
+
+    If the InferenceService does not exist, raises with a message to call `serve_model(...)` first.
+
+    Returns the served model url on success.
+    """
+
+    return KubeflowPlugin().update_served_model(
+        isvc_name=isvc_name,
+        model_name=model_name,
+        model_version=model_version,
+        model_uri=get_model_uri(model_name, model_version),
+        namespace=namespace,
+    )
+
+
+def set_tag(key: str, value: Any) -> None:
+    """
+    Set a tag under the current run. If no run is active, this method will create a
+    new active run.
+
+    :param key: Tag name (string). This string may only contain alphanumerics, underscores
+                (_), dashes (-), periods (.), spaces ( ), and slashes (/).
+                All backend stores will support keys up to length 250, but some may
+                support larger keys.
+    :param value: Tag value (string, but will be string-ified if not).
+                  All backend stores will support values up to length 5000, but some
+                  may support larger values.
+    """
+    return MlflowPlugin().set_tag(key=key, value=value)
+
+
+def get_model_url(
+    isvc_name: str,
+    namespace: str = None,
+) -> str:
+    """
+    Gets information about inference service of served models
+
+    Args:
+        namespace (str): Namespace where isvc is deployed.
+        isvc_name (str, optional): Name of served model.
+
+    Returns:
+        list: List of model information dictionaries. Each dict contains:
+              model_name, model_id, model_version, creation_timestamp,
+              served_model_url, status, traffic_percentage.
+    """
+    info = KubeflowPlugin().get_served_models(namespace, isvc_name)
+    if isinstance(info, list):  # sometimes returns [ { ... } ]
+        info = info[0]
+    return info["served_model_url"]
 
 
 __all__ = [

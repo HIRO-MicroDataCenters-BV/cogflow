@@ -4,9 +4,10 @@ This module provides functionality related to Kubeflow Pipelines.
 
 import inspect
 import os
+import re
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, Mapping, Callable
+from typing import Optional, Dict, Any, Mapping, Callable, Tuple
 from inspect import Signature, Parameter
 import kfp
 from kfp import dsl
@@ -349,12 +350,9 @@ class KubeflowPlugin:
             else:
                 isvc_list = [isvc_response] if isvc_response else []
 
-            print(f"Debug: Processing {len(isvc_list)} inference services")
-
             served_models = []
             for isvc in isvc_list:
                 if not isinstance(isvc, dict):
-                    print(f"Debug: Skipping non-dict item: {type(isvc)} - {isvc}")
                     continue
 
                 isvc_info = KubeflowPlugin._process_isvc(isvc)
@@ -366,7 +364,6 @@ class KubeflowPlugin:
                 key=lambda x: x.get("creation_timestamp") or "", reverse=True
             )
 
-            print(f"Debug: Returning {len(served_models)} models")
             return served_models
 
         except ApiException as exp:
@@ -425,7 +422,6 @@ class KubeflowPlugin:
             "traffic_percentage": percentage,
         }
 
-        print(f"Debug: Processed model: {model_name} - Status: {status}")
         return isvc_info
 
     @staticmethod
@@ -987,3 +983,115 @@ class KubeflowPlugin:
         except config.config_exception.ConfigException:
             # If not running in a pod, load the kubeconfig file
             config.load_kube_config()
+
+    @staticmethod
+    def _raise_isvc_not_found(
+        isvc_name: str, namespace: str, model_name: str, model_version: str
+    ):
+        raise RuntimeError(
+            f"InferenceService '{isvc_name}' not found in namespace '{namespace}'. "
+            "First serve the model using serve_model(model_id=None, artifact_path=None, "
+            f"model_name='{model_name}', model_version='{model_version}', isvc_name='{isvc_name}')."
+        )
+
+    @staticmethod
+    def _parse_group_version(api_version: str) -> Tuple[str, str]:
+        """
+        Parse the group and version from an apiVersion string.
+        """
+        if not api_version or "/" not in api_version:
+            raise ValueError(f"Unexpected apiVersion: {api_version!r}")
+        grp, ver = api_version.split("/", 1)
+        return grp, ver
+
+    @staticmethod
+    def update_served_model(
+        isvc_name: str,
+        model_name: str,
+        model_version: str,
+        model_uri: str,
+        namespace: Optional[str] = None,
+    ) -> str:
+        """
+        Update an existing KServe InferenceService to point at a new model version.
+
+        If the InferenceService does not exist, raises with a message to call `serve_model(...)` first.
+
+        Returns the served model url on success.
+        """
+
+        # 1) Verify whether all required parameters are provided
+        if not isvc_name:
+            raise ValueError("isvc_name is required")
+
+        if not model_uri:
+            raise ValueError("model_uri is required")
+
+        if not namespace:
+            namespace = KubeflowPlugin.get_default_namespace()
+
+        # 2) Load kube config
+        KubeflowPlugin().load_k8s_config()
+
+        co_api = client.CustomObjectsApi()
+
+        # 3) Ensure the ISVC exists
+        try:
+            isvc_obj = KServeClient().get(namespace=namespace, name=isvc_name)
+            # optional: use the response now
+            KubeflowPlugin._process_isvc(isvc_obj)
+        except RuntimeError as e:
+            msg = str(e)
+            if "(404)" in msg or "Not Found" in msg:
+                KubeflowPlugin()._raise_isvc_not_found(
+                    isvc_name, namespace, model_name, model_version
+                )
+            if "(403)" in msg or "Forbidden" in msg:
+                raise PermissionError(
+                    f"Forbidden to get InferenceService '{isvc_name}' in namespace '{namespace}'. "
+                    "Check your RBAC/ServiceAccount and namespace."
+                ) from e
+            raise
+        # Discover group/version from the object, plural from CRD listing
+        try:
+            api_version = isvc_obj.get("apiVersion") or isvc_obj.get(
+                "metadata", {}
+            ).get("apiVersion")
+            group, version = KubeflowPlugin()._parse_group_version(api_version)
+        except Exception as e:
+            print(f"Warning: Failed to parse apiVersion from InferenceService: {e}")
+            # Fallback to KServe defaults if apiVersion missing (unlikely)
+            group, version = "serving.kserve.io", "v1beta1"
+
+        plural = constants.KSERVE_PLURAL
+
+        # 4) Build a patch to update
+        annotations_patch = {
+            k: v
+            for k, v in {
+                "model_id": re.search(r"/([0-9a-f]{32})/", model_uri).group(1),
+                "model_name": model_name,
+                "model_version": model_version,
+            }.items()
+            if v is not None
+        }
+
+        patch_body = {
+            "metadata": {"annotations": annotations_patch},
+            "spec": {"predictor": {"model": {"storageUri": model_uri}}},
+        }
+
+        # 5) Apply patch
+        try:
+            co_api.patch_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                name=isvc_name,
+                body=patch_body,
+            )
+        except ApiException as e:
+            raise f"Failed to patch InferenceService '{isvc_name}': {e.reason}" from e
+
+        return f"Inferenceservice '{isvc_name}' updated successfully to model '{model_name}' version '{model_version}'."
