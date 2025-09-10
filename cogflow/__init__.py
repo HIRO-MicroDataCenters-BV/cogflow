@@ -1273,7 +1273,7 @@ def log_artifact(
     local_path: str, artifact_path: Optional[str] = None, run_id: Optional[str] = None
 ):
     """
-    Log a local file or directory as an artifact of a run.
+    Log a local file as an artifact of a run.
 
     Behavior:
       - If `run_id` is provided → logs the artifact(s) to that specific run
@@ -1282,7 +1282,7 @@ def log_artifact(
         If no run is active, a new run will automatically be created.
 
     Args:
-        local_path (str): Path to the local file or directory to log.
+        local_path (str): Path to the local file to log.
         artifact_path (str, optional): Subdirectory within the run's
             ``artifact_uri`` where the artifact(s) should be stored.
             If None, the artifact(s) are logged to the root.
