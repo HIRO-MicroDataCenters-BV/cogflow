@@ -1269,17 +1269,52 @@ def get_pipeline_and_experiment_details(run_id):
         return e
 
 
-def log_artifact(local_path: str, artifact_path: Optional[str] = None):
+def log_artifact(
+    local_path: str, artifact_path: Optional[str] = None, run_id: Optional[str] = None
+):
     """
-    Log a local file or directory as an artifact of the currently active run. If no run is
-    active, this method will create a new active run.
+    Log a local file or directory as an artifact of a run.
 
-    :param local_path: Path to the file to write.
-    :param artifact_path: If provided, the directory in ``artifact_uri`` to write to.
+    Behavior:
+      - If `run_id` is provided → logs the artifact(s) to that specific run
+        (works even if the run has already finished).
+      - If `run_id` is not provided → logs to the currently active run.
+        If no run is active, a new run will automatically be created.
+
+    Args:
+        local_path (str): Path to the local file or directory to log.
+        artifact_path (str, optional): Subdirectory within the run's
+            ``artifact_uri`` where the artifact(s) should be stored.
+            If None, the artifact(s) are logged to the root.
+        run_id (str, optional): The ID of the run to log the artifact(s) to.
+            If not provided, logs to the active run or creates a new one.
+
+    Returns:
+        str or None: The artifact URI, depending on backend implementation.
+
+    Examples:
+        # Case 1: Log to a specific run (using run_id)
+        >>> log_artifact(
+        ...     local_path="reports/metrics.txt",
+        ...     artifact_path="reports",
+        ...     run_id="<run_id>"
+        ... )
+        # → stores as s3://mlflow/0/<run_id>/artifacts/reports/metrics.txt
+
+        # Case 2: Log to the currently active run (or auto-starts one)
+        >>> with cogflow.start_run() as run:
+        ...     log_artifact(local_path="plots/chart.png", artifact_path="images")
+        # → stores as s3://mlflow/0/<active_run_id>/artifacts/images/chart.png
     """
-    return MlflowPlugin().log_artifact(
-        local_path=local_path, artifact_path=artifact_path
-    )
+
+    if run_id:
+        return cogclient.log_artifact(
+            run_id=run_id, local_path=local_path, artifact_path=artifact_path
+        )
+    else:
+        return MlflowPlugin().log_artifact(
+            local_path=local_path, artifact_path=artifact_path
+        )
 
 
 original_pyfunc_log_model = pyfunc.log_model
