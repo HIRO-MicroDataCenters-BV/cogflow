@@ -1307,7 +1307,7 @@ def log_artifact(
         # → stores as s3://mlflow/0/<active_run_id>/artifacts/images/chart.png
     """
 
-    if run_id:
+    if run_id is not None:
         return cogclient.log_artifact(
             run_id=run_id, local_path=local_path, artifact_path=artifact_path
         )
