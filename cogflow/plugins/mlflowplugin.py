@@ -811,7 +811,7 @@ class MlflowPlugin:
             >>> import cogflow
             >>> from cogflow import cogclient, mlflow
             >>> run_name = cogflow.start_run()
-            >>> run_info_id = run_name.info.run_info_id
+            >>> run_info_id = run_name.info.run_id
             >>> cogflow.end_run()
 
             # Fetch experiment ID for the run
@@ -822,7 +822,7 @@ class MlflowPlugin:
             # Works with runs from non-default experiments as well
             >>> cogclient.create_experiment("my_exp")
             >>> with cogflow.start_run(experiment_id=1) as run_name:
-            ...     print(mlflow.get_experiment_id_from_run(run.info.run_id))
+            ...     print(mlflow.get_experiment_id_from_run(run_name.info.run_id))
             '1'
         """
         run = self.mlflow.get_run(run_id)
