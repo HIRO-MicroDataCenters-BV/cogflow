@@ -81,6 +81,8 @@ import random
 import string
 import time
 from uuid import UUID
+
+import boto3
 import psutil
 import numpy as np
 import pandas as pd
@@ -2365,6 +2367,75 @@ def get_model_url(
     if isinstance(info, list):  # sometimes returns [ { ... } ]
         info = info[0]
     return info["served_model_url"]
+
+
+def update_artifact(
+    run_id: str,
+    local_path: str,
+    artifact_path: str = None,
+):
+    """
+    Update (overwrite) an artifact in S3/MinIO for a given run_id.
+
+    Behavior:
+        - File name is always inferred from ``local_path``.
+        - If ``artifact_path`` is provided → file is stored inside that folder.
+        - If ``artifact_path`` is None → file is stored at the root of artifacts/.
+
+    Args:
+        run_id (str): run ID.
+        local_path (str): Path to the local file to upload.
+        artifact_path (str, optional): Subdirectory under artifacts/.
+            If None, file is stored directly under artifacts/.
+
+    Returns:
+        str: The full S3 URI of the updated artifact.
+
+    Examples:
+        # Case 1: Update inside a folder
+        >>> update_artifact(
+        ...     run_id="<run_id>>",
+        ...     local_path="<local_path>",
+        ...     artifact_path="<artifact_path>"
+        ... )
+        # → s3://mlflow/<experiment_id>/<run_id>/artifacts/<artifact_path>/<local_path_file_name>
+
+        # Case 2: Update at root
+        >>> update_artifact(
+        ...     run_id="<run_id>",
+        ...     local_path="<local_path>"
+        ... )
+        # → s3://mlflow/<experiment_id>/<run_id>/artifacts/<local_path_file_name>
+    """
+    PluginManager().load_config()
+
+    exp_id = MlflowPlugin().get_experiment_id_from_run(run_id)
+
+    # Infer file name from local_path
+    file_name = os.path.basename(local_path)
+
+    # Build the object key
+    if artifact_path:
+        key = f"{exp_id}/{run_id}/artifacts/{artifact_path}/{file_name}"
+    else:
+        key = f"{exp_id}/{run_id}/artifacts/{file_name}"
+
+    # Init S3 client
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=os.getenv("MLFLOW_S3_ENDPOINT_URL"),
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+    )
+
+    bucket = os.getenv("ML_TOOL")
+
+    # Upload file (overwrite if exists)
+    s3.upload_file(local_path, bucket, key)
+
+    s3_uri = f"s3://{bucket}/{key}"
+    print(f"Artifact updated: {s3_uri}")
+    return s3_uri
 
 
 __all__ = [
