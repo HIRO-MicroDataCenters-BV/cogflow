@@ -81,8 +81,8 @@ import random
 import string
 import time
 from uuid import UUID
-
 import boto3
+from botocore.exceptions import NoCredentialsError, ClientError
 import psutil
 import numpy as np
 import pandas as pd
@@ -2394,7 +2394,7 @@ def update_artifact(
     Examples:
         # Case 1: Update inside a folder
         >>> update_artifact(
-        ...     run_id="<run_id>>",
+        ...     run_id="<run_id>",
         ...     local_path="<local_path>",
         ...     artifact_path="<artifact_path>"
         ... )
@@ -2411,6 +2411,10 @@ def update_artifact(
 
     exp_id = MlflowPlugin().get_experiment_id_from_run(run_id)
 
+    # Validate local file exists
+    if not os.path.exists(local_path):
+        raise FileNotFoundError(f"Local file not found: {local_path}")
+
     # Infer file name from local_path
     file_name = os.path.basename(local_path)
 
@@ -2420,18 +2424,38 @@ def update_artifact(
     else:
         key = f"{exp_id}/{run_id}/artifacts/{file_name}"
 
-    # Init S3 client
-    s3 = boto3.client(
-        "s3",
-        endpoint_url=os.getenv("MLFLOW_S3_ENDPOINT_URL"),
-        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-    )
-
+    # Load environment variables
+    endpoint_url = os.getenv("MLFLOW_S3_ENDPOINT_URL")
+    access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
     bucket = os.getenv("ML_TOOL")
 
+    if not endpoint_url or not access_key or not secret_key or not bucket:
+        raise EnvironmentError(
+            "Missing one or more required environment variables: "
+            "MLFLOW_S3_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, ML_TOOL"
+        )
+
+    # Init S3 client
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to initialize S3 client: {e}") from e
+
     # Upload file (overwrite if exists)
-    s3.upload_file(local_path, bucket, key)
+    try:
+        s3.upload_file(local_path, bucket, key)
+    except NoCredentialsError:
+        raise RuntimeError("Invalid or missing credentials.")
+    except ClientError as e:
+        raise RuntimeError(f"S3 upload failed: {e.response['Error']['Message']}") from e
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error during S3 upload: {e}") from e
 
     s3_uri = f"s3://{bucket}/{key}"
     print(f"Artifact updated: {s3_uri}")

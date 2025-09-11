@@ -815,7 +815,7 @@ class MlflowPlugin:
             >>> cogflow.end_run()
 
             # Fetch experiment ID for the run
-            >>> exp_id = mlflow.get_experiment_id_from_run(run_id)
+            >>> exp_id = mlflow.get_experiment_id_from_run(run_info_id)
             >>> print(exp_id)
             '0'   # (default experiment if none was specified)
 
