@@ -2462,6 +2462,102 @@ def update_artifact(
     return s3_uri
 
 
+def delete_artifact(
+    run_id: str,
+    file_name: str,
+    artifact_path: str = None,
+):
+    """
+    Delete an artifact (object) from S3/MinIO for a given MLflow run.
+
+    Behavior:
+        - If ``artifact_path`` is provided → deletes file inside that folder.
+        - If ``artifact_path`` is None → deletes file directly under ``artifacts/``.
+
+    Args:
+        run_id (str): MLflow run ID.
+        file_name (str): File name with extension (e.g., "kafka-sink.yaml").
+        artifact_path (str, optional): Subdirectory under artifacts/.
+            If None, file is deleted from the root of artifacts/.
+
+    Returns:
+        str or None: The full S3 URI of the deleted artifact,
+                     or None if the object was not found.
+
+    Raises:
+        EnvironmentError: If required environment variables are missing.
+        RuntimeError: If S3 client creation or deletion fails.
+
+    Examples:
+        # Case 1: Delete inside a folder
+        >>> delete_artifact(
+        ...     run_id="<run_id>",
+        ...     file_name="<file_name>",
+        ...     artifact_path="<artifact_path>"
+        ... )
+        # → deletes s3://mlflow/<experiment_id>/<run_id>/artifacts/<artifact_path>/<file_name>
+
+        # Case 2: Delete at root
+        >>> delete_artifact(
+        ...     run_id="<run_id>",
+        ...     file_name="<file_name>"
+        ... )
+        # → deletes s3://mlflow/<experiment_id>/<run_id>/artifacts/<file_name>
+    """
+
+    PluginManager().load_config()
+
+    exp_id = MlflowPlugin().get_experiment_id_from_run(run_id)
+
+    # Build the object key
+    if artifact_path:
+        key = f"{exp_id}/{run_id}/artifacts/{artifact_path}/{file_name}"
+    else:
+        key = f"{exp_id}/{run_id}/artifacts/{file_name}"
+
+    # Load environment variables
+    endpoint_url = os.getenv("MLFLOW_S3_ENDPOINT_URL")
+    access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+    bucket = os.getenv("ML_TOOL")
+
+    if not endpoint_url or not access_key or not secret_key or not bucket:
+        raise EnvironmentError(
+            "Missing one or more required environment variables: "
+            "MLFLOW_S3_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, ML_TOOL"
+        )
+
+    # Init S3 client safely
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to initialize S3 client: {e}") from e
+
+    # Delete with existence check
+    try:
+        s3.head_object(Bucket=bucket, Key=key)  # verify object exists
+        s3.delete_object(Bucket=bucket, Key=key)
+        s3_uri = f"s3://{bucket}/{key}"
+        print(f"Deleted: {s3_uri}")
+        return s3_uri
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "404":
+            print(f"Not found: s3://{bucket}/{key}")
+            return None
+        raise RuntimeError(
+            f"S3 deletion failed: {e.response['Error']['Message']}"
+        ) from e
+    except NoCredentialsError:
+        raise RuntimeError("Invalid or missing AWS credentials.")
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error during S3 deletion: {e}") from e
+
+
 __all__ = [
     # Methods from MlflowPlugin class
     "InputPath",
