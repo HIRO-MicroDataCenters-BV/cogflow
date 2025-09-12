@@ -2138,10 +2138,10 @@ def get_full_model_uri_from_run_or_registry(
 
 def serve_model(
     model_id: str = None,
+    isvc_name: str = None,
     artifact_path: str = None,
     model_name: str = None,
     model_version: str = None,
-    isvc_name: str = None,
 ):
     """
     Create a kserve instance.
