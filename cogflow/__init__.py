@@ -2428,12 +2428,12 @@ def update_artifact(
     endpoint_url = os.getenv("MLFLOW_S3_ENDPOINT_URL")
     access_key = os.getenv("AWS_ACCESS_KEY_ID")
     secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-    bucket = os.getenv("ML_TOOL")
+    bucket = plugin_config.BUCKET_NAME
 
-    if not endpoint_url or not access_key or not secret_key or not bucket:
+    if not endpoint_url or not access_key or not secret_key:
         raise EnvironmentError(
             "Missing one or more required environment variables: "
-            "MLFLOW_S3_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, ML_TOOL"
+            "MLFLOW_S3_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
         )
 
     # Init S3 client
