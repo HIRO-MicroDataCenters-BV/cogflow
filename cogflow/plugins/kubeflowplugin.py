@@ -4,7 +4,6 @@ This module provides functionality related to Kubeflow Pipelines.
 
 import inspect
 import os
-import re
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Mapping, Callable, Tuple
@@ -194,63 +193,116 @@ class KubeflowPlugin:
         model_id: str = None,
         model_name: str = None,
         model_version: str = None,
+        dataset_id: str = None,
+        transformer_image: str = None,
+        transformer_parameters: dict = None,
     ):
         """
-        Create a kserve instance.
+        Create a KServe InferenceService with optional transformer.
 
         Args:
             model_uri (str): URI of the model.
-            isvc_name (str, optional): Name of the kserve instance. If not provided,
-            a default name will be generated.
+            isvc_name (str, optional): Name of the kserve instance.
             model_id (str, optional): Unique identifier for the model.
             model_name (str, optional): Name of the registered model.
             model_version (str, optional): Version of the registered model.
-
-        Returns:
-            None
+            dataset_id (str, optional): Linked dataset identifier.
+            transformer_image (str): Image of the transformer.
+            transformer_parameters (dict, optional): Dict containing:
+            - "PROMETHEUS_URL": URL for Prometheus
+            - "PROMETHEUS_METRICS": Comma-separated metrics
+            Required if transformer_image is provided.
         """
-        # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        try:
-            namespace = utils.get_default_target_namespace()
-            if isvc_name is None:
-                now = datetime.now()
-                date = now.strftime("%d%M")
-                inferencesvc_name = f"predictormodel{date}"
-                isvc_name = inferencesvc_name
-            predictor = V1beta1PredictorSpec(
-                service_account_name="kserve-controller-s3",
-                min_replicas=1,
-                model=V1beta1ModelSpec(
-                    model_format=V1beta1ModelFormat(
-                        name=plugin_config.ML_TOOL,
+        namespace = utils.get_default_target_namespace()
+        if isvc_name is None:
+            now = datetime.now()
+            date = now.strftime("%d%M")
+            isvc_name = f"predictormodel{date}"
+
+        # Predictor spec
+        predictor = V1beta1PredictorSpec(
+            service_account_name="kserve-controller-s3",
+            min_replicas=1,
+            model=V1beta1ModelSpec(
+                model_format=V1beta1ModelFormat(name=plugin_config.MODEL_TYPE),
+                storage_uri=model_uri,
+                protocol_version="v2",
+            ),
+        )
+
+        # Metadata annotations
+        annotations = {
+            "sidecar.istio.io/inject": "false",
+            "model_name": model_name,
+            "model_version": model_version,
+            "model_id": model_id,
+        }
+        if dataset_id:
+            annotations["dataset_id"] = dataset_id
+
+        # Transformer (optional)
+        transformer = None
+        if transformer_image:
+            if not transformer_parameters:
+                raise ValueError(
+                    "transformer_parameters must be provided when transformer_image is set"
+                )
+
+            prometheus_url = transformer_parameters.get("PROMETHEUS_URL")
+            prometheus_metrics = transformer_parameters.get("PROMETHEUS_METRICS")
+
+            if not prometheus_url or not prometheus_metrics:
+                raise ValueError(
+                    "transformer_parameters must include both 'PROMETHEUS_URL' and 'PROMETHEUS_METRICS'"
+                )
+
+            container_name = f"{isvc_name}-transformer".lower()
+
+            transformer = client.V1Container(
+                name=container_name,
+                image=transformer_image,
+                env=[
+                    client.V1EnvVar(name="PROMETHEUS_URL", value=prometheus_url),
+                    client.V1EnvVar(
+                        name="PROMETHEUS_METRICS", value=prometheus_metrics
                     ),
-                    storage_uri=model_uri,
-                    protocol_version="v2",
-                ),
+                ],
             )
 
-            isvc = V1beta1InferenceService(
-                api_version=constants.KSERVE_V1BETA1,
-                kind=constants.KSERVE_KIND,
-                metadata=client.V1ObjectMeta(
-                    name=isvc_name,
-                    namespace=namespace,
-                    annotations={
-                        "sidecar.istio.io/inject": "false",
-                        "model_name": model_name,
-                        "model_version": model_version,
-                        "model_id": model_id,
-                    },
-                ),
-                spec=V1beta1InferenceServiceSpec(predictor=predictor),
-            )
-            kserve = KServeClient()
+        # Build InferenceService
+        isvc_spec = V1beta1InferenceServiceSpec(predictor=predictor)
+        if transformer:
+            isvc_spec.transformer = client.V1PodSpec(containers=[transformer])
+
+        isvc = V1beta1InferenceService(
+            api_version=constants.KSERVE_V1BETA1,
+            kind=constants.KSERVE_KIND,
+            metadata=client.V1ObjectMeta(
+                name=isvc_name,
+                namespace=namespace,
+                annotations=annotations,
+            ),
+            spec=isvc_spec,
+        )
+
+        # Create the service with error handling
+        kserve = KServeClient()
+        try:
             kserve.create(isvc)
             time.sleep(plugin_config.TIMER_IN_SEC)
+            print(
+                f"InferenceService '{isvc_name}' creation requested in namespace '{namespace}'."
+            )
         except ApiException as e:
-            raise e
+            if e.status == 409:  # Already exists
+                print(
+                    f"InferenceService '{isvc_name}' already exists in namespace '{namespace}'."
+                )
+            else:
+                print(f"Failed to create InferenceService '{isvc_name}': {e.reason}")
+                raise
 
     @staticmethod
     def serve_model_v1(model_uri: str, isvc_name: str = None):
@@ -1007,91 +1059,259 @@ class KubeflowPlugin:
     @staticmethod
     def update_served_model(
         isvc_name: str,
-        model_name: str,
-        model_version: str,
-        model_uri: str,
+        model_id: Optional[str] = None,
+        model_uri: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+        dataset_id: Optional[str] = None,
+        transformer_image: Optional[str] = None,
+        transformer_parameters: Optional[Dict] = None,
+        protocol_version: Optional[str] = None,
         namespace: Optional[str] = None,
     ) -> str:
         """
         Update an existing KServe InferenceService to point at a new model version.
 
-        If the InferenceService does not exist, raises with a message to call `serve_model(...)` first.
+        Args:
+            isvc_name (str): Name of the KServe InferenceService to update.
+            model_id (str, optional): Unique identifier for the model/run.
+            model_name (str, optional): Registered model name (alternative to model_id).
+            model_version (str, optional): Registered model version.
+            model_uri (str): URI of the model.
+            dataset_id (str, optional): Dataset linked to the model.
+            transformer_image (str, optional): Image of the transformer.
+            transformer_parameters (dict, optional): Dict containing:
+                - "PROMETHEUS_URL": URL for Prometheus
+                - "PROMETHEUS_METRICS": Comma-separated metrics
+                Required if transformer_image is provided.
+            namespace (str, optional): Kubernetes namespace of the InferenceService.
+            protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
 
-        Returns the served model url on success.
+        Returns:
+            str: Success message with model name and version.
+
+        Raises:
+            ValueError: If neither model_id nor (model_name + model_version) is provided.
+            RuntimeError: If the InferenceService does not exist.
+            PermissionError: If RBAC/namespace access is forbidden.
+            Exception: For any errors during model resolution or patching.
         """
-
-        # 1) Verify whether all required parameters are provided
-        if not isvc_name:
-            raise ValueError("isvc_name is required")
-
-        if not model_uri:
-            raise ValueError("model_uri is required")
-
-        if not namespace:
-            namespace = KubeflowPlugin.get_default_namespace()
-
-        # 2) Load kube config
-        KubeflowPlugin().load_k8s_config()
-
-        co_api = client.CustomObjectsApi()
-
-        # 3) Ensure the ISVC exists
         try:
-            isvc_obj = KServeClient().get(namespace=namespace, name=isvc_name)
-            # optional: use the response now
-            KubeflowPlugin._process_isvc(isvc_obj)
-        except RuntimeError as e:
-            msg = str(e)
-            if "(404)" in msg or "Not Found" in msg:
-                KubeflowPlugin()._raise_isvc_not_found(
-                    isvc_name, namespace, model_name, model_version
+            if not isvc_name:
+                raise ValueError("isvc_name is required")
+
+            if not model_id and not (model_name and model_version):
+                raise ValueError(
+                    "Must provide either model_id or (model_name and model_version)."
                 )
-            if "(403)" in msg or "Forbidden" in msg:
-                raise PermissionError(
-                    f"Forbidden to get InferenceService '{isvc_name}' in namespace '{namespace}'. "
-                    "Check your RBAC/ServiceAccount and namespace."
+
+            if not namespace:
+                namespace = KubeflowPlugin.get_default_namespace()
+
+            KubeflowPlugin().load_k8s_config()
+            co_api = client.CustomObjectsApi()
+
+            # Ensure the ISVC exists
+            try:
+                isvc_obj = KServeClient().get(namespace=namespace, name=isvc_name)
+                KubeflowPlugin._process_isvc(isvc_obj)
+            except RuntimeError as e:
+                msg = str(e)
+                if "(404)" in msg or "Not Found" in msg:
+                    KubeflowPlugin()._raise_isvc_not_found(
+                        isvc_name, namespace, model_name, model_version
+                    )
+                if "(403)" in msg or "Forbidden" in msg:
+                    raise PermissionError(
+                        f"Forbidden to get InferenceService '{isvc_name}' in namespace '{namespace}'. "
+                        "Check your RBAC/ServiceAccount and namespace."
+                    ) from e
+                raise
+
+            # Discover API group/version
+            try:
+                api_version = isvc_obj.get("apiVersion") or isvc_obj.get(
+                    "metadata", {}
+                ).get("apiVersion")
+                group, version = KubeflowPlugin()._parse_group_version(api_version)
+            except Exception as e:
+                print(f"Warning: Failed to parse apiVersion from InferenceService: {e}")
+                group, version = "serving.kserve.io", "v1beta1"
+
+            plural = constants.KSERVE_PLURAL
+
+            # Build patch
+            annotations_patch = {
+                k: v
+                for k, v in {
+                    "model_id": model_id,
+                    "model_name": model_name,
+                    "model_version": model_version,
+                    "dataset_id": dataset_id,
+                    "transformer_image": transformer_image,
+                }.items()
+                if v is not None
+            }
+
+            if transformer_parameters:
+                for k, v in transformer_parameters.items():
+                    annotations_patch[f"transformer/{k}"] = v
+
+            # Predictor model patch
+            model_patch = {"storageUri": model_uri}
+            if protocol_version:
+                model_patch["protocolVersion"] = protocol_version
+
+            patch_body = {
+                "metadata": {"annotations": annotations_patch},
+                "spec": {
+                    "predictor": {"model": model_patch},
+                },
+            }
+
+            # Apply patch
+            try:
+                co_api.patch_namespaced_custom_object(
+                    group=group,
+                    version=version,
+                    namespace=namespace,
+                    plural=plural,
+                    name=isvc_name,
+                    body=patch_body,
+                )
+            except ApiException as e:
+                raise RuntimeError(
+                    f"Failed to patch InferenceService '{isvc_name}': {e.reason}"
                 ) from e
-            raise
-        # Discover group/version from the object, plural from CRD listing
-        try:
-            api_version = isvc_obj.get("apiVersion") or isvc_obj.get(
-                "metadata", {}
-            ).get("apiVersion")
-            group, version = KubeflowPlugin()._parse_group_version(api_version)
+
+            return (
+                f"InferenceService '{isvc_name}' updated successfully to model "
+                f"'{model_name}' version '{model_version}'."
+            )
+
         except Exception as e:
-            print(f"Warning: Failed to parse apiVersion from InferenceService: {e}")
-            # Fallback to KServe defaults if apiVersion missing (unlikely)
-            group, version = "serving.kserve.io", "v1beta1"
+            print(f"[ERROR] Failed to update served model: {e}")
+            raise
 
-        plural = constants.KSERVE_PLURAL
+    @staticmethod
+    def serve_model(
+        model_uri: str,
+        isvc_name: str = None,
+        model_id: str = None,
+        model_name: str = None,
+        model_version: str = None,
+        dataset_id: str = None,
+        transformer_image: str = None,
+        transformer_parameters: dict = None,
+        protocol_version: str = None,
+    ):
+        """
+        Create a KServe InferenceService with optional transformer.
 
-        # 4) Build a patch to update
-        annotations_patch = {
-            k: v
-            for k, v in {
-                "model_id": re.search(r"/([0-9a-f]{32})/", model_uri).group(1),
-                "model_name": model_name,
-                "model_version": model_version,
-            }.items()
-            if v is not None
+        Args:
+            model_uri (str): URI of the model.
+            isvc_name (str, optional): Name of the kserve instance.
+            model_id (str, optional): Unique identifier for the model.
+            model_name (str, optional): Name of the registered model.
+            model_version (str, optional): Version of the registered model.
+            dataset_id (str, optional): Linked dataset identifier.
+            transformer_image (str): Image of the transformer.
+            transformer_parameters (dict, optional): Dict containing:
+            - "PROMETHEUS_URL": URL for Prometheus
+            - "PROMETHEUS_METRICS": Comma-separated metrics
+            Required if transformer_image is provided.
+            protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
+        """
+        PluginManager().verify_activation(KubeflowPlugin().section)
+
+        namespace = utils.get_default_target_namespace()
+        if isvc_name is None:
+            now = datetime.now()
+            date = now.strftime("%d%M")
+            isvc_name = f"predictormodel{date}"
+
+        # Predictor spec
+        model_spec_kwargs = {
+            "model_format": V1beta1ModelFormat(name=plugin_config.MODEL_TYPE),
+            "storage_uri": model_uri,
         }
+        if protocol_version:
+            model_spec_kwargs["protocol_version"] = protocol_version
 
-        patch_body = {
-            "metadata": {"annotations": annotations_patch},
-            "spec": {"predictor": {"model": {"storageUri": model_uri}}},
+        predictor = V1beta1PredictorSpec(
+            service_account_name="kserve-controller-s3",
+            min_replicas=1,
+            model=V1beta1ModelSpec(**model_spec_kwargs),
+        )
+
+        # Metadata annotations
+        annotations = {
+            "sidecar.istio.io/inject": "false",
+            "model_name": model_name,
+            "model_version": model_version,
+            "model_id": model_id,
         }
+        if dataset_id:
+            annotations["dataset_id"] = dataset_id
 
-        # 5) Apply patch
-        try:
-            co_api.patch_namespaced_custom_object(
-                group=group,
-                version=version,
-                namespace=namespace,
-                plural=plural,
+        # Transformer (optional)
+        transformer = None
+        if transformer_image:
+            if not transformer_parameters:
+                raise ValueError(
+                    "transformer_parameters must be provided when transformer_image is set"
+                )
+
+            prometheus_url = transformer_parameters.get("PROMETHEUS_URL")
+            prometheus_metrics = transformer_parameters.get("PROMETHEUS_METRICS")
+
+            if not prometheus_url or not prometheus_metrics:
+                raise ValueError(
+                    "transformer_parameters must include both 'PROMETHEUS_URL' and 'PROMETHEUS_METRICS'"
+                )
+
+            container_name = f"{isvc_name}-transformer".lower()
+
+            transformer = client.V1Container(
+                name=container_name,
+                image=transformer_image,
+                env=[
+                    client.V1EnvVar(name="PROMETHEUS_URL", value=prometheus_url),
+                    client.V1EnvVar(
+                        name="PROMETHEUS_METRICS", value=prometheus_metrics
+                    ),
+                ],
+            )
+
+        # Build InferenceService
+        isvc_spec = V1beta1InferenceServiceSpec(predictor=predictor)
+        if transformer:
+            isvc_spec.transformer = client.V1PodSpec(containers=[transformer])
+
+        isvc = V1beta1InferenceService(
+            api_version=constants.KSERVE_V1BETA1,
+            kind=constants.KSERVE_KIND,
+            metadata=client.V1ObjectMeta(
                 name=isvc_name,
-                body=patch_body,
+                namespace=namespace,
+                annotations=annotations,
+            ),
+            spec=isvc_spec,
+        )
+
+        # Create the service with error handling
+        kserve = KServeClient()
+        try:
+            kserve.create(isvc)
+            time.sleep(plugin_config.TIMER_IN_SEC)
+            print(
+                f"InferenceService '{isvc_name}' creation requested in namespace '{namespace}'."
             )
         except ApiException as e:
-            raise f"Failed to patch InferenceService '{isvc_name}': {e.reason}" from e
-
-        return f"Inferenceservice '{isvc_name}' updated successfully to model '{model_name}' version '{model_version}'."
+            if e.status == 409:  # Already exists
+                print(
+                    f"InferenceService '{isvc_name}' already exists in namespace '{namespace}'."
+                )
+            else:
+                print(f"Failed to create InferenceService '{isvc_name}': {e.reason}")
+                raise

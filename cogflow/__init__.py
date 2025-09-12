@@ -2142,30 +2142,61 @@ def serve_model(
     artifact_path: str = None,
     model_name: str = None,
     model_version: str = None,
+    dataset_id: str = None,
+    transformer_image: str = None,
+    transformer_parameters: dict = None,
+    protocol_version: str = None,
 ):
     """
-    Create a kserve instance.
+    Resolve a model and create a KServe InferenceService.
 
     Args:
-        isvc_name (str, optional): Name of the kserve instance. If not provided,
-        a default name will be generated.
-        model_id (str, optional): Unique identifier for the model.
-        model_name (str, optional): Name of the registered model.
-        model_version (str, optional): Version of the registered model.
-        artifact_path (str, optional): Specific artifact path name (e.g., 'model').
+        model_id (str, optional): Unique identifier for the model/run.
+        isvc_name (str, optional): Name of the KServe InferenceService.
+            If not provided, one will be auto-generated.
+        model_name (str, optional): Registered model name (alternative to model_id).
+        model_version (str, optional): Registered model version.
+        artifact_path (str, optional): Specific artifact path (e.g., "model").
+        dataset_id (str, optional): Dataset linked to the model.
+        transformer_image (str): Image of the transformer.
+        transformer_parameters (dict, optional): Dict containing:
+            - "PROMETHEUS_URL": URL for Prometheus
+            - "PROMETHEUS_METRICS": Comma-separated metrics
+            Required if transformer_image is provided.
+        protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
 
     Examples:
-        Serve using run ID (with or without artifact path):
-            >>> serve_model(isvc_name="...", model_id="...")
+        # Serve using run ID (with optional artifact path)
+        >>> serve_model(model_id="abcd1234", isvc_name="my-model", artifact_path="model")
 
-        Serve using registered model name and version:
-            >>> serve_model(isvc_name="...", model_name="...", model_version="...")
+        # Serve using registered model name + version
+        >>> serve_model(isvc_name="my-model", model_name="XGBoost", model_version="5")
+
+        # Serve with dataset and transformer
+        >>> serve_model(
+        ...     isvc_name="my-model-tkg",
+        ...     model_name="TKG",
+        ...     model_version="3",
+        ...     dataset_id="ds-123",
+        ...     transformer_image="my-transformer:latest",
+        ...     transformer_parameters={
+        ...         "PROMETHEUS_URL": "http://prometheus:9090",
+        ...         "PROMETHEUS_METRICS": "metric1,metric2"
+        ...     },
+        ...     protocol_version="v2"
+        ... )
 
     Raises:
-        Exception: If model resolution or deployment fails.
+        ValueError: If no model_id or (model_name + model_version) is provided.
+        Exception: For any errors during model resolution or deployment.
     """
-
     try:
+        if not model_id and not (model_name and model_version):
+            raise ValueError(
+                "Must provide either model_id or (model_name and model_version)."
+            )
+
+        # Resolve model details
         model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
             model_id=model_id,
             artifact_path=artifact_path,
@@ -2173,17 +2204,22 @@ def serve_model(
             model_version=model_version,
         )
 
-        KubeflowPlugin().serve_model_v2(
+        # Serve via KubeflowPlugin
+        KubeflowPlugin().serve_model(
             model_uri=model_details["model_uri"],
             isvc_name=isvc_name,
             model_id=model_details["model_id"],
             model_name=model_details["model_name"],
             model_version=model_details["model_version"],
+            dataset_id=dataset_id,
+            transformer_image=transformer_image,
+            transformer_parameters=transformer_parameters,
+            protocol_version=protocol_version,
         )
 
     except Exception as e:
-        print(f"Failed to serve model: {e}")
-        raise e
+        print(f"[ERROR] Failed to serve model: {e}")
+        raise
 
 
 def connect(source_dataset, model_isvc, destination_dataset):
@@ -2228,7 +2264,7 @@ def register_model_api(
         bytes,
         tuple,
     ] = None,
-    await_registration_for=plugin_config.SERIALIZATION_FORMAT,
+    await_registration_for=plugin_config.AWAIT_REGISTRATION_FOR,
     pip_requirements=None,
     extra_pip_requirements=None,
     pyfunc_predict_fn=plugin_config.PYFUNC_PREDICT_FN,
@@ -2310,25 +2346,72 @@ def register_model_api(
 
 def update_served_model(
     isvc_name: str,
-    model_name: str,
-    model_version: str,
+    model_id: Optional[str] = None,
+    artifact_path: Optional[str] = None,
+    model_name: Optional[str] = None,
+    model_version: Optional[str] = None,
+    dataset_id: Optional[str] = None,
+    transformer_image: Optional[str] = None,
+    transformer_parameters: Optional[Dict] = None,
+    protocol_version: Optional[str] = None,
     namespace: Optional[str] = None,
 ) -> str:
     """
     Update an existing KServe InferenceService to point at a new model version.
 
-    If the InferenceService does not exist, raises with a message to call `serve_model(...)` first.
+    Args:
+        isvc_name (str): Name of the KServe InferenceService to update.
+        model_id (str, optional): Unique identifier for the model/run.
+        model_name (str, optional): Registered model name (alternative to model_id).
+        model_version (str, optional): Registered model version.
+        artifact_path (str, optional): Specific artifact path (e.g., "model").
+        dataset_id (str, optional): Dataset linked to the model.
+        transformer_image (str, optional): Image of the transformer.
+        transformer_parameters (dict, optional): Dict containing:
+            - "PROMETHEUS_URL": URL for Prometheus
+            - "PROMETHEUS_METRICS": Comma-separated metrics
+            Required if transformer_image is provided.
+        protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
+        namespace (str, optional): Kubernetes namespace of the InferenceService.
 
-    Returns the served model url on success.
+    Returns:
+        str: The served model URL on success.
+
+    Raises:
+        ValueError: If no model_id or (model_name + model_version) is provided.
+        Exception: For any errors during model resolution or update.
     """
+    try:
+        if not model_id and not (model_name and model_version):
+            raise ValueError(
+                "Must provide either model_id or (model_name and model_version)."
+            )
 
-    return KubeflowPlugin().update_served_model(
-        isvc_name=isvc_name,
-        model_name=model_name,
-        model_version=model_version,
-        model_uri=get_model_uri(model_name, model_version),
-        namespace=namespace,
-    )
+        # Resolve model details (same as serve_model)
+        model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
+            model_id=model_id,
+            artifact_path=artifact_path,
+            model_name=model_name,
+            model_version=model_version,
+        )
+
+        # Update the InferenceService
+        return KubeflowPlugin().update_served_model(
+            isvc_name=isvc_name,
+            model_name=model_details["model_name"],
+            model_version=model_details["model_version"],
+            model_uri=model_details["model_uri"],
+            model_id=model_details["model_id"],
+            dataset_id=dataset_id,
+            transformer_image=transformer_image,
+            transformer_parameters=transformer_parameters,
+            protocol_version=protocol_version,
+            namespace=namespace,
+        )
+
+    except Exception as e:
+        print(f"[ERROR] Failed to update served model: {e}")
+        raise
 
 
 def set_tag(key: str, value: Any) -> None:
