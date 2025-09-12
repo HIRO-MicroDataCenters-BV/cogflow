@@ -194,63 +194,116 @@ class KubeflowPlugin:
         model_id: str = None,
         model_name: str = None,
         model_version: str = None,
+        dataset_id: str = None,
+        transformer_image: str = None,
+        transformer_parameters: dict = None,
     ):
         """
-        Create a kserve instance.
+        Create a KServe InferenceService with optional transformer.
 
         Args:
             model_uri (str): URI of the model.
-            isvc_name (str, optional): Name of the kserve instance. If not provided,
-            a default name will be generated.
+            isvc_name (str, optional): Name of the kserve instance.
             model_id (str, optional): Unique identifier for the model.
             model_name (str, optional): Name of the registered model.
             model_version (str, optional): Version of the registered model.
-
-        Returns:
-            None
+            dataset_id (str, optional): Linked dataset identifier.
+            transformer_image (str): Image of the transformer.
+            transformer_parameters (dict, optional): Dict containing:
+            - "PROMETHEUS_URL": URL for Prometheus
+            - "PROMETHEUS_METRICS": Comma-separated metrics
+            Required if transformer_image is provided.
         """
-        # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        try:
-            namespace = utils.get_default_target_namespace()
-            if isvc_name is None:
-                now = datetime.now()
-                date = now.strftime("%d%M")
-                inferencesvc_name = f"predictormodel{date}"
-                isvc_name = inferencesvc_name
-            predictor = V1beta1PredictorSpec(
-                service_account_name="kserve-controller-s3",
-                min_replicas=1,
-                model=V1beta1ModelSpec(
-                    model_format=V1beta1ModelFormat(
-                        name=plugin_config.ML_TOOL,
+        namespace = utils.get_default_target_namespace()
+        if isvc_name is None:
+            now = datetime.now()
+            date = now.strftime("%d%M")
+            isvc_name = f"predictormodel{date}"
+
+        # Predictor spec
+        predictor = V1beta1PredictorSpec(
+            service_account_name="kserve-controller-s3",
+            min_replicas=1,
+            model=V1beta1ModelSpec(
+                model_format=V1beta1ModelFormat(name=plugin_config.ML_TOOL),
+                storage_uri=model_uri,
+                protocol_version="v2",
+            ),
+        )
+
+        # Metadata annotations
+        annotations = {
+            "sidecar.istio.io/inject": "false",
+            "model_name": model_name,
+            "model_version": model_version,
+            "model_id": model_id,
+        }
+        if dataset_id:
+            annotations["dataset_id"] = dataset_id
+
+        # Transformer (optional)
+        transformer = None
+        if transformer_image:
+            if not transformer_parameters:
+                raise ValueError(
+                    "transformer_parameters must be provided when transformer_image is set"
+                )
+
+            prometheus_url = transformer_parameters.get("PROMETHEUS_URL")
+            prometheus_metrics = transformer_parameters.get("PROMETHEUS_METRICS")
+
+            if not prometheus_url or not prometheus_metrics:
+                raise ValueError(
+                    "transformer_parameters must include both 'PROMETHEUS_URL' and 'PROMETHEUS_METRICS'"
+                )
+
+            container_name = f"{isvc_name}-transformer".lower()
+
+            transformer = client.V1Container(
+                name=container_name,
+                image=transformer_image,
+                env=[
+                    client.V1EnvVar(name="PROMETHEUS_URL", value=prometheus_url),
+                    client.V1EnvVar(
+                        name="PROMETHEUS_METRICS", value=prometheus_metrics
                     ),
-                    storage_uri=model_uri,
-                    protocol_version="v2",
-                ),
+                ],
             )
 
-            isvc = V1beta1InferenceService(
-                api_version=constants.KSERVE_V1BETA1,
-                kind=constants.KSERVE_KIND,
-                metadata=client.V1ObjectMeta(
-                    name=isvc_name,
-                    namespace=namespace,
-                    annotations={
-                        "sidecar.istio.io/inject": "false",
-                        "model_name": model_name,
-                        "model_version": model_version,
-                        "model_id": model_id,
-                    },
-                ),
-                spec=V1beta1InferenceServiceSpec(predictor=predictor),
-            )
-            kserve = KServeClient()
+        # Build InferenceService
+        isvc_spec = V1beta1InferenceServiceSpec(predictor=predictor)
+        if transformer:
+            isvc_spec.transformer = client.V1PodSpec(containers=[transformer])
+
+        isvc = V1beta1InferenceService(
+            api_version=constants.KSERVE_V1BETA1,
+            kind=constants.KSERVE_KIND,
+            metadata=client.V1ObjectMeta(
+                name=isvc_name,
+                namespace=namespace,
+                annotations=annotations,
+            ),
+            spec=isvc_spec,
+        )
+
+        # Create the service with error handling
+        kserve = KServeClient()
+        try:
             kserve.create(isvc)
             time.sleep(plugin_config.TIMER_IN_SEC)
+            print(
+                f"InferenceService '{isvc_name}' creation requested in namespace '{namespace}'."
+            )
         except ApiException as e:
-            raise e
+            if e.status == 409:  # Already exists
+                print(
+                    f"InferenceService '{isvc_name}' already exists in namespace '{namespace}'."
+                )
+            else:
+                print(f"Failed to create InferenceService '{isvc_name}': {e.reason}")
+                raise
 
     @staticmethod
     def serve_model_v1(model_uri: str, isvc_name: str = None):
