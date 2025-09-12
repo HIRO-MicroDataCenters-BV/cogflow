@@ -32,6 +32,7 @@ ACCESS_KEY_ID = "AWS_ACCESS_KEY_ID"
 SECRET_ACCESS_KEY = "AWS_SECRET_ACCESS_KEY"
 TIMER_IN_SEC = 10
 ML_TOOL = "mlflow"
+BUCKET_NAME = "mlflow"
 
 MINIO_ENDPOINT_URL = "MLFLOW_S3_ENDPOINT_URL"
 MINIO_ACCESS_KEY = "AWS_ACCESS_KEY_ID"
@@ -43,7 +44,24 @@ TESTING_CONFIG = "config.app_config.TestingConfig"
 FILE_TYPE = 0
 
 API_BASEPATH = "API_BASEPATH"
+TIME_OUT = 300
 
+# log_model method parameters
+SERIALIZATION_FORMAT = "cloudpickle"
+AWAIT_REGISTRATION_FOR = 300
+PYFUNC_PREDICT_FN = "predict"
+
+# evaluate method parameters
+ENV_MANAGER = "local"
+
+# search_registered_models method parameters
+MAX_RESULTS = 100
+
+# create_fl_component_from_func method parameters
+CONTAINER_PORT = 8080
+
+
+# Docker images
 BASE_IMAGE = "hiroregistry/cogflow:latest"
 FL_COGFLOW_BASE_IMAGE = "hiroregistry/flcogflow:latest"
 

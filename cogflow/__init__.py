@@ -80,6 +80,9 @@ from typing import Callable, Union, Any, List, Optional, Dict, Mapping
 import random
 import string
 import time
+from uuid import UUID
+import boto3
+from botocore.exceptions import NoCredentialsError, ClientError
 import psutil
 import numpy as np
 import pandas as pd
@@ -89,7 +92,6 @@ from mlflow.models import ModelSignature, ModelInputExample
 from scipy.sparse import csr_matrix, csc_matrix
 from kfp.components import InputPath, OutputPath
 from kfp.dsl import ParallelFor
-
 from .kafka.consumer import stop_consumer, start_consumer_thread
 from .plugins.message_broker_dataset_plugin import MessageBrokerDatasetPlugin
 from .v2 import *
@@ -106,10 +108,11 @@ from .plugin_config import (
     MINIO_SECRET_ACCESS_KEY,
     API_BASEPATH,
 )
-from .pluginmanager import PluginManager
+from .pluginmanager import PluginManager, ConfigException
 from .plugins.component_plugin import ComponentPlugin
 from .plugins.dataset_plugin import DatasetMetadata, DatasetPlugin
 from .plugins.kubeflowplugin import CogContainer, KubeflowPlugin
+from .plugins.knative_plugin import KnativePlugin
 from .plugins.mlflowplugin import MlflowPlugin
 from .plugins.notebook_plugin import NotebookPlugin
 from .util import make_post_request, is_valid_s3_uri
@@ -224,7 +227,6 @@ def delete_registered_model(model_name):
 def evaluate(
     data,
     *,
-    model_name: str,
     model_uri: str,
     targets,
     model_type: str,
@@ -236,13 +238,12 @@ def evaluate(
     custom_artifacts=None,
     validation_thresholds=None,
     baseline_model=None,
-    env_manager="local",
+    env_manager=plugin_config.ENV_MANAGER,
 ):
     """
     Evaluates a model.
 
     Args:
-        model_name: The name of model to evaluate.
         model_uri (str): The URI of the model.
         data: The data to evaluate the model on.
         model_type: The type of the model.
@@ -277,12 +278,19 @@ def evaluate(
     )
 
     PluginManager().load_config()
+    time_out = plugin_config.TIME_OUT
     # Construct URLs
-    url_metrics = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-        "validation_metrics"
+    run_id = model_uri.split("/")[4]
+    model_id = str(UUID(run_id))
+    url_metrics = (
+        os.getenv(plugin_config.API_BASEPATH)
+        + f"/models/{model_id}"
+        + PluginManager().load_path("validation_metrics")
     )
-    url_artifacts = os.getenv(plugin_config.API_BASEPATH) + PluginManager().load_path(
-        "validation_artifacts"
+    url_artifacts = (
+        os.getenv(plugin_config.API_BASEPATH)
+        + f"/models/{model_id}"
+        + PluginManager().load_path("validation_artifacts")
     )
     # Capture final CPU and memory usage metrics
     final_cpu_percent = psutil.cpu_percent(interval=1)
@@ -294,26 +302,21 @@ def evaluate(
         metrics = result.metrics
         metrics.update(
             {
-                "model_name": model_name,
                 "cpu_consumption": final_cpu_percent,
                 "memory_utilization": final_memory_used_mb,
             }
         )
         print("metrics", metrics)
-        response = requests.post(url=url_metrics, json=metrics, timeout=100)
+        response = requests.post(url=url_metrics, json=metrics, timeout=time_out)
         response.raise_for_status()
     except Exception as exp:
         print(f"Failed to post metrics: {exp}")
 
     serialized_artifacts = NotebookPlugin().serialize_artifacts(result.artifacts)
-
-    # Update artifacts with model name
-    serialized_artifacts.update({"model_name": model_name})
     # Now you can use serialized_artifacts in your HTTP request
     try:
-        # make_post_request(url_artifacts, data=serialized_artifacts)
         response = requests.post(
-            url=url_artifacts, json=serialized_artifacts, timeout=100
+            url=url_artifacts, json=serialized_artifacts, timeout=time_out
         )
         response.raise_for_status()
     except Exception as exp:
@@ -324,7 +327,7 @@ def evaluate(
 
 def search_registered_models(
     filter_string: Optional[str] = None,
-    max_results: int = 100,
+    max_results: int = plugin_config.MAX_RESULTS,
     order_by: Optional[List[str]] = None,
     page_token: Optional[str] = None,
 ):
@@ -374,8 +377,8 @@ def load_model(model_uri: str, dst_path=None):
 
 def register_model(
     model_uri: str,
-    model: str,
-    await_registration_for: int = 300,
+    model_name: str,
+    await_registration_for: int = plugin_config.AWAIT_REGISTRATION_FOR,
     *,
     tags: Optional[Dict[str, Any]] = None,
 ):
@@ -387,7 +390,7 @@ def register_model(
 
     Args:
         model_uri (str): The URI of the Mlflow model to register.
-        model (str): The name under which to register the model in the Mlflow Model Registry.
+        model_name (str): The name under which to register the model in the Mlflow Model Registry.
         await_registration_for (int, optional): The duration, in seconds, to wait for the model
         version to finish being created and be in the READY status. Defaults to 300 seconds.
         tags (Optional[Dict[str, Any]], optional): A dictionary of key-value pairs to tag the
@@ -398,7 +401,7 @@ def register_model(
         ModelVersion: An instance of `ModelVersion` representing the registered model version.
     """
     return MlflowPlugin().register_model(
-        model=model,
+        model=model_name,
         model_uri=model_uri,
         await_registration_for=await_registration_for,
         tags=tags,
@@ -445,7 +448,7 @@ def create_model_version(
     tags: Optional[Dict[str, Any]] = None,
     run_link: Optional[str] = None,
     description: Optional[str] = None,
-    await_creation_for: int = 300,
+    await_creation_for: int = plugin_config.AWAIT_REGISTRATION_FOR,
 ):
     """
     Create a model version for a registered model in the Mlflow Model Registry.
@@ -622,7 +625,7 @@ def log_model(
     registered_model_name=None,
     conda_env=None,
     code_paths=None,
-    serialization_format="cloudpickle",
+    serialization_format=plugin_config.SERIALIZATION_FORMAT,
     signature: ModelSignature = None,
     input_example: Union[
         pd.DataFrame,
@@ -635,10 +638,10 @@ def log_model(
         bytes,
         tuple,
     ] = None,
-    await_registration_for=300,
+    await_registration_for=plugin_config.AWAIT_REGISTRATION_FOR,
     pip_requirements=None,
     extra_pip_requirements=None,
-    pyfunc_predict_fn="predict",
+    pyfunc_predict_fn=plugin_config.PYFUNC_PREDICT_FN,
     metadata=None,
 ):
     """
@@ -727,7 +730,7 @@ def log_model_with_dataset(
     dataset: DatasetMetadata,
     conda_env=None,
     code_paths=None,
-    serialization_format="cloudpickle",
+    serialization_format=plugin_config.SERIALIZATION_FORMAT,
     registered_model_name=None,
     signature: ModelSignature = None,
     input_example: Union[
@@ -741,10 +744,10 @@ def log_model_with_dataset(
         bytes,
         tuple,
     ] = None,
-    await_registration_for=300,
+    await_registration_for=plugin_config.AWAIT_REGISTRATION_FOR,
     pip_requirements=None,
     extra_pip_requirements=None,
-    pyfunc_predict_fn="predict",
+    pyfunc_predict_fn=plugin_config.PYFUNC_PREDICT_FN,
     metadata=None,
 ):
     """
@@ -1268,17 +1271,52 @@ def get_pipeline_and_experiment_details(run_id):
         return e
 
 
-def log_artifact(local_path: str, artifact_path: Optional[str] = None):
+def log_artifact(
+    local_path: str, artifact_path: Optional[str] = None, run_id: Optional[str] = None
+):
     """
-    Log a local file or directory as an artifact of the currently active run. If no run is
-    active, this method will create a new active run.
+    Log a local file as an artifact of a run.
 
-    :param local_path: Path to the file to write.
-    :param artifact_path: If provided, the directory in ``artifact_uri`` to write to.
+    Behavior:
+      - If `run_id` is provided → logs the artifact(s) to that specific run
+        (works even if the run has already finished).
+      - If `run_id` is not provided → logs to the currently active run.
+        If no run is active, a new run will automatically be created.
+
+    Args:
+        local_path (str): Path to the local file to log.
+        artifact_path (str, optional): Subdirectory within the run's
+            ``artifact_uri`` where the artifact(s) should be stored.
+            If None, the artifact(s) are logged to the root.
+        run_id (str, optional): The ID of the run to log the artifact(s) to.
+            If not provided, logs to the active run or creates a new one.
+
+    Returns:
+        str or None: The artifact URI, depending on backend implementation.
+
+    Examples:
+        # Case 1: Log to a specific run (using run_id)
+        >>> log_artifact(
+        ...     local_path="reports/metrics.txt",
+        ...     artifact_path="reports",
+        ...     run_id="<run_id>"
+        ... )
+        # → stores as s3://mlflow/0/<run_id>/artifacts/reports/metrics.txt
+
+        # Case 2: Log to the currently active run (or auto-starts one)
+        >>> with cogflow.start_run() as run:
+        ...     log_artifact(local_path="plots/chart.png", artifact_path="images")
+        # → stores as s3://mlflow/0/<active_run_id>/artifacts/images/chart.png
     """
-    return MlflowPlugin().log_artifact(
-        local_path=local_path, artifact_path=artifact_path
-    )
+
+    if run_id is not None:
+        return cogclient.log_artifact(
+            run_id=run_id, local_path=local_path, artifact_path=artifact_path
+        )
+    else:
+        return MlflowPlugin().log_artifact(
+            local_path=local_path, artifact_path=artifact_path
+        )
 
 
 original_pyfunc_log_model = pyfunc.log_model
@@ -1295,7 +1333,7 @@ def custom_log_model(
     artifacts=None,
     signature: ModelSignature = None,
     input_example: ModelInputExample = None,
-    await_registration_for=300,
+    await_registration_for=plugin_config.AWAIT_REGISTRATION_FOR,
     pip_requirements=None,
     extra_pip_requirements=None,
     metadata=None,
@@ -1371,11 +1409,15 @@ def custom_log_model(
 pyfunc.log_model = custom_log_model
 
 
-def get_served_models(isvc_name: str = None):
+def get_served_models(
+    isvc_name: str = None,
+    namespace: str = None,
+):
     """
     Gets information about inference service of served models
 
     Args:
+        namespace (str): Namespace where isvc is deployed.
         isvc_name (str, optional): Name of served model. If None, returns all served models.
 
     Returns:
@@ -1383,7 +1425,7 @@ def get_served_models(isvc_name: str = None):
               model_name, model_id, model_version, creation_timestamp,
               served_model_url, status, traffic_percentage.
     """
-    return KubeflowPlugin().get_served_models(isvc_name)
+    return KubeflowPlugin().get_served_models(namespace, isvc_name)
 
 
 def delete_served_model(isvc_name: str):
@@ -1861,7 +1903,7 @@ def create_fl_component_from_func(
     base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
-    container_port=8080,
+    container_port=plugin_config.CONTAINER_PORT,
 ):
     """
     Create a component from a Python function with additional configurations
@@ -1891,7 +1933,7 @@ def fl_server_component(
     base_image=plugin_config.FL_COGFLOW_BASE_IMAGE,
     packages_to_install=None,
     annotations: Optional[Mapping[str, str]] = None,
-    container_port=8080,
+    container_port=plugin_config.CONTAINER_PORT,
 ):
     """
     Decorator to create a Kubeflow component from a Python function.
@@ -2142,6 +2184,378 @@ def serve_model(
     except Exception as e:
         print(f"Failed to serve model: {e}")
         raise e
+
+
+def connect(source_dataset, model_isvc, destination_dataset):
+    """
+    normally in cogflow you check each dataset ,
+    1) all of them should be streaming type
+    2) then create sink and source and sequence for them
+    3) for source and destination if the type is nats , create bridge for each of them as well
+    """
+    try:
+        PluginManager().load_config()
+    except ConfigException as e:
+        print(f"[config] ERROR: {e}")
+
+    try:
+        KnativePlugin().connect(
+            source_dataset=source_dataset,
+            model_isvc=model_isvc,
+            destination_dataset=destination_dataset,
+        )
+    except Exception as e:
+        print(f"Failed to connect datasets: {e}")
+        raise e
+
+
+def register_model_api(
+    model_name,
+    artifact_path,
+    registered_model_name=None,
+    conda_env=None,
+    code_paths=None,
+    serialization_format=plugin_config.SERIALIZATION_FORMAT,
+    signature: ModelSignature = None,
+    input_example: Union[
+        pd.DataFrame,
+        np.ndarray,
+        dict,
+        list,
+        csr_matrix,
+        csc_matrix,
+        str,
+        bytes,
+        tuple,
+    ] = None,
+    await_registration_for=plugin_config.SERIALIZATION_FORMAT,
+    pip_requirements=None,
+    extra_pip_requirements=None,
+    pyfunc_predict_fn=plugin_config.PYFUNC_PREDICT_FN,
+    metadata=None,
+):
+    """
+    Logs a model.
+
+    Args:
+        model_name: The model to log.
+        artifact_path (str): The artifact path to log the model to.
+        registered_model_name (str, optional): The name to register the model under.
+        conda_env (str, optional): The conda environment to use.
+        code_paths (list, optional): List of paths to include in the model.
+        serialization_format (str, optional): The format to use for serialization.
+        signature (ModelSignature, optional): The signature of the model.
+        input_example (Union[pd.DataFrame, np.ndarray, dict, list, csr_matrix, csc_matrix, str,
+         bytes, tuple], optional): Example input.
+        await_registration_for (int, optional): Time to wait for registration.
+        pip_requirements (list, optional): List of pip requirements.
+        extra_pip_requirements (list, optional): List of extra pip requirements.
+        pyfunc_predict_fn (str, optional): The prediction function to use.
+        metadata (dict, optional): Metadata for the model.
+    """
+    is_custom_pyfunc_model = isinstance(model_name, pyfunc.PythonModel) or (
+        inspect.isclass(model_name) and issubclass(model_name, pyfunc.PythonModel)
+    )
+
+    if is_custom_pyfunc_model:
+        # Log using pyfunc flavor
+        result = custom_log_model(
+            artifact_path=artifact_path,
+            python_model=model_name,
+            code_path=code_paths,
+            conda_env=conda_env,
+            signature=signature,
+            input_example=input_example,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            metadata=metadata,
+        )
+    else:
+        # Log using MLflowPlugin (e.g., sklearn, XGBoost, etc.)
+        result = MlflowPlugin().log_model(
+            sk_model=model_name,
+            artifact_path=artifact_path,
+            conda_env=conda_env,
+            code_paths=code_paths,
+            serialization_format=serialization_format,
+            registered_model_name=registered_model_name,
+            signature=signature,
+            input_example=input_example,
+            await_registration_for=await_registration_for,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            pyfunc_predict_fn=pyfunc_predict_fn,
+            metadata=metadata,
+        )
+
+    display_name = registered_model_name or model_name
+
+    reg = register_model(model_uri=result.model_uri, model_name=display_name)
+    result.model_name = reg.name
+    result.model_version = reg.version
+
+    # Fetch run tags
+    run = cogclient.get_run(result.run_id)
+    tags = run.data.tags
+
+    # Traverse all tags and append each one individually as an attribute
+    if tags:
+        for key, value in tags.items():
+            # normalize key: replace invalid characters with underscores
+            safe_key = key.replace(".", "_").replace("-", "_")
+            setattr(result, safe_key, value)
+
+    return result
+
+
+def update_served_model(
+    isvc_name: str,
+    model_name: str,
+    model_version: str,
+    namespace: Optional[str] = None,
+) -> str:
+    """
+    Update an existing KServe InferenceService to point at a new model version.
+
+    If the InferenceService does not exist, raises with a message to call `serve_model(...)` first.
+
+    Returns the served model url on success.
+    """
+
+    return KubeflowPlugin().update_served_model(
+        isvc_name=isvc_name,
+        model_name=model_name,
+        model_version=model_version,
+        model_uri=get_model_uri(model_name, model_version),
+        namespace=namespace,
+    )
+
+
+def set_tag(key: str, value: Any) -> None:
+    """
+    Set a tag under the current run. If no run is active, this method will create a
+    new active run.
+
+    :param key: Tag name (string). This string may only contain alphanumerics, underscores
+                (_), dashes (-), periods (.), spaces ( ), and slashes (/).
+                All backend stores will support keys up to length 250, but some may
+                support larger keys.
+    :param value: Tag value (string, but will be string-ified if not).
+                  All backend stores will support values up to length 5000, but some
+                  may support larger values.
+    """
+    return MlflowPlugin().set_tag(key=key, value=value)
+
+
+def get_model_url(
+    isvc_name: str,
+    namespace: str = None,
+) -> str:
+    """
+    Gets information about inference service of served models
+
+    Args:
+        namespace (str): Namespace where isvc is deployed.
+        isvc_name (str, optional): Name of served model.
+
+    Returns:
+        list: List of model information dictionaries. Each dict contains:
+              model_name, model_id, model_version, creation_timestamp,
+              served_model_url, status, traffic_percentage.
+    """
+    info = KubeflowPlugin().get_served_models(namespace, isvc_name)
+    if isinstance(info, list):  # sometimes returns [ { ... } ]
+        info = info[0]
+    return info["served_model_url"]
+
+
+def update_artifact(
+    run_id: str,
+    local_path: str,
+    artifact_path: str = None,
+):
+    """
+    Update (overwrite) an artifact in S3/MinIO for a given run_id.
+
+    Behavior:
+        - File name is always inferred from ``local_path``.
+        - If ``artifact_path`` is provided → file is stored inside that folder.
+        - If ``artifact_path`` is None → file is stored at the root of artifacts/.
+
+    Args:
+        run_id (str): run ID.
+        local_path (str): Path to the local file to upload.
+        artifact_path (str, optional): Subdirectory under artifacts/.
+            If None, file is stored directly under artifacts/.
+
+    Returns:
+        str: The full S3 URI of the updated artifact.
+
+    Examples:
+        # Case 1: Update inside a folder
+        >>> update_artifact(
+        ...     run_id="<run_id>",
+        ...     local_path="<local_path>",
+        ...     artifact_path="<artifact_path>"
+        ... )
+        # → s3://mlflow/<experiment_id>/<run_id>/artifacts/<artifact_path>/<local_path_file_name>
+
+        # Case 2: Update at root/base_path
+        >>> update_artifact(
+        ...     run_id="<run_id>",
+        ...     local_path="<local_path>"
+        ... )
+        # → s3://mlflow/<experiment_id>/<run_id>/artifacts/<local_path_file_name>
+    """
+    PluginManager().load_config()
+
+    exp_id = MlflowPlugin().get_experiment_id_from_run(run_id)
+
+    # Validate local file exists
+    if not os.path.exists(local_path):
+        raise FileNotFoundError(f"Local file not found: {local_path}")
+
+    # Infer file name from local_path
+    file_name = os.path.basename(local_path)
+
+    # Build the object key
+    if artifact_path:
+        key = f"{exp_id}/{run_id}/artifacts/{artifact_path}/{file_name}"
+    else:
+        key = f"{exp_id}/{run_id}/artifacts/{file_name}"
+
+    # Load environment variables
+    endpoint_url = os.getenv("MLFLOW_S3_ENDPOINT_URL")
+    access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+    bucket = plugin_config.BUCKET_NAME
+
+    if not endpoint_url or not access_key or not secret_key:
+        raise EnvironmentError(
+            "Missing one or more required environment variables: "
+            "MLFLOW_S3_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
+        )
+
+    # Init S3 client
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to initialize S3 client: {e}") from e
+
+    # Upload file (overwrite if exists)
+    try:
+        s3.upload_file(local_path, bucket, key)
+    except NoCredentialsError:
+        raise RuntimeError("Invalid or missing credentials.")
+    except ClientError as e:
+        raise RuntimeError(f"S3 upload failed: {e.response['Error']['Message']}") from e
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error during S3 upload: {e}") from e
+
+    s3_uri = f"s3://{bucket}/{key}"
+    print(f"Artifact updated: {s3_uri}")
+    return s3_uri
+
+
+def delete_artifact(
+    run_id: str,
+    file_name: str,
+    artifact_path: str = None,
+):
+    """
+    Delete an artifact (object) from S3/MinIO for a given MLflow run.
+
+    Behavior:
+        - If ``artifact_path`` is provided → deletes file inside that folder.
+        - If ``artifact_path`` is None → deletes file directly under ``artifacts/``.
+
+    Args:
+        run_id (str): MLflow run ID.
+        file_name (str): File name with extension (e.g., "kafka-sink.yaml").
+        artifact_path (str, optional): Subdirectory under artifacts/.
+            If None, file is deleted from the root of artifacts/.
+
+    Returns:
+        str or None: The full S3 URI of the deleted artifact,
+                     or None if the object was not found.
+
+    Raises:
+        EnvironmentError: If required environment variables are missing.
+        RuntimeError: If S3 client creation or deletion fails.
+
+    Examples:
+        # Case 1: Delete inside a folder
+        >>> delete_artifact(
+        ...     run_id="<run_id>",
+        ...     file_name="<file_name>",
+        ...     artifact_path="<artifact_path>"
+        ... )
+        # → deletes s3://mlflow/<experiment_id>/<run_id>/artifacts/<artifact_path>/<file_name>
+
+        # Case 2: Delete at root/base_path
+        >>> delete_artifact(
+        ...     run_id="<run_id>",
+        ...     file_name="<file_name>"
+        ... )
+        # → deletes s3://mlflow/<experiment_id>/<run_id>/artifacts/<file_name>
+    """
+
+    PluginManager().load_config()
+
+    exp_id = MlflowPlugin().get_experiment_id_from_run(run_id)
+
+    # Build the object key
+    if artifact_path:
+        key = f"{exp_id}/{run_id}/artifacts/{artifact_path}/{file_name}"
+    else:
+        key = f"{exp_id}/{run_id}/artifacts/{file_name}"
+
+    # Load environment variables
+    endpoint_url = os.getenv("MLFLOW_S3_ENDPOINT_URL")
+    access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+    bucket = plugin_config.BUCKET_NAME
+
+    if not endpoint_url or not access_key or not secret_key:
+        raise EnvironmentError(
+            "Missing one or more required environment variables: "
+            "MLFLOW_S3_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
+        )
+
+    # Init S3 client safely, create as new method later
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+        )
+    except Exception as e:
+        raise RuntimeError(f"Failed to initialize S3 client: {e}") from e
+
+    # Delete with existence check
+    try:
+        s3.head_object(Bucket=bucket, Key=key)  # verify object exists
+        s3.delete_object(Bucket=bucket, Key=key)
+        s3_uri = f"s3://{bucket}/{key}"
+        print(f"Deleted: {s3_uri}")
+        return s3_uri
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "404":
+            print(f"Not found: s3://{bucket}/{key}")
+            return None
+        raise RuntimeError(
+            f"S3 deletion failed: {e.response['Error']['Message']}"
+        ) from e
+    except NoCredentialsError:
+        raise RuntimeError("Invalid or missing AWS credentials.")
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error during S3 deletion: {e}") from e
 
 
 __all__ = [

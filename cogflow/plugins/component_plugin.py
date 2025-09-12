@@ -2,6 +2,7 @@
 This module provides functionality related to components used for training builder.
 """
 
+import os
 import io
 import yaml
 import requests
@@ -97,6 +98,8 @@ class ComponentPlugin:
         Raises:
             requests.HTTPError: If the API returns an error status.
         """
+        PluginManager().load_config()
+
         # Parse YAML
         parsed = self.parse_component_yaml(yaml_path)
         # Upload YAML to MinIO
@@ -114,7 +117,7 @@ class ComponentPlugin:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         components = PluginManager().load_path("components")
-        url = f"{API_BASEPATH}{components}"
+        url = f"{os.getenv(API_BASEPATH)}{components}"
         response = requests.post(url, json=data, headers=headers, timeout=10)
         response.raise_for_status()
         return response.json()
