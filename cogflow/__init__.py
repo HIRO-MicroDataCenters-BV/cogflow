@@ -2400,7 +2400,7 @@ def update_artifact(
         ... )
         # → s3://mlflow/<experiment_id>/<run_id>/artifacts/<artifact_path>/<local_path_file_name>
 
-        # Case 2: Update at root
+        # Case 2: Update at root/base_path
         >>> update_artifact(
         ...     run_id="<run_id>",
         ...     local_path="<local_path>"
@@ -2497,7 +2497,7 @@ def delete_artifact(
         ... )
         # → deletes s3://mlflow/<experiment_id>/<run_id>/artifacts/<artifact_path>/<file_name>
 
-        # Case 2: Delete at root
+        # Case 2: Delete at root/base_path
         >>> delete_artifact(
         ...     run_id="<run_id>",
         ...     file_name="<file_name>"
@@ -2519,15 +2519,15 @@ def delete_artifact(
     endpoint_url = os.getenv("MLFLOW_S3_ENDPOINT_URL")
     access_key = os.getenv("AWS_ACCESS_KEY_ID")
     secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-    bucket = os.getenv("ML_TOOL")
+    bucket = plugin_config.BUCKET_NAME
 
-    if not endpoint_url or not access_key or not secret_key or not bucket:
+    if not endpoint_url or not access_key or not secret_key:
         raise EnvironmentError(
             "Missing one or more required environment variables: "
-            "MLFLOW_S3_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, ML_TOOL"
+            "MLFLOW_S3_ENDPOINT_URL, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY"
         )
 
-    # Init S3 client safely
+    # Init S3 client safely, create as new method later
     try:
         s3 = boto3.client(
             "s3",
