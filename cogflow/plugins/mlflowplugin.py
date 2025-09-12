@@ -746,3 +746,84 @@ class MlflowPlugin:
                       may support larger values.
         """
         return self.mlflow.set_tag(key=key, value=value)
+
+    def create_experiment(
+        self,
+        name: str,
+        artifact_location: str = None,
+        tags: dict = None,
+    ) -> str:
+        """
+        Create a new experiment.
+
+        Args:
+            name (str): Name of the experiment to create.
+            artifact_location (str, optional): Base location to store artifacts
+                for runs in this experiment. If not provided, the default
+                artifact root from config is used.
+            tags (dict, optional): Dictionary of key-value tags to set on the experiment.
+
+        Returns:
+            str: The experiment ID of the newly created experiment.
+
+        Raises:
+           exceptions: If experiment creation fails.
+
+        Examples:
+            >>> from cogflow import cogclient
+
+            # Create a basic experiment
+            >>> exp_id = cogclient.create_experiment("my_experiment")
+            >>> print(exp_id)
+            '2'
+
+            # Create an experiment with custom artifact location and tags
+            >>> exp_id = cogclient.create_experiment(
+            ...     "experiment_with_tags",
+            ...     artifact_location="s3://mlflow/artifacts",
+            ...     tags={"team": "ml", "env": "staging"}
+            ... )
+            >>> print(exp_id)
+            '3'
+        """
+        return self.cogclient.create_experiment(
+            name=name, artifact_location=artifact_location, tags=tags
+        )
+
+    def get_experiment_id_from_run(self, run_id: str) -> str:
+        """
+        Fetch the experiment ID associated with a given run ID.
+
+        This function looks up the run metadata in the tracking server
+        and returns the `experiment_id` to which the run belongs.
+
+        Args:
+            run_id (str): The unique run identifier (UUID-like string).
+
+        Returns:
+            str: The experiment ID (as a string) associated with the given run.
+
+        Raises:
+            exceptions: If the run cannot be found
+                or tracking server is unreachable.
+
+        Examples:
+            >>> import cogflow
+            >>> from cogflow import cogclient, mlflow
+            >>> run_name = cogflow.start_run()
+            >>> run_info_id = run_name.info.run_id
+            >>> cogflow.end_run()
+
+            # Fetch experiment ID for the run
+            >>> exp_id = mlflow.get_experiment_id_from_run(run_info_id)
+            >>> print(exp_id)
+            '0'   # (default experiment if none was specified)
+
+            # Works with runs from non-default experiments as well
+            >>> cogclient.create_experiment("my_exp")
+            >>> with cogflow.start_run(experiment_id=1) as run_name:
+            ...     print(mlflow.get_experiment_id_from_run(run_name.info.run_id))
+            '1'
+        """
+        run = self.mlflow.get_run(run_id)
+        return run.info.experiment_id
