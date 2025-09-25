@@ -61,6 +61,13 @@ MAX_RESULTS = 100
 # create_fl_component_from_func method parameters
 CONTAINER_PORT = 8080
 
+# DEX configuration
+POD_NAME = "dex-auth-0"
+NAMESPACE = "kubeflow"
+CONTAINER = "dex"
+CONFIG_PATH = "/etc/dex/config.docker.yaml"
+GRPC_PORT = 5557
+
 
 # Docker images
 BASE_IMAGE = "hiroregistry/cogflow:latest"
