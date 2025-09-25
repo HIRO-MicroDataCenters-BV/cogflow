@@ -5,6 +5,7 @@ This module provides functionality related to Kubeflow Pipelines.
 import inspect
 import logging
 import os
+import textwrap
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Mapping, Callable, Tuple
@@ -1362,12 +1363,12 @@ class KubeflowPlugin:
             check_config_cmd = [
                 "sh",
                 "-c",
-                rf"grep -Eq '^[[:space:]]*grpc:[[:space:]]*$' {plugin_config.CONFIG_PATH}",
+                f"grep -Eq '^[[:space:]]*grpc:[[:space:]]*$' {plugin_config.CONFIG_PATH}",
             ]
 
             # Check if gRPC section exists
             try:
-                resp = stream(
+                stream(
                     v1.connect_get_namespaced_pod_exec,
                     pod_name,
                     namespace,
@@ -1391,16 +1392,20 @@ class KubeflowPlugin:
                 logging.info("gRPC section not found, appending configuration")
 
                 # Command to append gRPC config to the Dex configuration file
-                append_block = f"""cat <<'EOF' >> {plugin_config.CONFIG_PATH}
+                append_block = textwrap.dedent(
+                    f"""\
+                cat <<'EOF' >> {plugin_config.CONFIG_PATH}
                 grpc:
                   addr: 0.0.0.0:{plugin_config.GRPC_PORT}
                   reflection: true
                 EOF
                 """
+                )
+
                 append_cmd = ["sh", "-c", append_block]
 
                 # Execute command to append config
-                resp = stream(
+                stream(
                     v1.connect_get_namespaced_pod_exec,
                     pod_name,
                     namespace,
@@ -1424,7 +1429,7 @@ class KubeflowPlugin:
                 logging.info("Restarting Dex process")
 
                 # Execute command to restart Dex
-                resp = stream(
+                stream(
                     v1.connect_get_namespaced_pod_exec,
                     pod_name,
                     namespace,
