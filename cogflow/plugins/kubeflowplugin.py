@@ -3,7 +3,9 @@ This module provides functionality related to Kubeflow Pipelines.
 """
 
 import inspect
+import logging
 import os
+import textwrap
 import time
 from datetime import datetime
 from typing import Optional, Dict, Any, Mapping, Callable, Tuple
@@ -25,6 +27,7 @@ from kubernetes import client, config
 from kubernetes.client import V1ObjectMeta, V1ContainerPort, ApiException
 from kubernetes.client.models import V1EnvVar
 from kubernetes.config import ConfigException
+from kubernetes.stream import stream
 from tenacity import retry, wait_exponential, stop_after_attempt
 
 from .. import plugin_config
@@ -157,8 +160,19 @@ class KubeflowPlugin:
         wrapped_component.component_spec = training_var.component_spec
         return wrapped_component
 
+    def _create_kfp_client(self, session_cookies: dict = None) -> kfp.Client:
+        """
+        Create a KFP client, optionally using session cookies.
+        """
+        if session_cookies:
+            # Turn dict into "k1=v1; k2=v2" string
+            cookie_header = "; ".join(f"{k}={v}" for k, v in session_cookies.items())
+            return kfp.Client(cookies=cookie_header)
+
+        return kfp.Client()
+
     @staticmethod
-    def client():
+    def client(session_cookies: dict = None) -> kfp.Client:
         """
         Get the Kubeflow Pipeline client.
 
@@ -168,7 +182,7 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        return kfp.Client()
+        return KubeflowPlugin()._create_kfp_client(session_cookies=session_cookies)
 
     @staticmethod
     def load_component_from_url(url):
@@ -1315,3 +1329,112 @@ class KubeflowPlugin:
             else:
                 print(f"Failed to create InferenceService '{isvc_name}': {e.reason}")
                 raise
+
+    @staticmethod
+    def _enabledex():
+        """
+        Enable Dex gRPC configuration by appending config to the pod and restarting the process.
+
+        This function:
+        1. Connects to Kubernetes cluster
+        2. Appends gRPC configuration to /etc/dex/config.docker.yaml in the dex-auth-0 pod
+        3. Restarts the Dex process by killing the current process
+
+        Raises:
+            Exception: If any Kubernetes operation fails
+        """
+        # Configuration
+        pod_name = plugin_config.POD_NAME
+        namespace = plugin_config.NAMESPACE
+        container = plugin_config.CONTAINER
+
+        try:
+            # Load in-cluster Kubernetes config
+            KubeflowPlugin().load_k8s_config()
+
+            # Create Kubernetes API client
+            v1 = client.CoreV1Api()
+
+            logging.info(
+                "Checking gRPC config in %s in namespace %s", pod_name, namespace
+            )
+
+            # Command to check if gRPC section already exists
+            check_config_cmd = [
+                "sh",
+                "-c",
+                f"grep -Eq '^[[:space:]]*grpc:[[:space:]]*$' {plugin_config.CONFIG_PATH}",
+            ]
+
+            # Check if gRPC section exists
+            try:
+                stream(
+                    v1.connect_get_namespaced_pod_exec,
+                    pod_name,
+                    namespace,
+                    command=check_config_cmd,
+                    container=container,
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False,
+                )
+                logging.info(
+                    "gRPC section already exists in config file, skipping append"
+                )
+                grpc_exists = True
+            except Exception:
+                # grep returns non-zero exit code when pattern not found
+                grpc_exists = False
+
+            # Only append gRPC config if it doesn't exist
+            if not grpc_exists:
+                logging.info("gRPC section not found, appending configuration")
+
+                # Command to append gRPC config to the Dex configuration file
+                append_block = textwrap.dedent(
+                    f"""\
+                cat <<'EOF' >> {plugin_config.CONFIG_PATH}
+                grpc:
+                  addr: 0.0.0.0:{plugin_config.GRPC_PORT}
+                  reflection: true
+                EOF
+                """
+                )
+
+                append_cmd = ["sh", "-c", append_block]
+
+                # Execute command to append config
+                stream(
+                    v1.connect_get_namespaced_pod_exec,
+                    pod_name,
+                    namespace,
+                    command=append_cmd,
+                    container=container,
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False,
+                )
+
+                logging.info("Successfully appended gRPC configuration")
+                # Restart only if we changed the file.
+                restart_cmd = ["sh", "-c", "kill $(pidof dex)"]
+                logging.info("Restarting Dex process to apply gRPC config.")
+                stream(
+                    v1.connect_get_namespaced_pod_exec,
+                    pod_name,
+                    namespace,
+                    command=restart_cmd,
+                    container=container,
+                    stderr=True,
+                    stdin=False,
+                    stdout=True,
+                    tty=False,
+                )
+                logging.info("Dex process restart requested.")
+            return True
+
+        except Exception as e:
+            logging.error("Failed to enable Dex gRPC: %s", e)
+            raise Exception(f"Failed to enable Dex: {e}")

@@ -922,14 +922,14 @@ def create_component_from_func(
     )
 
 
-def client():
+def client(session_cookies=None):
     """
     Gets the Kubeflow client.
 
     Returns:
         KubeflowClient: The Kubeflow client object.
     """
-    return KubeflowPlugin().client()
+    return KubeflowPlugin().client(session_cookies=session_cookies)
 
 
 def serve_model_v2(model_uri: str, isvc_name: str = None):
