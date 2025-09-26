@@ -1418,17 +1418,9 @@ class KubeflowPlugin:
                 )
 
                 logging.info("Successfully appended gRPC configuration")
-            else:
-                logging.info("gRPC configuration already present, no changes needed")
-
-            # Only restart Dex process if config was modified
-            if not grpc_exists:
-                # Command to restart Dex process by killing current process
+                # Restart only if we changed the file.
                 restart_cmd = ["sh", "-c", "kill $(pidof dex)"]
-
-                logging.info("Restarting Dex process")
-
-                # Execute command to restart Dex
+                logging.info("Restarting Dex process to apply gRPC config.")
                 stream(
                     v1.connect_get_namespaced_pod_exec,
                     pod_name,
@@ -1440,12 +1432,9 @@ class KubeflowPlugin:
                     stdout=True,
                     tty=False,
                 )
-
-                logging.info("Successfully restarted Dex process")
-            else:
-                logging.info("No restart needed as configuration was not modified")
+                logging.info("Dex process restart requested.")
             return True
 
         except Exception as e:
-            logging.error("Error enabling Dex: %s", e)
-            raise Exception(f"Failed to enable Dex: {str(e)}")
+            logging.error("Failed to enable Dex gRPC: %s", e)
+            raise Exception(f"Failed to enable Dex: {e}")
