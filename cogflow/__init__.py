@@ -732,28 +732,34 @@ def log_model(
             metadata=metadata,
         )
 
-        try:
-            # If registered_model_name is not provided, generate it
-            if registered_model_name is None:
-                # Check if sk_model is a string
-                if isinstance(model_name, str):
-                    registered_model_name = model_name
-                else:
-                    # Generate a random string to use as the model name
-                    registered_model_name = "".join(
-                        random.choices(string.ascii_letters + string.digits, k=10)
-                    )
-            response = NotebookPlugin().save_model_details_to_db(registered_model_name)
-            # print("response", response)
-            model_id = response["data"]["id"]
-            # print("model_id", model_id)
-            if result.model_uri:
-                artifact_uri = get_artifact_uri(artifact_path=result.artifact_path)
-                # Construct the model URI
-                # print("model_uri", artifact_uri)
-                NotebookPlugin().save_model_uri_to_db(model_id, model_uri=artifact_uri)
-        except Exception as exp:
-            print(f"Failed to log model details to DB: {exp}")
+    try:
+        active_run = mlflow.active_run()
+        if not active_run:
+            raise RuntimeError("No active MLflow run found")
+        model_id = active_run.info.run_id
+
+        model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
+            model_id=model_id,
+        )
+        model_dict = {
+            "model_id": model_id,
+            "model_name": str(model_details.get("model_name") or "None"),
+            "model_version": str(model_details.get("model_version") or "0"),
+            "register_date": active_run.info.start_time,
+            "type": "log_model",
+            "description": active_run.data.tags.get("mlflow.note.content"),
+            "USER_ID": KubeflowPlugin().get_current_user_from_namespace(),
+        }
+        path = PluginManager().load_path(path_name="log_model")
+        url = f"{os.getenv('API_BASEPATH')}{path}"
+
+        headers = {
+            "kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()
+        }
+
+        make_post_request(url=url, data=model_dict, headers=headers)
+    except Exception as exp:
+        print(f"Failed to log model details to DB: {exp}")
 
     return result
 
