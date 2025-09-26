@@ -4,7 +4,6 @@ This module provides functionality related to Dataset upload via plugin.
 
 import io
 import os
-import json
 from typing import Union
 from urllib.parse import urlparse
 import numpy as np
@@ -15,7 +14,7 @@ from mlflow.models.signature import ModelSignature
 from scipy.sparse import csr_matrix, csc_matrix
 from .. import plugin_config
 from ..pluginmanager import PluginManager
-from ..util import make_post_request
+from ..util import make_post_request, make_get_request
 from .notebook_plugin import NotebookPlugin
 from .mlflowplugin import MlflowPlugin
 from .kubeflowplugin import KubeflowPlugin
@@ -355,33 +354,27 @@ class DatasetPlugin:
         NotebookPlugin().link_model_to_dataset(dataset_id, model_id)
         return result
 
-    def get_dataset(self, name):
+    @staticmethod
+    def get_dataset(dataset_id: int, endpoint: str):
         """
-        get dataset file after register it by giving the name
-        """
-        # Verify plugin activation
-        PluginManager().verify_activation(self.section)
+        Generic method to call dataset API endpoints like /datasets/prometheus/{id}.
 
+        :param dataset_id: Dataset ID to fetch
+        :param endpoint: API endpoint path (e.g., "/datasets/prometheus")
+        :return: API JSON response
+        """
         PluginManager().load_config()
 
-        path = f"{PluginManager().load_path('dataset')}/{name}"
-        url = os.getenv(plugin_config.API_BASEPATH) + path
-        response = requests.get(url, timeout=10)
+        url = f"{os.getenv(plugin_config.API_BASEPATH)}{endpoint}"
 
-        # Check if the request was successful
-        if response.status_code == 200:
-            result = response.text
-            client = self.create_minio_client()
-            # Define the S3 bucket name and the file name
-            result = json.loads(result)
-            bucket_name = result["data"][0]["dataset_uploads"][0]["file_path"].split(
-                "//"
-            )[-1]
-            file_name = result["data"][0]["dataset_uploads"][0]["file_name"]
+        headers = {
+            "kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()
+        }
 
-            client.fget_object(bucket_name, file_name, file_name)
+        resp = make_get_request(
+            url=url,
+            path_params=dataset_id,
+            headers=headers,
+        )
 
-            print(f"Downloaded {file_name} from {bucket_name}")
-            return file_name
-
-        return None
+        return resp.get("data")

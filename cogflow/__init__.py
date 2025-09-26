@@ -234,11 +234,15 @@ def register_dataset(
     )
 
 
-def get_dataset(name: str):
+def get_dataset(dataset_id: int, endpoint: str):
     """
-    get a dataset with the given name.
+    Generic method to call dataset API endpoints like /datasets/prometheus/{id}.
+
+    :param dataset_id: Dataset ID to fetch
+    :param endpoint: API endpoint path (e.g., "/datasets/prometheus")
+    :return: API JSON response
     """
-    return DatasetPlugin().get_dataset(name=name)
+    return DatasetPlugin().get_dataset(dataset_id=dataset_id, endpoint=endpoint)
 
 
 def delete_registered_model(model_name):
@@ -2161,7 +2165,6 @@ def serve_model(
     model_version: str = None,
     dataset_id: str = None,
     transformer_image: str = None,
-    transformer_parameters: dict = None,
     protocol_version: str = None,
 ):
     """
@@ -2176,9 +2179,6 @@ def serve_model(
         artifact_path (str, optional): Specific artifact path (e.g., "model").
         dataset_id (str, optional): Dataset linked to the model.
         transformer_image (str): Image of the transformer.
-        transformer_parameters (dict, optional): Dict containing:
-            - "PROMETHEUS_URL": URL for Prometheus
-            - "PROMETHEUS_METRICS": Comma-separated metrics
             Required if transformer_image is provided.
         protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
 
@@ -2220,6 +2220,30 @@ def serve_model(
             model_name=model_name,
             model_version=model_version,
         )
+        transformer_parameters = {}
+
+        if dataset_id is not None:
+            dataset = get_dataset(
+                dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset")
+            )
+            if dataset.get("data_source_type") == 20:
+                if not transformer_image:
+                    raise ValueError(
+                        "Dataset is of Prometheus type. You must provide a 'transformer_image' "
+                        "to handle preprocessing for the transformer."
+                    )
+                dataset_response = get_dataset(
+                    dataset_id=dataset_id,
+                    endpoint=PluginManager().load_path("prometheus_dataset"),
+                )
+                transformer_parameters = {
+                    "PROMETHEUS_URL": dataset_response.get("connection_type", {}).get(
+                        "prometheus_url"
+                    ),
+                    "PROMETHEUS_METRICS": dataset_response.get("metric_list", {}).get(
+                        "METRIC_FEATURES"
+                    ),
+                }
 
         # Serve via KubeflowPlugin
         KubeflowPlugin().serve_model(
@@ -2369,7 +2393,6 @@ def update_served_model(
     model_version: Optional[str] = None,
     dataset_id: Optional[str] = None,
     transformer_image: Optional[str] = None,
-    transformer_parameters: Optional[Dict] = None,
     protocol_version: Optional[str] = None,
     namespace: Optional[str] = None,
 ) -> str:
@@ -2384,10 +2407,6 @@ def update_served_model(
         artifact_path (str, optional): Specific artifact path (e.g., "model").
         dataset_id (str, optional): Dataset linked to the model.
         transformer_image (str, optional): Image of the transformer.
-        transformer_parameters (dict, optional): Dict containing:
-            - "PROMETHEUS_URL": URL for Prometheus
-            - "PROMETHEUS_METRICS": Comma-separated metrics
-            Required if transformer_image is provided.
         protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
         namespace (str, optional): Kubernetes namespace of the InferenceService.
 
@@ -2411,6 +2430,31 @@ def update_served_model(
             model_name=model_name,
             model_version=model_version,
         )
+
+        transformer_parameters = {}
+
+        if dataset_id is not None:
+            dataset = get_dataset(
+                dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset")
+            )
+            if dataset.get("data_source_type") == 20:
+                if not transformer_image:
+                    raise ValueError(
+                        "Dataset is of Prometheus type. You must provide a 'transformer_image' "
+                        "to handle preprocessing for the transformer."
+                    )
+                dataset_response = get_dataset(
+                    dataset_id=dataset_id,
+                    endpoint=PluginManager().load_path("prometheus_dataset"),
+                )
+                transformer_parameters = {
+                    "PROMETHEUS_URL": dataset_response.get("connection_type", {}).get(
+                        "prometheus_url"
+                    ),
+                    "PROMETHEUS_METRICS": dataset_response.get("metric_list", {}).get(
+                        "METRIC_FEATURES"
+                    ),
+                }
 
         # Update the InferenceService
         return KubeflowPlugin().update_served_model(

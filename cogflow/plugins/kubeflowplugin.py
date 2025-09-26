@@ -1154,22 +1154,30 @@ class KubeflowPlugin:
 
             plural = constants.KSERVE_PLURAL
 
-            # Build patch
             annotations_patch = {
-                k: v
-                for k, v in {
-                    "model_id": model_id,
-                    "model_name": model_name,
-                    "model_version": model_version,
-                    "dataset_id": dataset_id,
-                    "transformer_image": transformer_image,
-                }.items()
-                if v is not None
+                "model_id": model_id,
+                "model_name": model_name,
+                "model_version": model_version,
+                "dataset_id": str(dataset_id) if dataset_id is not None else None,
             }
 
-            if transformer_parameters:
-                for k, v in transformer_parameters.items():
-                    annotations_patch[f"transformer/{k}"] = v
+            transformer_patch = {}
+            if transformer_image or transformer_parameters:
+                env_list = []
+                if transformer_parameters:
+                    for k, v in transformer_parameters.items():
+                        env_list.append({"name": k, "value": str(v)})
+                transformer_patch = {
+                    "transformer": {
+                        "containers": [
+                            {
+                                "name": f"{isvc_name}-transformer".lower(),
+                                "image": transformer_image,
+                                "env": env_list,
+                            }
+                        ]
+                    }
+                }
 
             # Predictor model patch
             model_patch = {"storageUri": model_uri}
@@ -1180,6 +1188,7 @@ class KubeflowPlugin:
                 "metadata": {"annotations": annotations_patch},
                 "spec": {
                     "predictor": {"model": model_patch},
+                    **transformer_patch,
                 },
             }
 
@@ -1266,7 +1275,7 @@ class KubeflowPlugin:
             "model_id": model_id,
         }
         if dataset_id:
-            annotations["dataset_id"] = dataset_id
+            annotations["dataset_id"] = str(dataset_id)
 
         # Transformer (optional)
         transformer = None
@@ -1394,12 +1403,12 @@ class KubeflowPlugin:
                 # Command to append gRPC config to the Dex configuration file
                 append_block = textwrap.dedent(
                     f"""\
-                cat <<'EOF' >> {plugin_config.CONFIG_PATH}
-                grpc:
-                  addr: 0.0.0.0:{plugin_config.GRPC_PORT}
-                  reflection: true
-                EOF
-                """
+                    cat <<'EOF' >> {plugin_config.CONFIG_PATH}
+                    grpc:
+                      addr: 0.0.0.0:{plugin_config.GRPC_PORT}
+                      reflection: true
+                    EOF
+                    """
                 )
 
                 append_cmd = ["sh", "-c", append_block]
@@ -1418,17 +1427,9 @@ class KubeflowPlugin:
                 )
 
                 logging.info("Successfully appended gRPC configuration")
-            else:
-                logging.info("gRPC configuration already present, no changes needed")
-
-            # Only restart Dex process if config was modified
-            if not grpc_exists:
-                # Command to restart Dex process by killing current process
+                # Restart only if we changed the file.
                 restart_cmd = ["sh", "-c", "kill $(pidof dex)"]
-
-                logging.info("Restarting Dex process")
-
-                # Execute command to restart Dex
+                logging.info("Restarting Dex process to apply gRPC config.")
                 stream(
                     v1.connect_get_namespaced_pod_exec,
                     pod_name,
@@ -1440,66 +1441,12 @@ class KubeflowPlugin:
                     stdout=True,
                     tty=False,
                 )
-
-                logging.info("Successfully restarted Dex process")
-            else:
-                logging.info("No restart needed as configuration was not modified")
+                logging.info("Dex process restart requested.")
             return True
 
         except Exception as e:
-            logging.error("Error enabling Dex: %s", e)
-            raise Exception(f"Failed to enable Dex: {str(e)}")
-
-    @staticmethod
-    def verify_dex_grpc():
-        """
-        Verify if Dex gRPC configuration is enabled and the port is listening.
-        """
-        # Configuration
-        pod = plugin_config.POD_NAME
-        namespace = plugin_config.NAMESPACE
-        container = plugin_config.CONTAINER
-
-        try:
-            try:
-                config.load_incluster_config()
-            except Exception:
-                config.load_kube_config()
-            v1 = client.CoreV1Api()
-            # Check config stanza
-            stream(
-                v1.connect_get_namespaced_pod_exec,
-                pod,
-                namespace,
-                command=["sh", "-c", f"grep -q '^grpc:' {plugin_config.CONFIG_PATH}"],
-                container=container,
-                stderr=True,
-                stdin=False,
-                stdout=True,
-                tty=False,
-            )
-            # Check port listening
-            out = stream(
-                v1.connect_get_namespaced_pod_exec,
-                pod,
-                namespace,
-                command=[
-                    "sh",
-                    "-c",
-                    f"(ss -ltn || netstat -ltn) | grep ':{plugin_config.GRPC_PORT} ' || true",
-                ],
-                container=container,
-                stderr=True,
-                stdin=False,
-                stdout=True,
-                tty=False,
-            )
-            return {
-                "grpc_stanza": True,
-                "port_listening": f":{plugin_config.GRPC_PORT}" in out,
-            }
-        except Exception as e:
-            return {"grpc_stanza": False, "port_listening": False, "error": str(e)}
+            logging.error("Failed to enable Dex gRPC: %s", e)
+            raise Exception(f"Failed to enable Dex: {e}")
 
     @staticmethod
     def get_current_user_from_namespace() -> str:
