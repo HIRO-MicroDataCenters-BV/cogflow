@@ -191,17 +191,47 @@ def delete_from_minio(object_name, bucket_name):
     )
 
 
-def register_dataset(details: DatasetMetadata):
+def register_dataset(
+    dataset_type: int, name: str, file_path: str, description: str = None
+):
     """
-    Registers a dataset with the given details.
+    Register a dataset by uploading a file.
 
-    Args:
-        details (DatasetMetadata): The details of the dataset to register.
+    Parameters:
+    -----------
+    dataset_type : int
+        Type of the dataset:
+        - 0: Training dataset
+        - 1: Inference dataset
+        - 2: Both training and inference
+    name : str
+        Name of the dataset to register.
+    file_path : str
+        Full path to the dataset file to upload.
+    description : str, optional
+        A brief description of the dataset. Defaults to None.
 
     Returns:
-        bool: True if the dataset was successfully registered, False otherwise.
+    --------
+    dict
+        JSON response from the API.
+
+    Example:
+    --------
+    >>> result = register_dataset(
+    ...     dataset_type=0,
+    ...     name="train dataset",
+    ...     description="First training dataset",
+    ...     file_path="/home/Dataset...."
+    ... )
+    >>> print(result)
     """
-    return DatasetPlugin().register_dataset(details=details)
+    return DatasetPlugin().register_dataset(
+        dataset_type=dataset_type,
+        name=name,
+        file_path=file_path,
+        description=description,
+    )
 
 
 def get_dataset(name: str):
@@ -810,19 +840,6 @@ def save_model_uri_to_db(model_id, model_uri):
     :return: Response from the database save operation.
     """
     return NotebookPlugin().save_model_uri_to_db(model_id=model_id, model_uri=model_uri)
-
-
-def save_dataset_details(dataset):
-    """
-    Saves dataset details.
-
-    Args:
-        dataset: The dataset details to save.
-
-    Returns:
-        str: Information message confirming the dataset details are saved.
-    """
-    return DatasetPlugin().save_dataset_details(dataset=dataset)
 
 
 def save_model_details_to_db(registered_model_name):

@@ -1500,3 +1500,37 @@ class KubeflowPlugin:
             }
         except Exception as e:
             return {"grpc_stanza": False, "port_listening": False, "error": str(e)}
+
+    @staticmethod
+    def get_current_user_from_namespace() -> str:
+        """
+        Fetch the current Kubeflow user ID by reading the owner annotation
+        from the user's namespace.
+
+        Returns:
+            str: The user ID of the notebook owner.
+
+        Raises:
+            RuntimeError: If the owner annotation is not found.
+        """
+        # 1️⃣ Get the notebook's namespace
+        namespace_name = KubeflowPlugin().get_default_namespace()
+
+        # 2️⃣ Load cluster Kubernetes configuration
+        KubeflowPlugin().load_k8s_config()
+        v1 = client.CoreV1Api()
+
+        # 3️⃣ Fetch the namespace object
+        ns_obj = v1.read_namespace(name=namespace_name)
+
+        # 4️⃣ Get annotations
+        annotations = ns_obj.metadata.annotations or {}
+
+        # 5️⃣ Extract owner
+        owner = annotations.get("owner")
+        if not owner:
+            raise RuntimeError(
+                f"No owner annotation found in namespace: {namespace_name}"
+            )
+
+        return owner
