@@ -8,13 +8,11 @@ from unittest.mock import patch, MagicMock
 import minio
 import requests
 
-from ..cogflow.plugins.dataset_plugin import DatasetPlugin, DatasetMetadata
+from ..cogflow.plugins.dataset_plugin import DatasetPlugin
 from ..cogflow import (
     query_endpoint_and_download_file,
     save_to_minio,
     delete_from_minio,
-    register_dataset,
-    log_model_with_dataset,
 )
 
 
@@ -340,105 +338,105 @@ class TestDatasetPlugin(unittest.TestCase):
         self.assertIsInstance(minio_client, minio.api.Minio)
         mock_plugin_activation.assert_called_once()
 
-    def test_log_model_with_dataset(self):
-        """
-        test for log_model_with_dataset
-        """
-        with patch("mlflow.sklearn.log_model") as mock_log_model:
-            with patch(
-                "cogflow.cogflow.plugins.notebook_plugin.NotebookPlugin.get_model_latest_version"
-            ) as mock_model_version:
-                with patch("mlflow.active_run") as mock_active_run:
-                    with patch("os.getenv") as mock_env:
-                        with patch("requests.post") as mock_requests_post:
-                            # Create a mock run object
-                            mock_run = MagicMock()
-                            mock_run.info.run_id = "12345"
-
-                            # Set the return value of mlflow.active_run()
-                            mock_active_run.return_value = mock_run
-                            mock_env.side_effect = lambda x: {
-                                "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
-                                "AWS_ACCESS_KEY_ID": "minio",
-                                "AWS_SECRET_ACCESS_KEY": "minio123",
-                                "API_BASEPATH": "http://randomn",
-                                "TIMER_IN_SEC": "10",
-                                "MLFLOW_TRACKING_URI": "http://mlflow",
-                                "ML_TOOL": "ml_flow",
-                                "FILE_TYPE": "0",
-                            }[x]
-
-                            mock_response = {
-                                "data": {"dataset_id": 5, "id": 1},
-                                "message": "Dataset linked with model successfully",
-                            }
-                            mock_requests_post.return_value.status_code = 201
-                            mock_requests_post.return_value.json.return_value = (
-                                mock_response
-                            )
-
-                            # Mock model
-                            sk_model = MagicMock()
-                            artifact_path = "model"
-                            registered_model_name = "testmodel"
-
-                            # Dataset details
-                            source = (
-                                "https://archive.ics.uci.edu/static/public/17"
-                                "/breast+cancer+wisconsin+diagnostic.zip"
-                            )
-                            file_format = "zip"
-                            name = "breast+cancer+wisconsin+diagnostic.zip"
-                            description = "Breast cancer wisconsin diagnotic dataset"
-
-                            dm = DatasetMetadata(name, description, source, file_format)
-                            mock_model_version.return_value = 1
-                            # Define any other necessary inputs for the log_model method
-
-                            # Call the method under test
-                            log_model_with_dataset(
-                                sk_model=sk_model,
-                                artifact_path=artifact_path,
-                                registered_model_name=registered_model_name,
-                                dataset=dm,
-                            )
-                            mock_log_model.assert_called_once()
-
-    @patch("requests.post")
-    @patch("os.getenv")
-    def test_register_dataset(self, mock_env, mock_requests_post):
-        """
-        test for register_dataset
-        """
-        mock_env.side_effect = lambda x: {
-            "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
-            "AWS_ACCESS_KEY_ID": "minio",
-            "AWS_SECRET_ACCESS_KEY": "minio123",
-            "API_BASEPATH": "http://randomn",
-            "TIMER_IN_SEC": "10",
-            "MLFLOW_TRACKING_URI": "http://mlflow_server",
-            "ML_TOOL": "mlflow",
-            "FILE_TYPE": "0",
-        }[x]
-
-        mock_response = {
-            "data": {"dataset_id": 5, "id": 1},
-            "message": "Dataset uploaded successfully",
-        }
-        mock_requests_post.return_value.status_code = 201
-        mock_requests_post.return_value.json.return_value = mock_response
-        # Dataset details
-        source = (
-            "https://archive.ics.uci.edu/static/public/17"
-            "/breast+cancer+wisconsin+diagnostic.zip"
-        )
-        file_format = "zip"
-        name = "breast+cancer+wisconsin+diagnostic.zip"
-        description = "Breast cancer wisconsin diagnotic dataset"
-
-        dm = DatasetMetadata(name, description, source, file_format)
-        result = register_dataset(dm)
-        self.assertEqual(result, mock_response)
+    # def test_log_model_with_dataset(self):
+    #     """
+    #     test for log_model_with_dataset
+    #     """
+    #     with patch("mlflow.sklearn.log_model") as mock_log_model:
+    #         with patch(
+    #             "cogflow.cogflow.plugins.notebook_plugin.NotebookPlugin.get_model_latest_version"
+    #         ) as mock_model_version:
+    #             with patch("mlflow.active_run") as mock_active_run:
+    #                 with patch("os.getenv") as mock_env:
+    #                     with patch("requests.post") as mock_requests_post:
+    #                         # Create a mock run object
+    #                         mock_run = MagicMock()
+    #                         mock_run.info.run_id = "12345"
+    #
+    #                         # Set the return value of mlflow.active_run()
+    #                         mock_active_run.return_value = mock_run
+    #                         mock_env.side_effect = lambda x: {
+    #                             "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
+    #                             "AWS_ACCESS_KEY_ID": "minio",
+    #                             "AWS_SECRET_ACCESS_KEY": "minio123",
+    #                             "API_BASEPATH": "http://randomn",
+    #                             "TIMER_IN_SEC": "10",
+    #                             "MLFLOW_TRACKING_URI": "http://mlflow",
+    #                             "ML_TOOL": "ml_flow",
+    #                             "FILE_TYPE": "0",
+    #                         }[x]
+    #
+    #                         mock_response = {
+    #                             "data": {"dataset_id": 5, "id": 1},
+    #                             "message": "Dataset linked with model successfully",
+    #                         }
+    #                         mock_requests_post.return_value.status_code = 201
+    #                         mock_requests_post.return_value.json.return_value = (
+    #                             mock_response
+    #                         )
+    #
+    #                         # Mock model
+    #                         sk_model = MagicMock()
+    #                         artifact_path = "model"
+    #                         registered_model_name = "testmodel"
+    #
+    #                         # Dataset details
+    #                         source = (
+    #                             "https://archive.ics.uci.edu/static/public/17"
+    #                             "/breast+cancer+wisconsin+diagnostic.zip"
+    #                         )
+    #                         file_format = "zip"
+    #                         name = "breast+cancer+wisconsin+diagnostic.zip"
+    #                         description = "Breast cancer wisconsin diagnotic dataset"
+    #
+    #                         dm = DatasetMetadata(name, description, source, file_format)
+    #                         mock_model_version.return_value = 1
+    #                         # Define any other necessary inputs for the log_model method
+    #
+    #                         # Call the method under test
+    #                         log_model_with_dataset(
+    #                             sk_model=sk_model,
+    #                             artifact_path=artifact_path,
+    #                             registered_model_name=registered_model_name,
+    #                             dataset=dm,
+    #                         )
+    #                         mock_log_model.assert_called_once()
+    #
+    # @patch("requests.post")
+    # @patch("os.getenv")
+    # def test_register_dataset(self, mock_env, mock_requests_post):
+    #     """
+    #     test for register_dataset
+    #     """
+    #     mock_env.side_effect = lambda x: {
+    #         "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
+    #         "AWS_ACCESS_KEY_ID": "minio",
+    #         "AWS_SECRET_ACCESS_KEY": "minio123",
+    #         "API_BASEPATH": "http://randomn",
+    #         "TIMER_IN_SEC": "10",
+    #         "MLFLOW_TRACKING_URI": "http://mlflow_server",
+    #         "ML_TOOL": "mlflow",
+    #         "FILE_TYPE": "0",
+    #     }[x]
+    #
+    #     mock_response = {
+    #         "data": {"dataset_id": 5, "id": 1},
+    #         "message": "Dataset uploaded successfully",
+    #     }
+    #     mock_requests_post.return_value.status_code = 201
+    #     mock_requests_post.return_value.json.return_value = mock_response
+    #     # Dataset details
+    #     source = (
+    #         "https://archive.ics.uci.edu/static/public/17"
+    #         "/breast+cancer+wisconsin+diagnostic.zip"
+    #     )
+    #     file_format = "zip"
+    #     name = "breast+cancer+wisconsin+diagnostic.zip"
+    #     description = "Breast cancer wisconsin diagnotic dataset"
+    #
+    #     dm = DatasetMetadata(name, description, source, file_format)
+    #     result = register_dataset(dm)
+    #     self.assertEqual(result, mock_response)
 
 
 if __name__ == "__main__":

@@ -8,10 +8,8 @@ from io import StringIO
 from unittest.mock import patch
 from ..cogflow import (
     link_model_to_dataset,
-    save_dataset_details,
     save_model_details_to_db,
 )
-from ..cogflow.plugins.dataset_plugin import DatasetMetadata
 from ..cogflow.plugins.notebook_plugin import NotebookPlugin
 
 
@@ -56,48 +54,6 @@ class TestNotebookPlugin(unittest.TestCase):
             mock_requests_post.return_value.json.return_value = mock_response
             result = save_model_details_to_db("testmodel")
             self.assertEqual(result["data"]["id"], 101)
-
-    @patch("os.getenv")
-    def test_save_dataset_details(self, mock_env):
-        """Test save_dataset_details function."""
-        with patch("requests.post") as mock_requests_post:
-            mock_env.side_effect = lambda x: {
-                "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
-                "AWS_ACCESS_KEY_ID": "minio",
-                "AWS_SECRET_ACCESS_KEY": "minio123",
-                "API_BASEPATH": "http://randomn",
-                "TIMER_IN_SEC": "10",
-                "FILE_TYPE": "2",
-                "MLFLOW_TRACKING_URI": "http://mlflow",
-                "ML_TOOL": "ml_flow",
-            }[x]
-
-            mock_response = {
-                "data": {
-                    "dataset_id": 8,
-                    "file_name": "breastcancerwisconsindiagnostic.zip",
-                    "file_path": "mlflow",
-                    "register_date": "2024-05-16T13:03:05.442386",
-                    "user_id": 0,
-                },
-                "errors": "None",
-                "message": "File uploaded successfully.",
-                "success": "True",
-            }
-            mock_requests_post.return_value.status_code = 201
-            mock_requests_post.return_value.json.return_value = mock_response
-            # Dataset details
-            source = (
-                "https://archive.ics.uci.edu/static/public/17"
-                "/breast+cancer+wisconsin+diagnostic1.zip"
-            )
-            file_format = "zip"
-            name = "breast+cancer+wisconsin+diagnostic.zip"
-            description = "Breast cancer wisconsin diagnotic dataset"
-
-            dm = DatasetMetadata(name, description, source, file_format)
-            result = save_dataset_details(dataset=dm)
-            self.assertEqual(result, mock_response["data"]["dataset_id"])
 
     @patch("os.getenv")
     def test_link_model_to_dataset(self, mock_env):

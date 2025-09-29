@@ -10,28 +10,38 @@ from . import plugin_config
 DEFAULT_TIMEOUT = plugin_config.TIMER_IN_SEC  # Set a default timeout in seconds
 
 
-def make_post_request(url, data=None, params=None, files=None, timeout=DEFAULT_TIMEOUT):
+def make_post_request(
+    url, data=None, params=None, files=None, headers=None, timeout=DEFAULT_TIMEOUT
+):
     """
     Utility function to make POST requests
     :param url: URL of the API endpoint
-    :param data: JSON payload
-    :param params: Request params
-    :param files: File
+    :param data: JSON payload (dict)
+    :param params: Request params (dict)
+    :param files: File path (str) to upload
+    :param headers: Request headers (dict)
     :param timeout: Timeout for the request
     :return: Response for the POST request in JSON format
     """
     try:
-        if data:
-            response = requests.post(url, json=data, params=params, timeout=timeout)
-        elif files:
-            with open(files, "rb") as file_data:
-                file = {"file": file_data}
-                response = requests.post(
-                    url, params=params, files=file, timeout=timeout
-                )
-                file_data.close()
+        if files:
+            # 'files' should be a dict: {'param_name': (filename, file_obj)}
+            response = requests.post(
+                url,
+                data=data,
+                files=files,
+                headers=headers,
+                params=params,
+                timeout=timeout,
+            )
+        elif data:
+            response = requests.post(
+                url, json=data, params=params, headers=headers, timeout=timeout
+            )
         else:
-            response = requests.post(url, params=params, timeout=timeout)
+            response = requests.post(
+                url, params=params, headers=headers, timeout=timeout
+            )
 
         if response.status_code == 201:
             return response.json()
@@ -106,7 +116,12 @@ def make_delete_request(
 
 
 def make_get_request(
-    url, path_params=None, query_params=None, timeout=DEFAULT_TIMEOUT, paginate=False
+    url,
+    path_params=None,
+    query_params=None,
+    headers=None,
+    timeout=DEFAULT_TIMEOUT,
+    paginate=False,
 ):
     """
     Utility function to make GET requests (with optional pagination)
@@ -114,6 +129,7 @@ def make_get_request(
     :param url: Base API URL (e.g., https://api.example.com/resource)
     :param path_params: Additional path (e.g., "123/details")
     :param query_params: Dictionary of query parameters
+    :param headers: Request headers (dict)
     :param timeout: Timeout in seconds
     :param paginate: If True, handles paginated responses
     :return: List (if paginate) or dict (JSON response)
@@ -126,7 +142,9 @@ def make_get_request(
         # print(f"GET request to: {full_url} with query_params: {query_params}")
 
         if not paginate:
-            response = requests.get(full_url, params=query_params, timeout=timeout)
+            response = requests.get(
+                full_url, params=query_params, headers=headers, timeout=timeout
+            )
 
             if response.status_code == 200:
                 return response.json()
@@ -143,7 +161,9 @@ def make_get_request(
             page_params["page"] = page
             page_params["limit"] = limit
 
-            response = requests.get(full_url, params=page_params, timeout=timeout)
+            response = requests.get(
+                full_url, params=page_params, headers=headers, timeout=timeout
+            )
             if response.status_code != 200:
                 print(f"GET request failed with status code {response.status_code}")
                 break

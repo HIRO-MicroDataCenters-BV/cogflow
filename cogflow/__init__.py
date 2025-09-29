@@ -191,24 +191,58 @@ def delete_from_minio(object_name, bucket_name):
     )
 
 
-def register_dataset(details: DatasetMetadata):
+def register_dataset(
+    dataset_type: int, name: str, file_path: str, description: str = None
+):
     """
-    Registers a dataset with the given details.
+    Register a dataset by uploading a file.
 
-    Args:
-        details (DatasetMetadata): The details of the dataset to register.
+    Parameters:
+    -----------
+    dataset_type : int
+        Type of the dataset:
+        - 0: Training dataset
+        - 1: Inference dataset
+        - 2: Both training and inference
+    name : str
+        Name of the dataset to register.
+    file_path : str
+        Full path to the dataset file to upload.
+    description : str, optional
+        A brief description of the dataset. Defaults to None.
 
     Returns:
-        bool: True if the dataset was successfully registered, False otherwise.
+    --------
+    dict
+        JSON response from the API.
+
+    Example:
+    --------
+    >>> result = register_dataset(
+    ...     dataset_type=0,
+    ...     name="train dataset",
+    ...     description="First training dataset",
+    ...     file_path="/home/Dataset...."
+    ... )
+    >>> print(result)
     """
-    return DatasetPlugin().register_dataset(details=details)
+    return DatasetPlugin().register_dataset(
+        dataset_type=dataset_type,
+        name=name,
+        file_path=file_path,
+        description=description,
+    )
 
 
-def get_dataset(name: str):
+def get_dataset(dataset_id: int, endpoint: str):
     """
-    get a dataset with the given name.
+    Generic method to call dataset API endpoints like /datasets/prometheus/{id}.
+
+    :param dataset_id: Dataset ID to fetch
+    :param endpoint: API endpoint path (e.g., "/datasets/prometheus")
+    :return: API JSON response
     """
-    return DatasetPlugin().get_dataset(name=name)
+    return DatasetPlugin().get_dataset(dataset_id=dataset_id, endpoint=endpoint)
 
 
 def delete_registered_model(model_name):
@@ -698,28 +732,34 @@ def log_model(
             metadata=metadata,
         )
 
-        try:
-            # If registered_model_name is not provided, generate it
-            if registered_model_name is None:
-                # Check if sk_model is a string
-                if isinstance(model_name, str):
-                    registered_model_name = model_name
-                else:
-                    # Generate a random string to use as the model name
-                    registered_model_name = "".join(
-                        random.choices(string.ascii_letters + string.digits, k=10)
-                    )
-            response = NotebookPlugin().save_model_details_to_db(registered_model_name)
-            # print("response", response)
-            model_id = response["data"]["id"]
-            # print("model_id", model_id)
-            if result.model_uri:
-                artifact_uri = get_artifact_uri(artifact_path=result.artifact_path)
-                # Construct the model URI
-                # print("model_uri", artifact_uri)
-                NotebookPlugin().save_model_uri_to_db(model_id, model_uri=artifact_uri)
-        except Exception as exp:
-            print(f"Failed to log model details to DB: {exp}")
+    try:
+        active_run = mlflow.active_run()
+        if not active_run:
+            raise RuntimeError("No active MLflow run found")
+        model_id = active_run.info.run_id
+
+        model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
+            model_id=model_id,
+        )
+        model_dict = {
+            "model_id": model_id,
+            "model_name": str(model_details.get("model_name") or "None"),
+            "model_version": str(model_details.get("model_version") or "0"),
+            "register_date": active_run.info.start_time,
+            "type": "log_model",
+            "description": active_run.data.tags.get("mlflow.note.content"),
+            "USER_ID": KubeflowPlugin().get_current_user_from_namespace(),
+        }
+        path = PluginManager().load_path(path_name="log_model")
+        url = f"{os.getenv('API_BASEPATH')}{path}"
+
+        headers = {
+            "kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()
+        }
+
+        make_post_request(url=url, data=model_dict, headers=headers)
+    except Exception as exp:
+        print(f"Failed to log model details to DB: {exp}")
 
     return result
 
@@ -810,19 +850,6 @@ def save_model_uri_to_db(model_id, model_uri):
     :return: Response from the database save operation.
     """
     return NotebookPlugin().save_model_uri_to_db(model_id=model_id, model_uri=model_uri)
-
-
-def save_dataset_details(dataset):
-    """
-    Saves dataset details.
-
-    Args:
-        dataset: The dataset details to save.
-
-    Returns:
-        str: Information message confirming the dataset details are saved.
-    """
-    return DatasetPlugin().save_dataset_details(dataset=dataset)
 
 
 def save_model_details_to_db(registered_model_name):
@@ -2159,10 +2186,8 @@ def serve_model(
         artifact_path (str, optional): Specific artifact path (e.g., "model").
         dataset_id (str, optional): Dataset linked to the model.
         transformer_image (str): Image of the transformer.
-        transformer_parameters (dict, optional): Dict containing:
-            - "PROMETHEUS_URL": URL for Prometheus
-            - "PROMETHEUS_METRICS": Comma-separated metrics
-            Required if transformer_image is provided.
+            Required if transformer_parameters is provided.
+        transformer_parameters (dict, optional): Parameters for the transformer.
         protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
 
     Examples:
@@ -2203,6 +2228,31 @@ def serve_model(
             model_name=model_name,
             model_version=model_version,
         )
+
+        transformer_parameters = transformer_parameters or {}
+
+        if dataset_id is not None and not transformer_parameters:
+            dataset = get_dataset(
+                dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset")
+            )
+            if dataset.get("data_source_type") == 20:
+                if not transformer_image:
+                    raise ValueError(
+                        "Dataset is of Prometheus type. You must provide a 'transformer_image' "
+                        "to handle preprocessing for the transformer."
+                    )
+                dataset_response = get_dataset(
+                    dataset_id=dataset_id,
+                    endpoint=PluginManager().load_path("prometheus_dataset"),
+                )
+                transformer_parameters = {
+                    "PROMETHEUS_URL": dataset_response.get("connection_type", {}).get(
+                        "prometheus_url"
+                    ),
+                    "PROMETHEUS_METRICS": dataset_response.get("metric_list", {}).get(
+                        "METRIC_FEATURES"
+                    ),
+                }
 
         # Serve via KubeflowPlugin
         KubeflowPlugin().serve_model(
@@ -2352,7 +2402,7 @@ def update_served_model(
     model_version: Optional[str] = None,
     dataset_id: Optional[str] = None,
     transformer_image: Optional[str] = None,
-    transformer_parameters: Optional[Dict] = None,
+    transformer_parameters: Optional[dict] = None,
     protocol_version: Optional[str] = None,
     namespace: Optional[str] = None,
 ) -> str:
@@ -2367,10 +2417,8 @@ def update_served_model(
         artifact_path (str, optional): Specific artifact path (e.g., "model").
         dataset_id (str, optional): Dataset linked to the model.
         transformer_image (str, optional): Image of the transformer.
-        transformer_parameters (dict, optional): Dict containing:
-            - "PROMETHEUS_URL": URL for Prometheus
-            - "PROMETHEUS_METRICS": Comma-separated metrics
-            Required if transformer_image is provided.
+            Required if transformer_parameters is provided.
+        transformer_parameters (dict, optional): Parameters for the transformer.
         protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
         namespace (str, optional): Kubernetes namespace of the InferenceService.
 
@@ -2394,6 +2442,31 @@ def update_served_model(
             model_name=model_name,
             model_version=model_version,
         )
+
+        transformer_parameters = transformer_parameters or {}
+
+        if dataset_id is not None and not transformer_parameters:
+            dataset = get_dataset(
+                dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset")
+            )
+            if dataset.get("data_source_type") == 20:
+                if not transformer_image:
+                    raise ValueError(
+                        "Dataset is of Prometheus type. You must provide a 'transformer_image' "
+                        "to handle preprocessing for the transformer."
+                    )
+                dataset_response = get_dataset(
+                    dataset_id=dataset_id,
+                    endpoint=PluginManager().load_path("prometheus_dataset"),
+                )
+                transformer_parameters = {
+                    "PROMETHEUS_URL": dataset_response.get("connection_type", {}).get(
+                        "prometheus_url"
+                    ),
+                    "PROMETHEUS_METRICS": dataset_response.get("metric_list", {}).get(
+                        "METRIC_FEATURES"
+                    ),
+                }
 
         # Update the InferenceService
         return KubeflowPlugin().update_served_model(

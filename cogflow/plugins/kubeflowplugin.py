@@ -1154,22 +1154,30 @@ class KubeflowPlugin:
 
             plural = constants.KSERVE_PLURAL
 
-            # Build patch
             annotations_patch = {
-                k: v
-                for k, v in {
-                    "model_id": model_id,
-                    "model_name": model_name,
-                    "model_version": model_version,
-                    "dataset_id": dataset_id,
-                    "transformer_image": transformer_image,
-                }.items()
-                if v is not None
+                "model_id": model_id,
+                "model_name": model_name,
+                "model_version": model_version,
+                "dataset_id": str(dataset_id) if dataset_id is not None else None,
             }
 
-            if transformer_parameters:
-                for k, v in transformer_parameters.items():
-                    annotations_patch[f"transformer/{k}"] = v
+            transformer_patch = {}
+            if transformer_image or transformer_parameters:
+                env_list = []
+                if transformer_parameters:
+                    for k, v in transformer_parameters.items():
+                        env_list.append({"name": k, "value": str(v)})
+                transformer_patch = {
+                    "transformer": {
+                        "containers": [
+                            {
+                                "name": f"{isvc_name}-transformer".lower(),
+                                "image": transformer_image,
+                                "env": env_list,
+                            }
+                        ]
+                    }
+                }
 
             # Predictor model patch
             model_patch = {"storageUri": model_uri}
@@ -1180,6 +1188,7 @@ class KubeflowPlugin:
                 "metadata": {"annotations": annotations_patch},
                 "spec": {
                     "predictor": {"model": model_patch},
+                    **transformer_patch,
                 },
             }
 
@@ -1266,7 +1275,7 @@ class KubeflowPlugin:
             "model_id": model_id,
         }
         if dataset_id:
-            annotations["dataset_id"] = dataset_id
+            annotations["dataset_id"] = str(dataset_id)
 
         # Transformer (optional)
         transformer = None
@@ -1394,12 +1403,12 @@ class KubeflowPlugin:
                 # Command to append gRPC config to the Dex configuration file
                 append_block = textwrap.dedent(
                     f"""\
-                cat <<'EOF' >> {plugin_config.CONFIG_PATH}
-                grpc:
-                  addr: 0.0.0.0:{plugin_config.GRPC_PORT}
-                  reflection: true
-                EOF
-                """
+                    cat <<'EOF' >> {plugin_config.CONFIG_PATH}
+                    grpc:
+                      addr: 0.0.0.0:{plugin_config.GRPC_PORT}
+                      reflection: true
+                    EOF
+                    """
                 )
 
                 append_cmd = ["sh", "-c", append_block]
@@ -1438,3 +1447,37 @@ class KubeflowPlugin:
         except Exception as e:
             logging.error("Failed to enable Dex gRPC: %s", e)
             raise Exception(f"Failed to enable Dex: {e}")
+
+    @staticmethod
+    def get_current_user_from_namespace() -> str:
+        """
+        Fetch the current Kubeflow user ID by reading the owner annotation
+        from the user's namespace.
+
+        Returns:
+            str: The user ID of the notebook owner.
+
+        Raises:
+            RuntimeError: If the owner annotation is not found.
+        """
+        # 1️⃣ Get the notebook's namespace
+        namespace_name = KubeflowPlugin().get_default_namespace()
+
+        # 2️⃣ Load cluster Kubernetes configuration
+        KubeflowPlugin().load_k8s_config()
+        v1 = client.CoreV1Api()
+
+        # 3️⃣ Fetch the namespace object
+        ns_obj = v1.read_namespace(name=namespace_name)
+
+        # 4️⃣ Get annotations
+        annotations = ns_obj.metadata.annotations or {}
+
+        # 5️⃣ Extract owner
+        owner = annotations.get("owner")
+        if not owner:
+            raise RuntimeError(
+                f"No owner annotation found in namespace: {namespace_name}"
+            )
+
+        return owner
