@@ -504,11 +504,6 @@ class KubeflowPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        # if (
-        #         response.get("status", {}).get("conditions", [{}])[0].get("type")
-        #         == "IngressReady"
-        # ):
-
         try:
             KServeClient().delete(isvc_name)
             print("Inference Service has been deleted successfully.")
@@ -555,6 +550,7 @@ class KubeflowPlugin:
         pipeline_root: Optional[str] = None,
         enable_caching: Optional[bool] = None,
         service_account: Optional[str] = None,
+        session_cookies: dict = None,
     ):
         """
             method to create a run from pipeline function
@@ -566,10 +562,10 @@ class KubeflowPlugin:
         :param pipeline_root:
         :param enable_caching:
         :param service_account:
-        :param experiment_id:
+        :param session_cookies: session cookies for authentication
         :return:
         """
-        run_details = self.client().create_run_from_pipeline_func(
+        run_details = self.client(session_cookies).create_run_from_pipeline_func(
             pipeline_func,
             arguments,
             run_name,
@@ -581,62 +577,70 @@ class KubeflowPlugin:
         )
         return run_details
 
-    def is_run_finished(self, run_id):
+    def is_run_finished(self, run_id, session_cookies: dict = None):
         """
             method to check if the run is finished
         :param run_id: run_id of the run
+        :param session_cookies: session cookies for authentication
         :return: boolean
         """
-        status = self.client().get_run(run_id).run.status
+        status = self.client(session_cookies).get_run(run_id).run.status
         return status in ["Succeeded", "Failed", "Skipped", "Error"]
 
-    def get_run_status(self, run_id):
+    def get_run_status(self, run_id, session_cookies: dict = None):
         """
         method return the status of run
         :param run_id: run_id of the run
+        :param session_cookies: session cookies for authentication
         :return: status of the run
         """
-        return self.client().get_run(run_id).run.status
+        return self.client(session_cookies).get_run(run_id).run.status
 
     @staticmethod
-    def delete_pipeline(pipeline_id):
+    def delete_pipeline(pipeline_id, session_cookies: dict = None):
         """
         method deletes the pipeline
         :param pipeline_id: pipeline id
+        :param session_cookies: session cookies for authentication
         :return:
         """
-        KubeflowPlugin.client().delete_pipeline(pipeline_id=pipeline_id)
+        KubeflowPlugin.client(session_cookies).delete_pipeline(pipeline_id=pipeline_id)
 
     @staticmethod
-    def list_pipeline_versions(pipeline_id):
+    def list_pipeline_versions(pipeline_id, session_cookies: dict = None):
         """
          method to list the pipeline based on pipeline_id
         :param pipeline_id: pipeline id
+        :param session_cookies: session cookies for authentication
         :return:
         """
-        response = KubeflowPlugin.client().list_pipeline_versions(
+        response = KubeflowPlugin.client(session_cookies).list_pipeline_versions(
             pipeline_id=pipeline_id
         )
         return response
 
     @staticmethod
-    def delete_pipeline_version(version_id):
+    def delete_pipeline_version(version_id, session_cookies: dict = None):
         """
         method to list the pipeline based on version_id
         :param version_id: pipeline id
+        :param session_cookies: session cookies for authentication
         :return:
         """
-        KubeflowPlugin.client().delete_pipeline_version(version_id=version_id)
+        KubeflowPlugin.client(session_cookies).delete_pipeline_version(
+            version_id=version_id
+        )
 
     @staticmethod
-    def delete_runs(run_ids):
+    def delete_runs(run_ids, session_cookies: dict = None):
         """
         delete the pipeline runs
         :param run_ids: list of runs
+        :param session_cookies: session cookies for authentication
         :return: successful deletion runs or 404 error
         """
         for run in run_ids:
-            KubeflowPlugin.client().runs.delete_run(id=run)
+            KubeflowPlugin.client(session_cookies).runs.delete_run(id=run)
 
     @staticmethod
     def get_default_namespace() -> str:

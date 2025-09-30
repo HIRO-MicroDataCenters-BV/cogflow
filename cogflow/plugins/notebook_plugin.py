@@ -189,11 +189,12 @@ class NotebookPlugin:
         return make_delete_request(url=url, path_params=pipeline_id)
 
     @staticmethod
-    def get_pipeline_id_by_name(pipeline_name):
+    def get_pipeline_id_by_name(pipeline_name, session_cookies: dict = None):
         """
         Retrieves the pipeline ID for a given pipeline name.
 
         Args:
+            session_cookies: dict: Optional session cookies for authentication.
             pipeline_name (str): The name of the pipeline to fetch the ID for.
 
         Returns:
@@ -206,7 +207,7 @@ class NotebookPlugin:
             pipeline_id = NotebookPlugin.get_pipeline_id_by_name("Example Pipeline")
         """
         kfp = KubeflowPlugin()
-        pipelines_response = kfp.client().list_pipelines()
+        pipelines_response = kfp.client(session_cookies).list_pipelines()
         pipeline_id = None
         if pipelines_response.pipelines:
             for pipeline in pipelines_response.pipelines:
@@ -216,13 +217,15 @@ class NotebookPlugin:
 
         if not pipeline_id:
             print(f"No pipeline found with the name '{pipeline_name}'")
+        return None
 
     @staticmethod
-    def list_pipelines_by_name(pipeline_name):
+    def list_pipelines_by_name(pipeline_name, session_cookies: dict = None):
         """
         Lists all versions and runs of the specified pipeline by name.
 
         Args:
+            session_cookies: dict: Optional session cookies for authentication.
             pipeline_name (str): The name of the pipeline to fetch details for.
 
         Returns:
@@ -236,7 +239,9 @@ class NotebookPlugin:
         # Fetch all versions of the specified pipeline
         kfp = KubeflowPlugin()
 
-        pipeline_id = NotebookPlugin.get_pipeline_id_by_name(pipeline_name)
+        pipeline_id = NotebookPlugin.get_pipeline_id_by_name(
+            pipeline_name=pipeline_name, session_cookies=session_cookies
+        )
         versions_response = kfp.list_pipeline_versions(pipeline_id=pipeline_id)
         run_list = NotebookPlugin.list_runs_by_pipeline_id(pipeline_id=pipeline_id)
         result_dict = {
@@ -391,12 +396,13 @@ class NotebookPlugin:
         return make_get_request(url, query_params=data)
 
     @staticmethod
-    def get_pipeline_task_sequence_by_run_id(run_id):
+    def get_pipeline_task_sequence_by_run_id(run_id, session_cookies: dict = None):
         """
         Fetches the pipeline workflow and task sequence for a given run in Kubeflow.
 
         Args:
             run_id (str): The ID of the pipeline run to fetch details for.
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             tuple: A tuple containing:
@@ -428,7 +434,7 @@ class NotebookPlugin:
         """
 
         # Initialize the Kubeflow client
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
 
         # Get the details of the specified run using the run ID
         run_details = kfp_client.get_run(run_id)
@@ -509,19 +515,20 @@ class NotebookPlugin:
         return response
 
     @staticmethod
-    def get_run_id_by_run_name(run_name):
+    def get_run_id_by_run_name(run_name, session_cookies):
         """
         Fetches the run_id of a pipeline run by its name, traversing all pages if necessary.
 
         Args:
             run_name (str): The name of the pipeline run to search for.
+            session_cookies (dict): Session cookies for authentication.
 
         Returns:
             str: The run_id if found, otherwise None.
         """
         next_page_token = None
         page_size = 100  # Set page size (adjust if needed)
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
 
         # Traverse through pages to find the matching run name
         while True:
@@ -544,12 +551,13 @@ class NotebookPlugin:
         return None
 
     @staticmethod
-    def get_pipeline_task_sequence_by_run_name(run_name):
+    def get_pipeline_task_sequence_by_run_name(run_name, session_cookies: dict = None):
         """
         Fetches the task structure of a pipeline run based on its name.
 
         Args:
             run_name (str): The name of the pipeline run to fetch task structure for.
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             tuple: (pipeline_workflow_name, task_structure)
@@ -560,10 +568,12 @@ class NotebookPlugin:
             >>>print("Task Structure:")
             >>>print(json.dumps(task_structure, indent=4))
         """
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
 
         # Fetch the run_id using the run_name
-        run_id = NotebookPlugin().get_run_id_by_run_name(run_name)
+        run_id = NotebookPlugin().get_run_id_by_run_name(
+            run_name=run_name, session_cookies=session_cookies
+        )
 
         if not run_id:
             raise ValueError(f"No run found with name: {run_name}")
@@ -643,19 +653,20 @@ class NotebookPlugin:
         return response
 
     @staticmethod
-    def get_run_ids_by_pipeline_id(pipeline_id):
+    def get_run_ids_by_pipeline_id(pipeline_id, session_cookies: dict = None):
         """
         Fetches all run_ids for a given pipeline ID.
 
         Args:
             pipeline_id (str): The ID of the pipeline to search for.
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             list: A list of run_ids for the matching pipeline ID.
         """
         run_ids = []
         next_page_token = None
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
         while True:
             runs_list = kfp_client.list_runs(page_size=100, page_token=next_page_token)
             for run in runs_list.runs:
@@ -671,12 +682,15 @@ class NotebookPlugin:
         return run_ids
 
     @staticmethod
-    def get_pipeline_task_sequence_by_pipeline_id(pipeline_id):
+    def get_pipeline_task_sequence_by_pipeline_id(
+        pipeline_id, session_cookies: dict = None
+    ):
         """
         Fetches the task structures of all pipeline runs based on the provided pipeline_id.
 
         Args:
             pipeline_id (str): The ID of the pipeline to fetch task structures for.
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             list: A list of dictionaries containing pipeline workflow names and task structures for each run.
@@ -689,10 +703,12 @@ class NotebookPlugin:
                 >>>print("Task Structure:")
                 >>>print(json.dumps(details["task_structure"], indent=4))
         """
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
 
         # Fetch all run_ids using the pipeline_id
-        run_ids = NotebookPlugin().get_run_ids_by_pipeline_id(pipeline_id)
+        run_ids = NotebookPlugin().get_run_ids_by_pipeline_id(
+            pipeline_id=pipeline_id, session_cookies=session_cookies
+        )
 
         if not run_ids:
             raise ValueError(f"No runs found for pipeline_id: {pipeline_id}")
@@ -779,14 +795,16 @@ class NotebookPlugin:
         return task_structures
 
     @staticmethod
-    def list_all_pipelines():
+    def list_all_pipelines(session_cookies: dict = None):
         """
         Lists all pipelines along with their IDs, handling pagination.
+        Args:
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             list: A list of tuples containing (pipeline_name, pipeline_id).
         """
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
 
         pipelines_info = []
         next_page_token = None
@@ -810,19 +828,20 @@ class NotebookPlugin:
         return pipelines_info
 
     @staticmethod
-    def get_run_ids_by_pipeline_name(pipeline_name):
+    def get_run_ids_by_pipeline_name(pipeline_name, session_cookies: dict = None):
         """
         Fetches all run_ids for a given pipeline name.
 
         Args:
             pipeline_name (str): The name of the pipeline to search for.
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             list: A list of run_ids for the matching pipeline name.
         """
         run_ids = []
         next_page_token = None
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
         while True:
             runs_list = kfp_client.list_runs(page_size=100, page_token=next_page_token)
             for run in runs_list.runs:
@@ -838,16 +857,18 @@ class NotebookPlugin:
         return run_ids
 
     @staticmethod
-    def get_all_run_ids():
+    def get_all_run_ids(session_cookies: dict = None):
         """
         Fetches all run_ids available in the system.
+        Args:
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             list: A list of all run_ids.
         """
         run_ids = []
         next_page_token = None
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
         while True:
             runs_list = kfp_client.list_runs(page_size=100, page_token=next_page_token)
             for run in runs_list.runs:
@@ -860,19 +881,20 @@ class NotebookPlugin:
         return run_ids
 
     @staticmethod
-    def get_run_ids_by_name(run_name):
+    def get_run_ids_by_name(run_name, session_cookies: dict = None):
         """
         Fetches run_ids by run name.
 
         Args:
             run_name (str): The name of the run to search for.
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             list: A list of run_ids matching the run_name.
         """
         run_ids = []
         next_page_token = None
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
         while True:
             runs_list = kfp_client.list_runs(page_size=100, page_token=next_page_token)
             for run in runs_list.runs:
@@ -886,7 +908,9 @@ class NotebookPlugin:
         return run_ids
 
     @staticmethod
-    def get_task_structure_by_task_id(task_id, run_id=None, run_name=None):
+    def get_task_structure_by_task_id(
+        task_id, run_id=None, run_name=None, session_cookies: dict = None
+    ):
         """
         Fetches the task structure of a specific task ID, optionally filtered by run_id or run_name.
 
@@ -894,6 +918,7 @@ class NotebookPlugin:
             task_id (str): The task ID to look for.
             run_id (str, optional): The specific run ID to filter by. Defaults to None.
             run_name (str, optional): The specific run name to filter by. Defaults to None.
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             list: A list of dictionaries containing run IDs and their corresponding task info if found.
@@ -903,14 +928,16 @@ class NotebookPlugin:
             >>>run_name = "Run of test_pipeline (ad001)"
             >>>get_task_structure_by_task_id(task_id, run_id, run_name)
         """
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
 
         # Fetch all run_ids available in the system
-        run_ids = NotebookPlugin().get_all_run_ids()
+        run_ids = NotebookPlugin().get_all_run_ids(session_cookies=session_cookies)
 
         # If run_name is provided, filter by run_name
         if run_name:
-            run_ids = NotebookPlugin().get_run_ids_by_name(run_name)
+            run_ids = NotebookPlugin().get_run_ids_by_name(
+                run_name=run_name, session_cookies=session_cookies
+            )
 
         # If run_id is provided, make it the only run to check
         if run_id:
@@ -1103,12 +1130,15 @@ class NotebookPlugin:
             )
 
     @staticmethod
-    def get_run_ids_by_pipeline_workflow_name(pipeline_workflow_name):
+    def get_run_ids_by_pipeline_workflow_name(
+        pipeline_workflow_name, session_cookies: dict = None
+    ):
         """
         Fetches all run IDs associated with a given pipeline workflow name.
 
         Args:
             pipeline_workflow_name (str): The workflow name of the pipeline.
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             list: A list of run IDs associated with the provided workflow name.
@@ -1118,7 +1148,7 @@ class NotebookPlugin:
             >>> run_ids = get_run_ids_by_pipeline_workflow_name(workflow_name)
             >>> print(run_ids)
         """
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
 
         # Initialize variables for pagination
         run_ids = []
@@ -1162,13 +1192,16 @@ class NotebookPlugin:
         return run_ids
 
     @staticmethod
-    def get_pipeline_task_sequence(pipeline_name=None, pipeline_workflow_name=None):
+    def get_pipeline_task_sequence(
+        pipeline_name=None, pipeline_workflow_name=None, session_cookies: dict = None
+    ):
         """
         Fetches the task structures of all pipeline runs based on the provided pipeline name or pipeline workflow name.
 
         Args:
             pipeline_name (str, optional): The name of the pipeline to fetch task structures for.
             pipeline_workflow_name (str, optional): The workflow name of the pipeline to fetch task structures for.
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             list: A list with details of task structures for each run.
@@ -1184,14 +1217,17 @@ class NotebookPlugin:
         Raises:
             ValueError: If neither pipeline_name nor pipeline_workflow_name is provided.
         """
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
 
         # Fetch all run_ids based on pipeline_name or pipeline_workflow_name
         if pipeline_name:
-            run_ids = NotebookPlugin().get_run_ids_by_pipeline_name(pipeline_name)
+            run_ids = NotebookPlugin().get_run_ids_by_pipeline_name(
+                pipeline_name=pipeline_name, session_cookies=session_cookies
+            )
         elif pipeline_workflow_name:
             run_ids = NotebookPlugin().get_run_ids_by_pipeline_workflow_name(
-                pipeline_workflow_name
+                pipeline_workflow_name=pipeline_workflow_name,
+                session_cookies=session_cookies,
             )
         else:
             raise ValueError(
@@ -1517,12 +1553,14 @@ class NotebookPlugin:
         return parsed_runs
 
     @staticmethod
-    def list_all_kfp_runs():
+    def list_all_kfp_runs(session_cookies: dict = None):
         """
         List all Kubeflow Pipeline (KFP) runs by iterating through all pages of results.
 
         This method retrieves and parses all available KFP runs using the KFP client API,
         handling pagination via `next_page_token`.
+        Args:
+            session_cookies (dict, optional): Optional session cookies for authentication.
 
         Returns:
             list[dict]: A list of parsed runs, where each run is represented as a dictionary
@@ -1536,7 +1574,7 @@ class NotebookPlugin:
         """
         parsed_runs = []
         next_page_token = None
-        kfp_client = KubeflowPlugin().client()
+        kfp_client = KubeflowPlugin().client(session_cookies)
         while True:
             runs_response = kfp_client.list_runs(page_token=next_page_token)
             # print(runs_response)# Fetch KFP runs
