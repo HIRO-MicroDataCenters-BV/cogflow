@@ -1534,12 +1534,13 @@ def deploy_model(model_name, model_version, isvc_name):
     )
 
 
-def list_pipelines_by_name(pipeline_name):
+def list_pipelines_by_name(pipeline_name, session_cookies: dict = None):
     """
     Lists all versions and runs of the specified pipeline by name.
 
     Args:
         pipeline_name (str): The name of the pipeline to fetch details for.
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         dict: A dictionary containing the pipeline ID, versions,
@@ -1550,7 +1551,9 @@ def list_pipelines_by_name(pipeline_name):
         Exception: For any other issues encountered during the fetch operations.
     """
 
-    return NotebookPlugin().list_pipelines_by_name(pipeline_name=pipeline_name)
+    return NotebookPlugin().list_pipelines_by_name(
+        pipeline_name=pipeline_name, session_cookies=session_cookies
+    )
 
 
 def model_recommender(model_name=None, classification_score=None):
@@ -1571,12 +1574,13 @@ def model_recommender(model_name=None, classification_score=None):
     )
 
 
-def get_pipeline_task_sequence_by_run_id(run_id):
+def get_pipeline_task_sequence_by_run_id(run_id, session_cookies: dict = None):
     """
     Fetches the pipeline workflow and task sequence for a given run in Kubeflow.
 
     Args:
         run_id (str): The ID of the pipeline run to fetch details for.
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         tuple: A tuple containing:
@@ -1606,25 +1610,32 @@ def get_pipeline_task_sequence_by_run_id(run_id):
     Raises:
         ValueError: If the root node (DAG) is not found in the pipeline.
     """
-    return NotebookPlugin().get_pipeline_task_sequence_by_run_id(run_id=run_id)
+    return NotebookPlugin().get_pipeline_task_sequence_by_run_id(
+        run_id=run_id, session_cookies=session_cookies
+    )
 
 
-def list_all_pipelines():
+def list_all_pipelines(session_cookies: dict = None):
     """
     Lists all pipelines along with their IDs, handling pagination.
+    Args:
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         list: A list of tuples containing (pipeline_name, pipeline_id).
     """
-    return NotebookPlugin().list_all_pipelines()
+    return NotebookPlugin().list_all_pipelines(session_cookies=session_cookies)
 
 
-def get_pipeline_task_sequence_by_pipeline_id(pipeline_id):
+def get_pipeline_task_sequence_by_pipeline_id(
+    pipeline_id, session_cookies: dict = None
+):
     """
     Fetches the task structures of all pipeline runs based on the provided pipeline_id.
 
     Args:
         pipeline_id (str): The ID of the pipeline to fetch task structures for.
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         list: A list of dictionaries containing pipeline workflow names and task structures for each run.
@@ -1638,29 +1649,33 @@ def get_pipeline_task_sequence_by_pipeline_id(pipeline_id):
             >>>print(json.dumps(details["task_structure"], indent=4))
     """
     return NotebookPlugin().get_pipeline_task_sequence_by_pipeline_id(
-        pipeline_id=pipeline_id
+        pipeline_id=pipeline_id, session_cookies=session_cookies
     )
 
 
-def get_latest_run_id_by_pipeline_id(pipeline_id):
+def get_latest_run_id_by_pipeline_id(pipeline_id, session_cookies: dict = None):
     """
     Fetches the run_id of the latest pipeline run by its pipeline_id.
 
     Args:
         pipeline_id (str): The ID of the pipeline to search for.
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         str: The run_id of the latest run if found, otherwise None.
     """
-    NotebookPlugin().get_run_ids_by_pipeline_id(pipeline_id=pipeline_id)
+    return NotebookPlugin().get_run_ids_by_pipeline_id(
+        pipeline_id=pipeline_id, session_cookies=session_cookies
+    )
 
 
-def get_pipeline_task_sequence_by_run_name(run_name):
+def get_pipeline_task_sequence_by_run_name(run_name, session_cookies: dict = None):
     """
     Fetches the task structure of a pipeline run based on its name.
 
     Args:
         run_name (str): The name of the pipeline run to fetch task structure for.
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         tuple: (pipeline_workflow_name, task_structure)
@@ -1671,42 +1686,53 @@ def get_pipeline_task_sequence_by_run_name(run_name):
         >>>print("Task Structure:")
         >>>print(json.dumps(task_structure, indent=4))
     """
-    return NotebookPlugin().get_pipeline_task_sequence_by_run_name(run_name=run_name)
+    return NotebookPlugin().get_pipeline_task_sequence_by_run_name(
+        run_name=run_name, session_cookies=session_cookies
+    )
 
 
-def get_run_id_by_run_name(run_name):
+def get_run_id_by_run_name(run_name, session_cookies: dict = None):
     """
     Fetches the run_id of a pipeline run by its name, traversing all pages if necessary.
 
     Args:
         run_name (str): The name of the pipeline run to search for.
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         str: The run_id if found, otherwise None.
     """
-    return NotebookPlugin().get_run_id_by_run_name(run_name=run_name)
+    return NotebookPlugin().get_run_id_by_run_name(
+        run_name=run_name, session_cookies=session_cookies
+    )
 
 
-def get_run_ids_by_pipeline_name(pipeline_name):
+def get_run_ids_by_pipeline_name(pipeline_name, session_cookies: dict = None):
     """
     Fetches all run_ids for a given pipeline name.
 
     Args:
         pipeline_name (str): The name of the pipeline to search for.
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         list: A list of run_ids for the matching pipeline name.
     """
-    return NotebookPlugin().get_run_ids_by_pipeline_name(pipeline_name=pipeline_name)
+    return NotebookPlugin().get_run_ids_by_pipeline_name(
+        pipeline_name=pipeline_name, session_cookies=session_cookies
+    )
 
 
-def get_pipeline_task_sequence(pipeline_name=None, pipeline_workflow_name=None):
+def get_pipeline_task_sequence(
+    pipeline_name=None, pipeline_workflow_name=None, session_cookies: dict = None
+):
     """
     Fetches the task structures of all pipeline runs based on the provided pipeline name or pipeline workflow name.
 
     Args:
         pipeline_name (str, optional): The name of the pipeline to fetch task structures for.
         pipeline_workflow_name (str, optional): The workflow name of the pipeline to fetch task structures for.
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         list: A list with details of task structures for each run.
@@ -1723,34 +1749,43 @@ def get_pipeline_task_sequence(pipeline_name=None, pipeline_workflow_name=None):
         ValueError: If neither pipeline_name nor pipeline_workflow_name is provided.
     """
     return NotebookPlugin().get_pipeline_task_sequence(
-        pipeline_name=pipeline_name, pipeline_workflow_name=pipeline_workflow_name
+        pipeline_name=pipeline_name,
+        pipeline_workflow_name=pipeline_workflow_name,
+        session_cookies=session_cookies,
     )
 
 
-def get_all_run_ids():
+def get_all_run_ids(session_cookies: dict = None):
     """
     Fetches all run_ids available in the system.
+    Args:
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         list: A list of all run_ids.
     """
-    return NotebookPlugin().get_all_run_ids()
+    return NotebookPlugin().get_all_run_ids(session_cookies=session_cookies)
 
 
-def get_run_ids_by_name(run_name):
+def get_run_ids_by_name(run_name, session_cookies: dict = None):
     """
     Fetches run_ids by run name.
 
     Args:
         run_name (str): The name of the run to search for.
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         list: A list of run_ids matching the run_name.
     """
-    return NotebookPlugin().get_run_ids_by_name(run_name=run_name)
+    return NotebookPlugin().get_run_ids_by_name(
+        run_name=run_name, session_cookies=session_cookies
+    )
 
 
-def get_task_structure_by_task_id(task_id, run_id=None, run_name=None):
+def get_task_structure_by_task_id(
+    task_id, run_id=None, run_name=None, session_cookies: dict = None
+):
     """
     Fetches the task structure of a specific task ID, optionally filtered by run_id or run_name.
 
@@ -1758,6 +1793,7 @@ def get_task_structure_by_task_id(task_id, run_id=None, run_name=None):
         task_id (str): The task ID to look for.
         run_id (str, optional): The specific run ID to filter by. Defaults to None.
         run_name (str, optional): The specific run name to filter by. Defaults to None.
+        session_cookies (dict, optional): Session cookies for authentication if required.
 
     Returns:
         list: A list of dictionaries containing run IDs and their corresponding task info if found.
@@ -1767,7 +1803,10 @@ def get_task_structure_by_task_id(task_id, run_id=None, run_name=None):
         >>>run_name = "Run of test_pipeline (ad001)"
     """
     return NotebookPlugin().get_task_structure_by_task_id(
-        task_id=task_id, run_id=run_id, run_name=run_name
+        task_id=task_id,
+        run_id=run_id,
+        run_name=run_name,
+        session_cookies=session_cookies,
     )
 
 
