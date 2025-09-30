@@ -212,11 +212,9 @@ class NotebookPlugin:
         if pipelines_response.pipelines:
             for pipeline in pipelines_response.pipelines:
                 if pipeline.name == pipeline_name:
-                    pipeline_id = pipeline.id
-                    return pipeline_id
+                    return pipeline.id
 
-        if not pipeline_id:
-            print(f"No pipeline found with the name '{pipeline_name}'")
+        print(f"No pipeline found with the name '{pipeline_name}'")
         return None
 
     @staticmethod
