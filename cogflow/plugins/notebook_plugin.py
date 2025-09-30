@@ -515,7 +515,7 @@ class NotebookPlugin:
         return response
 
     @staticmethod
-    def get_run_id_by_run_name(run_name, session_cookies):
+    def get_run_id_by_run_name(run_name, session_cookies: dict = None):
         """
         Fetches the run_id of a pipeline run by its name, traversing all pages if necessary.
 
