@@ -378,3 +378,86 @@ class DatasetPlugin:
         )
 
         return resp.get("data")
+
+    def download_from_s3(self, file_path: str, file_name: str, output_file_path: str):
+        """
+        Download a file from S3/MinIO storage.
+
+        :param file_path: S3 path (e.g., "s3://bucket-name/path")
+        :param file_name: Name of the file to download
+        :param output_file_path: Local path where file will be saved
+        :return: str: Path to the downloaded file
+        """
+        # Parse S3 URL to extract bucket and object path
+        if file_path.startswith("s3://"):
+            # Remove s3:// prefix and split bucket from path
+            s3_path = file_path[5:]  # Remove 's3://' prefix
+            bucket_name = s3_path.split("/")[0]  # First part is bucket name
+            object_prefix = "/".join(s3_path.split("/")[1:])  # Rest is object prefix
+
+            # Construct full object name
+            if object_prefix:
+                object_name = f"{object_prefix.rstrip('/')}/{file_name}"
+            else:
+                object_name = file_name
+        else:
+            raise Exception(f"Invalid S3 path format: {file_path}")
+
+        # Create MinIO client and download file
+        minio_client = self.create_minio_client()
+
+        try:
+            # Download the file from S3 using MinIO client
+            minio_client.fget_object(bucket_name, object_name, output_file_path)
+            return output_file_path
+        except Exception as e:
+            raise Exception(f"Failed to download file from S3 location: {str(e)}")
+
+    @staticmethod
+    def download_dataset(dataset_id: int, output_file_path: str = None):
+        """
+        Download a dataset by its ID and save it to a specified output file.
+
+        :param dataset_id: The ID of the dataset to download.
+        :param output_file_path: The path where the downloaded dataset will be saved.
+                           If None, saves to current working directory with original filename.
+        :return: str: Path to the downloaded file
+        """
+        # Verify plugin activation
+        PluginManager().verify_activation("dataset_plugin")
+
+        # Get dataset file metadata
+        download_url = f"{os.getenv('API_BASEPATH')}/datasets/{dataset_id}/file"
+        headers = {
+            "kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()
+        }
+
+        # Get dataset file info with S3 location details
+        dataset_response = make_get_request(download_url, headers=headers)
+
+        if not dataset_response or "data" not in dataset_response:
+            raise Exception(f"Failed to get dataset {dataset_id} information.")
+
+        dataset_data = dataset_response["data"]
+
+        # Check if file_name exists in response
+        if "file_name" not in dataset_data or not dataset_data["file_name"]:
+            raise Exception(f"File is not present for dataset {dataset_id}.")
+
+        # Extract S3 path components
+        file_path = dataset_data["file_path"]
+        file_name = dataset_data["file_name"]
+
+        # If output_file_path is not provided, use current working directory with original filename
+        if output_file_path is None:
+            output_file_path = os.path.join(os.getcwd(), file_name)
+        else:
+            # If output_file_path is a directory, join it with the file_name
+            if os.path.isdir(output_file_path):
+                output_file_path = os.path.join(output_file_path, file_name)
+
+        # Create DatasetPlugin instance to call download_from_s3 method
+        dataset_plugin = DatasetPlugin()
+        dataset_plugin.download_from_s3(file_path, file_name, output_file_path)
+
+        return output_file_path
