@@ -222,14 +222,14 @@ class NotebookPlugin:
             session_cookies=session_cookies,
             namespace=namespace,
         ).list_pipelines()
-        pipeline_id = None
+
         if pipelines_response.pipelines:
             for pipeline in pipelines_response.pipelines:
                 if pipeline.name == pipeline_name:
                     return pipeline.id
 
         print(f"No pipeline found with the name '{pipeline_name}'")
-        return pipeline_id
+        return None
 
     @staticmethod
     def list_pipelines_by_name(
@@ -1673,7 +1673,7 @@ class NotebookPlugin:
             return pod_dict
 
         except client.exceptions.ApiException as exp:
-            return exp
+            raise exp
 
     @staticmethod
     def get_deployments(namespace):
