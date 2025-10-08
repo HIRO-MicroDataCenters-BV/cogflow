@@ -671,7 +671,7 @@ def log_metric(
 
 
 def log_model(
-    model_name,
+    model,
     artifact_path,
     registered_model_name=None,
     conda_env=None,
@@ -699,7 +699,7 @@ def log_model(
     Logs a model.
 
     Args:
-        model_name: The model to log.
+        model: The model to log.
         artifact_path (str): The artifact path to log the model to.
         registered_model_name (str, optional): The name to register the model under.
         conda_env (str, optional): The conda environment to use.
@@ -714,15 +714,15 @@ def log_model(
         pyfunc_predict_fn (str, optional): The prediction function to use.
         metadata (dict, optional): Metadata for the model.
     """
-    is_custom_pyfunc_model = isinstance(model_name, pyfunc.PythonModel) or (
-        inspect.isclass(model_name) and issubclass(model_name, pyfunc.PythonModel)
+    is_custom_pyfunc_model = isinstance(model, pyfunc.PythonModel) or (
+        inspect.isclass(model) and issubclass(model, pyfunc.PythonModel)
     )
 
     if is_custom_pyfunc_model:
         # Log using pyfunc flavor
         result = custom_log_model(
             artifact_path=artifact_path,
-            python_model=model_name,
+            python_model=model,
             code_path=code_paths,
             conda_env=conda_env,
             signature=signature,
@@ -734,7 +734,7 @@ def log_model(
     else:
         # Log using MLflowPlugin (e.g., sklearn, XGBoost, etc.)
         result = MlflowPlugin().log_model(
-            sk_model=model_name,
+            sk_model=model,
             artifact_path=artifact_path,
             conda_env=conda_env,
             code_paths=code_paths,
@@ -782,7 +782,7 @@ def log_model(
 
 
 def log_model_with_dataset(
-    sk_model,
+    model,
     artifact_path,
     dataset: DatasetMetadata,
     conda_env=None,
@@ -811,7 +811,7 @@ def log_model_with_dataset(
     Logs a model along with its dataset.
 
     Args:
-        sk_model: The scikit-learn model to log.
+        model: The scikit-learn model to log.
         artifact_path (str): The artifact path to log the model to.
         dataset (DatasetMetadata): The dataset metadata.
         conda_env (str, optional): The conda environment to use.
@@ -828,7 +828,7 @@ def log_model_with_dataset(
         metadata (dict, optional): Metadata for the model.
     """
     return DatasetPlugin().log_model_with_dataset(
-        sk_model=sk_model,
+        sk_model=model,
         artifact_path=artifact_path,
         dataset=dataset,
         conda_env=conda_env,
@@ -966,14 +966,24 @@ def create_component_from_func(
     )
 
 
-def client(session_cookies=None):
+def client(
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
+) -> kfp.Client:
     """
     Gets the Kubeflow client.
 
     Returns:
         KubeflowClient: The Kubeflow client object.
     """
-    return KubeflowPlugin().client(session_cookies=session_cookies)
+    return KubeflowPlugin().client(
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
+    )
 
 
 def serve_model_v2(model_uri: str, isvc_name: str = None):
@@ -1034,10 +1044,20 @@ def load_component(file_path=None, url=None, text=None):
     raise ValueError("Need to specify a source")
 
 
-def delete_pipeline(pipeline_id):
+def delete_pipeline(
+    pipeline_id,
+    api_url=None,
+    skip_tls_verify=True,
+    session_cookies=None,
+    namespace=None,
+):
     """
     method deletes the pipeline
     :param pipeline_id: pipeline id
+    :param api_url: kfp api url
+    :param skip_tls_verify: skip tls verify or not
+    :param session_cookies: session cookies for kfp api
+    :param namespace: user namespace
     :return:
     """
     # list the runs based on pipeline_id
@@ -1046,14 +1066,24 @@ def delete_pipeline(pipeline_id):
 
     # delete the runs from kfp and db based on pipeline_id
     try:
-        KubeflowPlugin().delete_runs(run_ids)
+        KubeflowPlugin().delete_runs(
+            run_ids=run_ids,
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
         NotebookPlugin.delete_run_details_from_db(pipeline_id)
     except ApiException as exp:
         print(f"Failed to delete run for the pipeline id {pipeline_id}: {exp}")
 
     # list the pipeline versions and delete from kfp
     pipeline_version_response = KubeflowPlugin().list_pipeline_versions(
-        pipeline_id=pipeline_id
+        pipeline_id=pipeline_id,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
     )
     if pipeline_version_response.versions:
         pipeline_version_details = pipeline_version_response.versions
@@ -1064,7 +1094,13 @@ def delete_pipeline(pipeline_id):
         # Delete each pipeline version
         for version_id in pipeline_version_ids:
             try:
-                KubeflowPlugin().delete_pipeline_version(version_id=version_id)
+                KubeflowPlugin().delete_pipeline_version(
+                    version_id=version_id,
+                    api_url=api_url,
+                    skip_tls_verify=skip_tls_verify,
+                    session_cookies=session_cookies,
+                    namespace=namespace,
+                )
                 print(f"Deleted pipeline version: {version_id}")
             except ApiException as exp:
                 print(f"Failed to delete pipeline version {version_id}: {exp}")
@@ -1075,7 +1111,13 @@ def delete_pipeline(pipeline_id):
 
     # Delete the pipeline itself
     try:
-        KubeflowPlugin().delete_pipeline(pipeline_id=pipeline_id)
+        KubeflowPlugin().delete_pipeline(
+            pipeline_id=pipeline_id,
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
         print(f"Deleted pipeline: {pipeline_id}")
     except ApiException as exp:
         print(f"Failed to delete pipeline {pipeline_id}: {exp}")
@@ -1152,8 +1194,12 @@ def create_run_from_pipeline_func(
         service_account=service_account,
     )
     # Poll the run status
-    while not KubeflowPlugin().is_run_finished(run_details.run_id):
-        status = KubeflowPlugin().get_run_status(run_details.run_id)
+    while not KubeflowPlugin().is_run_finished(
+        run_details.run_id,
+    ):
+        status = KubeflowPlugin().get_run_status(
+            run_details.run_id,
+        )
         print(f"Run {run_details.run_id} status: {status}")
         time.sleep(plugin_config.TIMER_IN_SEC)
 
@@ -1163,15 +1209,30 @@ def create_run_from_pipeline_func(
     return run_details
 
 
-def get_pipeline_and_experiment_details(run_id):
+def get_pipeline_and_experiment_details(
+    run_id, api_url=None, skip_tls_verify=True, session_cookies=None, namespace=None
+):
     """
         method to return pipeline,run_details,task_details,experiments details based on run_id
     :param run_id: run_id of the run
+    :param api_url: kfp api url
+    :param skip_tls_verify: skip tls verify or not
+    :param session_cookies: session cookies for kfp api
+    :param namespace: user namespace
     :return: dictionary with all the details of pipeline,run_details,task_details,experiments
     """
     try:
         # Get the run details using the run_id
-        run_detail = KubeflowPlugin().client().get_run(run_id)
+        run_detail = (
+            KubeflowPlugin()
+            .client(
+                api_url=api_url,
+                skip_tls_verify=skip_tls_verify,
+                session_cookies=session_cookies,
+                namespace=namespace,
+            )
+            .get_run(run_id=run_id)
+        )
         # Extract run details
         run = run_detail.run
         pipeline_id = run.pipeline_spec.pipeline_id
@@ -1209,7 +1270,14 @@ def get_pipeline_and_experiment_details(run_id):
 
         # Get experiment details using the experiment_id
         experiment = (
-            KubeflowPlugin().client().get_experiment(experiment_id=experiment_id)
+            KubeflowPlugin()
+            .client(
+                api_url=api_url,
+                skip_tls_verify=skip_tls_verify,
+                session_cookies=session_cookies,
+                namespace=namespace,
+            )
+            .get_experiment(experiment_id=experiment_id)
         )
 
         experiment_details = {
@@ -1222,7 +1290,14 @@ def get_pipeline_and_experiment_details(run_id):
         if run.pipeline_spec.pipeline_id:
             # Get pipeline details using the pipeline_id
             pipeline_info = (
-                KubeflowPlugin().client().get_pipeline(pipeline_id=pipeline_id)
+                KubeflowPlugin()
+                .client(
+                    api_url=api_url,
+                    skip_tls_verify=skip_tls_verify,
+                    session_cookies=session_cookies,
+                    namespace=namespace,
+                )
+                .get_pipeline(pipeline_id=pipeline_id)
             )
 
             pipeline_details = {
@@ -1469,7 +1544,7 @@ def get_served_models(
               model_name, model_id, model_version, creation_timestamp,
               served_model_url, status, traffic_percentage.
     """
-    return KubeflowPlugin().get_served_models(namespace, isvc_name)
+    return KubeflowPlugin().get_served_models(namespace=namespace, isvc_name=isvc_name)
 
 
 def delete_served_model(isvc_name: str):
@@ -1551,13 +1626,23 @@ def deploy_model(model_name, model_version, isvc_name):
     )
 
 
-def list_pipelines_by_name(pipeline_name, session_cookies: dict = None):
+def list_pipelines_by_name(
+    pipeline_name,
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
+):
     """
     Lists all versions and runs of the specified pipeline by name.
 
     Args:
         pipeline_name (str): The name of the pipeline to fetch details for.
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         dict: A dictionary containing the pipeline ID, versions,
@@ -1569,7 +1654,11 @@ def list_pipelines_by_name(pipeline_name, session_cookies: dict = None):
     """
 
     return NotebookPlugin().list_pipelines_by_name(
-        pipeline_name=pipeline_name, session_cookies=session_cookies
+        pipeline_name=pipeline_name,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
     )
 
 
@@ -1591,13 +1680,23 @@ def model_recommender(model_name=None, classification_score=None):
     )
 
 
-def get_pipeline_task_sequence_by_run_id(run_id, session_cookies: dict = None):
+def get_pipeline_task_sequence_by_run_id(
+    run_id,
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
+):
     """
     Fetches the pipeline workflow and task sequence for a given run in Kubeflow.
 
     Args:
         run_id (str): The ID of the pipeline run to fetch details for.
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         tuple: A tuple containing:
@@ -1628,31 +1727,57 @@ def get_pipeline_task_sequence_by_run_id(run_id, session_cookies: dict = None):
         ValueError: If the root node (DAG) is not found in the pipeline.
     """
     return NotebookPlugin().get_pipeline_task_sequence_by_run_id(
-        run_id=run_id, session_cookies=session_cookies
+        run_id=run_id,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
     )
 
 
-def list_all_pipelines(session_cookies: dict = None):
+def list_all_pipelines(
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
+):
     """
     Lists all pipelines along with their IDs, handling pagination.
     Args:
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The user namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         list: A list of tuples containing (pipeline_name, pipeline_id).
     """
-    return NotebookPlugin().list_all_pipelines(session_cookies=session_cookies)
+    return NotebookPlugin().list_all_pipelines(
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
+    )
 
 
 def get_pipeline_task_sequence_by_pipeline_id(
-    pipeline_id, session_cookies: dict = None
+    pipeline_id,
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
 ):
     """
     Fetches the task structures of all pipeline runs based on the provided pipeline_id.
 
     Args:
         pipeline_id (str): The ID of the pipeline to fetch task structures for.
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The user namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         list: A list of dictionaries containing pipeline workflow names and task structures for each run.
@@ -1666,33 +1791,61 @@ def get_pipeline_task_sequence_by_pipeline_id(
             >>>print(json.dumps(details["task_structure"], indent=4))
     """
     return NotebookPlugin().get_pipeline_task_sequence_by_pipeline_id(
-        pipeline_id=pipeline_id, session_cookies=session_cookies
+        pipeline_id=pipeline_id,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
     )
 
 
-def get_latest_run_id_by_pipeline_id(pipeline_id, session_cookies: dict = None):
+def get_latest_run_id_by_pipeline_id(
+    pipeline_id,
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
+):
     """
     Fetches the run_id of the latest pipeline run by its pipeline_id.
 
     Args:
         pipeline_id (str): The ID of the pipeline to search for.
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The user namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         str: The run_id of the latest run if found, otherwise None.
     """
     return NotebookPlugin().get_run_ids_by_pipeline_id(
-        pipeline_id=pipeline_id, session_cookies=session_cookies
+        pipeline_id=pipeline_id,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
     )
 
 
-def get_pipeline_task_sequence_by_run_name(run_name, session_cookies: dict = None):
+def get_pipeline_task_sequence_by_run_name(
+    run_name,
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
+):
     """
     Fetches the task structure of a pipeline run based on its name.
 
     Args:
         run_name (str): The name of the pipeline run to fetch task structure for.
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The user namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         tuple: (pipeline_workflow_name, task_structure)
@@ -1704,44 +1857,81 @@ def get_pipeline_task_sequence_by_run_name(run_name, session_cookies: dict = Non
         >>>print(json.dumps(task_structure, indent=4))
     """
     return NotebookPlugin().get_pipeline_task_sequence_by_run_name(
-        run_name=run_name, session_cookies=session_cookies
+        run_name=run_name,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
     )
 
 
-def get_run_id_by_run_name(run_name, session_cookies: dict = None):
+def get_run_id_by_run_name(
+    run_name,
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
+):
     """
     Fetches the run_id of a pipeline run by its name, traversing all pages if necessary.
 
     Args:
         run_name (str): The name of the pipeline run to search for.
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The user namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         str: The run_id if found, otherwise None.
     """
     return NotebookPlugin().get_run_id_by_run_name(
-        run_name=run_name, session_cookies=session_cookies
+        run_name=run_name,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
     )
 
 
-def get_run_ids_by_pipeline_name(pipeline_name, session_cookies: dict = None):
+def get_run_ids_by_pipeline_name(
+    pipeline_name,
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
+):
     """
     Fetches all run_ids for a given pipeline name.
 
     Args:
         pipeline_name (str): The name of the pipeline to search for.
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The user namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         list: A list of run_ids for the matching pipeline name.
     """
     return NotebookPlugin().get_run_ids_by_pipeline_name(
-        pipeline_name=pipeline_name, session_cookies=session_cookies
+        pipeline_name=pipeline_name,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
     )
 
 
 def get_pipeline_task_sequence(
-    pipeline_name=None, pipeline_workflow_name=None, session_cookies: dict = None
+    pipeline_name=None,
+    pipeline_workflow_name=None,
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
 ):
     """
     Fetches the task structures of all pipeline runs based on the provided pipeline name or pipeline workflow name.
@@ -1749,7 +1939,11 @@ def get_pipeline_task_sequence(
     Args:
         pipeline_name (str, optional): The name of the pipeline to fetch task structures for.
         pipeline_workflow_name (str, optional): The workflow name of the pipeline to fetch task structures for.
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The user namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         list: A list with details of task structures for each run.
@@ -1768,40 +1962,77 @@ def get_pipeline_task_sequence(
     return NotebookPlugin().get_pipeline_task_sequence(
         pipeline_name=pipeline_name,
         pipeline_workflow_name=pipeline_workflow_name,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
         session_cookies=session_cookies,
+        namespace=namespace,
     )
 
 
-def get_all_run_ids(session_cookies: dict = None):
+def get_all_run_ids(
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
+):
     """
     Fetches all run_ids available in the system.
     Args:
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The user namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         list: A list of all run_ids.
     """
-    return NotebookPlugin().get_all_run_ids(session_cookies=session_cookies)
+    return NotebookPlugin().get_all_run_ids(
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
+    )
 
 
-def get_run_ids_by_name(run_name, session_cookies: dict = None):
+def get_run_ids_by_name(
+    run_name,
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
+):
     """
     Fetches run_ids by run name.
 
     Args:
         run_name (str): The name of the run to search for.
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The user namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         list: A list of run_ids matching the run_name.
     """
     return NotebookPlugin().get_run_ids_by_name(
-        run_name=run_name, session_cookies=session_cookies
+        run_name=run_name,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
+        session_cookies=session_cookies,
+        namespace=namespace,
     )
 
 
 def get_task_structure_by_task_id(
-    task_id, run_id=None, run_name=None, session_cookies: dict = None
+    task_id,
+    run_id=None,
+    run_name=None,
+    api_url: str = None,
+    skip_tls_verify: bool = True,
+    session_cookies: str = None,
+    namespace: str = None,
 ):
     """
     Fetches the task structure of a specific task ID, optionally filtered by run_id or run_name.
@@ -1810,7 +2041,11 @@ def get_task_structure_by_task_id(
         task_id (str): The task ID to look for.
         run_id (str, optional): The specific run ID to filter by. Defaults to None.
         run_name (str, optional): The specific run name to filter by. Defaults to None.
-        session_cookies (dict, optional): Session cookies for authentication if required.
+        api_url (str, optional): The URL of the Kubeflow Pipelines API endpoint.
+        skip_tls_verify (bool, optional): Whether to skip TLS verification for the API requests.
+            Defaults to True.
+        session_cookies (str, optional): Session cookies for authentication if required.
+        namespace (str, optional): The user namespace to use for the Kubeflow Pipelines API.
 
     Returns:
         list: A list of dictionaries containing run IDs and their corresponding task info if found.
@@ -1823,7 +2058,10 @@ def get_task_structure_by_task_id(
         task_id=task_id,
         run_id=run_id,
         run_name=run_name,
+        api_url=api_url,
+        skip_tls_verify=skip_tls_verify,
         session_cookies=session_cookies,
+        namespace=namespace,
     )
 
 
@@ -2575,7 +2813,7 @@ def get_model_url(
               model_name, model_id, model_version, creation_timestamp,
               served_model_url, status, traffic_percentage.
     """
-    info = KubeflowPlugin().get_served_models(namespace, isvc_name)
+    info = KubeflowPlugin().get_served_models(isvc_name=isvc_name, namespace=namespace)
     if isinstance(info, list):  # sometimes returns [ { ... } ]
         info = info[0]
     return info["served_model_url"]
@@ -2768,6 +3006,21 @@ def delete_artifact(
         raise RuntimeError("Invalid or missing AWS credentials.")
     except Exception as e:
         raise RuntimeError(f"Unexpected error during S3 deletion: {e}") from e
+
+
+def detect_model_type(model_uri: str) -> str:
+    """
+    Detect the model type (flavor) from an model URI.
+
+    Args:
+        model_uri (str): Path/URI to the model.
+
+    Returns:
+        str: "mlflow" if pyfunc flavor is present,
+             "sklearn" if sklearn flavor is present,
+             otherwise "unknown".
+    """
+    return MlflowPlugin().detect_model_type(model_uri=model_uri)
 
 
 __all__ = [

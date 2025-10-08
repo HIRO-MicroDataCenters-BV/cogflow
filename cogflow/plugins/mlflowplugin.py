@@ -827,3 +827,25 @@ class MlflowPlugin:
         """
         run = self.mlflow.get_run(run_id)
         return run.info.experiment_id
+
+    def detect_model_type(self, model_uri: str) -> str:
+        """
+        Detect the model type (flavor) from an MLflow model URI.
+
+        Args:
+            model_uri (str): Path/URI to the MLflow model.
+
+        Returns:
+            str: "mlflow" if pyfunc flavor is present,
+                 "sklearn" if sklearn flavor is present,
+                 otherwise "unknown".
+        """
+        model_info = self.mlflow.models.get_model_info(model_uri)
+        flavors = model_info.flavors.keys()
+
+        if "python_function" in flavors:
+            return "mlflow"
+        elif "sklearn" in flavors:
+            return "sklearn"
+        else:
+            return "unknown"

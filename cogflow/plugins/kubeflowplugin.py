@@ -64,7 +64,7 @@ class CogContainer(kfp.dsl._container_op.Container):
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "MINIO_BUCKET_NAME",
-            "BASE_PATH",
+            "API_BASEPATH",
             "MLFLOW_TRACKING_URI",
             "KF_PIPELINES_SA_TOKEN_PATH",
             "MINIO_ENDPOINT_URL",
@@ -85,7 +85,14 @@ class KubeflowPlugin:
     Class for defining reusable components.
     """
 
-    def __init__(self, image=None, command=None, args=None):
+    def __init__(
+        self,
+        image=None,
+        command=None,
+        args=None,
+        api_url: str = None,
+        skip_tls_verify: bool = True,
+    ):
         """
         Initializes the KubeflowPlugin class.
         """
@@ -99,6 +106,8 @@ class KubeflowPlugin:
         self.config_file_path = os.getenv(plugin_config.COGFLOW_CONFIG_FILE_PATH)
         self.v2 = kfp.v2
         self.section = "kubeflow_plugin"
+        self._api_url = api_url
+        self._skip_tls_verify = skip_tls_verify
 
     @staticmethod
     def pipeline(name=None, description=None):
@@ -160,29 +169,65 @@ class KubeflowPlugin:
         wrapped_component.component_spec = training_var.component_spec
         return wrapped_component
 
-    def _create_kfp_client(self, session_cookies: dict = None) -> kfp.Client:
+    def _create_kfp_client(
+        self, session_cookies: str = None, namespace: str = None
+    ) -> kfp.Client:
         """
-        Create a KFP client, optionally using session cookies.
+        Create a KFP client, optionally using api_url and session cookies.
+        Works inside or outside the cluster.
         """
-        if session_cookies:
-            # Turn dict into "k1=v1; k2=v2" string
-            cookie_header = "; ".join(f"{k}={v}" for k, v in session_cookies.items())
-            return kfp.Client(cookies=cookie_header)
+        # Case 1: Inside cluster / default
+        if not self._api_url and not session_cookies:
+            return kfp.Client()
 
-        return kfp.Client()
+        # Case 2: Outside cluster with cookie string
+        if session_cookies:
+            # Monkey patch for TLS verification (needed in KFP v1.8.22)
+            original_load_config = kfp.Client._load_config
+
+            def patched_load_config(client_self, *args, **kwargs):
+                config = original_load_config(client_self, *args, **kwargs)
+                config.verify_ssl = not self._skip_tls_verify
+                return config
+
+            patched_kfp_client = kfp.Client
+            patched_kfp_client._load_config = patched_load_config
+
+            return patched_kfp_client(
+                host=self._api_url,
+                cookies=session_cookies,  # expecting full "authservice_session=..." string
+                namespace=namespace,
+            )
+
+        # Case 3: api_url but no cookie
+        return kfp.Client(host=self._api_url, namespace=namespace)
 
     @staticmethod
-    def client(session_cookies: dict = None) -> kfp.Client:
+    def client(
+        api_url: str = None,
+        skip_tls_verify: bool = True,
+        session_cookies: str = None,
+        namespace: str = None,
+    ) -> kfp.Client:
         """
-        Get the Kubeflow Pipeline client.
+        Get the Kubeflow Pipelines client.
+
+        Args:
+            api_url (str, optional): KFP API endpoint for external access.
+            skip_tls_verify (bool): Whether to skip TLS verification.
+            session_cookies (str, optional): Dex/IAP session cookie string.
+            namespace (str, optional): Kubernetes namespace to use. If None, uses default.
 
         Returns:
-            kfp.Client: Kubeflow Pipeline client instance.
+            kfp.Client: Configured Kubeflow Pipelines client instance.
         """
         # Verify plugin activation
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        return KubeflowPlugin()._create_kfp_client(session_cookies=session_cookies)
+        kfp_plugin = KubeflowPlugin(api_url=api_url, skip_tls_verify=skip_tls_verify)
+        return kfp_plugin._create_kfp_client(
+            session_cookies=session_cookies, namespace=namespace
+        )
 
     @staticmethod
     def load_component_from_url(url):
@@ -550,7 +595,6 @@ class KubeflowPlugin:
         pipeline_root: Optional[str] = None,
         enable_caching: Optional[bool] = None,
         service_account: Optional[str] = None,
-        session_cookies: dict = None,
     ):
         """
             method to create a run from pipeline function
@@ -562,10 +606,9 @@ class KubeflowPlugin:
         :param pipeline_root:
         :param enable_caching:
         :param service_account:
-        :param session_cookies: session cookies for authentication
         :return:
         """
-        run_details = self.client(session_cookies).create_run_from_pipeline_func(
+        run_details = self.client().create_run_from_pipeline_func(
             pipeline_func,
             arguments,
             run_name,
@@ -577,70 +620,126 @@ class KubeflowPlugin:
         )
         return run_details
 
-    def is_run_finished(self, run_id, session_cookies: dict = None):
+    def is_run_finished(
+        self,
+        run_id,
+    ):
         """
             method to check if the run is finished
         :param run_id: run_id of the run
-        :param session_cookies: session cookies for authentication
         :return: boolean
         """
-        status = self.client(session_cookies).get_run(run_id).run.status
+        status = self.client().get_run(run_id).run.status
         return status in ["Succeeded", "Failed", "Skipped", "Error"]
 
-    def get_run_status(self, run_id, session_cookies: dict = None):
+    def get_run_status(
+        self,
+        run_id,
+    ):
         """
         method return the status of run
         :param run_id: run_id of the run
-        :param session_cookies: session cookies for authentication
         :return: status of the run
         """
-        return self.client(session_cookies).get_run(run_id).run.status
+        return self.client().get_run(run_id).run.status
 
     @staticmethod
-    def delete_pipeline(pipeline_id, session_cookies: dict = None):
+    def delete_pipeline(
+        pipeline_id,
+        api_url: str = None,
+        skip_tls_verify: bool = True,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         method deletes the pipeline
         :param pipeline_id: pipeline id
+        :param api_url: KFP API endpoint for external access
+        :param skip_tls_verify: whether to skip TLS verification
         :param session_cookies: session cookies for authentication
+        :param namespace: user namespace to use. If None, uses default.
         :return:
         """
-        KubeflowPlugin.client(session_cookies).delete_pipeline(pipeline_id=pipeline_id)
+        KubeflowPlugin.client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        ).delete_pipeline(pipeline_id=pipeline_id)
 
     @staticmethod
-    def list_pipeline_versions(pipeline_id, session_cookies: dict = None):
+    def list_pipeline_versions(
+        pipeline_id,
+        api_url: str = None,
+        skip_tls_verify: bool = True,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
          method to list the pipeline based on pipeline_id
         :param pipeline_id: pipeline id
+        :param api_url: KFP API endpoint for external access
+        :param skip_tls_verify: whether to skip TLS verification
         :param session_cookies: session cookies for authentication
+        :param namespace: user namespace to use. If None, uses default.
         :return:
         """
-        response = KubeflowPlugin.client(session_cookies).list_pipeline_versions(
-            pipeline_id=pipeline_id
-        )
+        response = KubeflowPlugin.client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        ).list_pipeline_versions(pipeline_id=pipeline_id)
         return response
 
     @staticmethod
-    def delete_pipeline_version(version_id, session_cookies: dict = None):
+    def delete_pipeline_version(
+        version_id,
+        api_url: str = None,
+        skip_tls_verify: bool = True,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         method to list the pipeline based on version_id
         :param version_id: pipeline id
+        :param api_url: KFP API endpoint for external access
+        :param skip_tls_verify: whether to skip TLS verification
         :param session_cookies: session cookies for authentication
+        :param namespace: user namespace to use. If None, uses default.
         :return:
         """
-        KubeflowPlugin.client(session_cookies).delete_pipeline_version(
-            version_id=version_id
-        )
+        KubeflowPlugin.client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        ).delete_pipeline_version(version_id=version_id)
 
     @staticmethod
-    def delete_runs(run_ids, session_cookies: dict = None):
+    def delete_runs(
+        run_ids,
+        api_url: str = None,
+        skip_tls_verify: bool = True,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         delete the pipeline runs
         :param run_ids: list of runs
+        :param api_url: KFP API endpoint for external access
+        :param skip_tls_verify: whether to skip TLS verification
         :param session_cookies: session cookies for authentication
+        :param namespace: user namespace to use. If None, uses default.
         :return: successful deletion runs or 404 error
         """
         for run in run_ids:
-            KubeflowPlugin.client(session_cookies).runs.delete_run(id=run)
+            KubeflowPlugin.client(
+                api_url=api_url,
+                skip_tls_verify=skip_tls_verify,
+                session_cookies=session_cookies,
+                namespace=namespace,
+            ).runs.delete_run(id=run)
 
     @staticmethod
     def get_default_namespace() -> str:

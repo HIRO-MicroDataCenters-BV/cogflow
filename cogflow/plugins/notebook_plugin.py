@@ -189,13 +189,22 @@ class NotebookPlugin:
         return make_delete_request(url=url, path_params=pipeline_id)
 
     @staticmethod
-    def get_pipeline_id_by_name(pipeline_name, session_cookies: dict = None):
+    def get_pipeline_id_by_name(
+        pipeline_name,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         Retrieves the pipeline ID for a given pipeline name.
 
         Args:
-            session_cookies: dict: Optional session cookies for authentication.
             pipeline_name (str): The name of the pipeline to fetch the ID for.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            namespace (str, optional): The user namespace to filter pipelines.
+            session_cookies (str, optional): Optional session cookies for authentication.
 
         Returns:
             str: The ID of the specified pipeline if found.
@@ -207,8 +216,13 @@ class NotebookPlugin:
             pipeline_id = NotebookPlugin.get_pipeline_id_by_name("Example Pipeline")
         """
         kfp = KubeflowPlugin()
-        pipelines_response = kfp.client(session_cookies).list_pipelines()
-        pipeline_id = None
+        pipelines_response = kfp.client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        ).list_pipelines()
+
         if pipelines_response.pipelines:
             for pipeline in pipelines_response.pipelines:
                 if pipeline.name == pipeline_name:
@@ -218,13 +232,22 @@ class NotebookPlugin:
         return None
 
     @staticmethod
-    def list_pipelines_by_name(pipeline_name, session_cookies: dict = None):
+    def list_pipelines_by_name(
+        pipeline_name,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         Lists all versions and runs of the specified pipeline by name.
 
         Args:
-            session_cookies: dict: Optional session cookies for authentication.
             pipeline_name (str): The name of the pipeline to fetch details for.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             dict: A dictionary containing the pipeline ID, versions,
@@ -238,9 +261,19 @@ class NotebookPlugin:
         kfp = KubeflowPlugin()
 
         pipeline_id = NotebookPlugin.get_pipeline_id_by_name(
-            pipeline_name=pipeline_name, session_cookies=session_cookies
+            pipeline_name=pipeline_name,
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
         )
-        versions_response = kfp.list_pipeline_versions(pipeline_id=pipeline_id)
+        versions_response = kfp.list_pipeline_versions(
+            pipeline_id=pipeline_id,
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
         run_list = NotebookPlugin.list_runs_by_pipeline_id(pipeline_id=pipeline_id)
         result_dict = {
             "pipeline_id": pipeline_id,
@@ -286,9 +319,6 @@ class NotebookPlugin:
             mfp.mlflow.sklearn.log_model(
                 model, "model", registered_model_name=model_name
             )
-            print("Artifact_path", run.info.artifact_uri)
-            print("run_id", run_id)
-            print("model_name", model_name)
             latest_version = self.get_model_latest_version(model_name)
             data = {
                 "artifact_uri": f"{run.info.artifact_uri}/model",
@@ -337,7 +367,7 @@ class NotebookPlugin:
             mfp = MlflowPlugin()
             model_uri = mfp.get_model_uri(model_name=model_name, version=model_version)
             kfp = KubeflowPlugin()
-            kfp.serve_model_v1(model_uri, name=isvc_name)
+            kfp.serve_model_v1(model_uri=model_uri, isvc_name=isvc_name)
             return {
                 "status": True,
                 "msg": f"Model {model_name} deployed with service {isvc_name}",
@@ -394,13 +424,22 @@ class NotebookPlugin:
         return make_get_request(url, query_params=data)
 
     @staticmethod
-    def get_pipeline_task_sequence_by_run_id(run_id, session_cookies: dict = None):
+    def get_pipeline_task_sequence_by_run_id(
+        run_id,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         Fetches the pipeline workflow and task sequence for a given run in Kubeflow.
 
         Args:
             run_id (str): The ID of the pipeline run to fetch details for.
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             tuple: A tuple containing:
@@ -432,7 +471,12 @@ class NotebookPlugin:
         """
 
         # Initialize the Kubeflow client
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
 
         # Get the details of the specified run using the run ID
         run_details = kfp_client.get_run(run_id)
@@ -513,20 +557,34 @@ class NotebookPlugin:
         return response
 
     @staticmethod
-    def get_run_id_by_run_name(run_name, session_cookies: dict = None):
+    def get_run_id_by_run_name(
+        run_name,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         Fetches the run_id of a pipeline run by its name, traversing all pages if necessary.
 
         Args:
             run_name (str): The name of the pipeline run to search for.
-            session_cookies (dict): Session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             str: The run_id if found, otherwise None.
         """
         next_page_token = None
         page_size = 100  # Set page size (adjust if needed)
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
 
         # Traverse through pages to find the matching run name
         while True:
@@ -549,13 +607,22 @@ class NotebookPlugin:
         return None
 
     @staticmethod
-    def get_pipeline_task_sequence_by_run_name(run_name, session_cookies: dict = None):
+    def get_pipeline_task_sequence_by_run_name(
+        run_name,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         Fetches the task structure of a pipeline run based on its name.
 
         Args:
             run_name (str): The name of the pipeline run to fetch task structure for.
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             tuple: (pipeline_workflow_name, task_structure)
@@ -566,11 +633,20 @@ class NotebookPlugin:
             >>>print("Task Structure:")
             >>>print(json.dumps(task_structure, indent=4))
         """
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
 
         # Fetch the run_id using the run_name
         run_id = NotebookPlugin().get_run_id_by_run_name(
-            run_name=run_name, session_cookies=session_cookies
+            run_name=run_name,
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
         )
 
         if not run_id:
@@ -651,20 +727,34 @@ class NotebookPlugin:
         return response
 
     @staticmethod
-    def get_run_ids_by_pipeline_id(pipeline_id, session_cookies: dict = None):
+    def get_run_ids_by_pipeline_id(
+        pipeline_id,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         Fetches all run_ids for a given pipeline ID.
 
         Args:
             pipeline_id (str): The ID of the pipeline to search for.
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             list: A list of run_ids for the matching pipeline ID.
         """
         run_ids = []
         next_page_token = None
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
         while True:
             runs_list = kfp_client.list_runs(page_size=100, page_token=next_page_token)
             for run in runs_list.runs:
@@ -681,14 +771,21 @@ class NotebookPlugin:
 
     @staticmethod
     def get_pipeline_task_sequence_by_pipeline_id(
-        pipeline_id, session_cookies: dict = None
+        pipeline_id,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
     ):
         """
         Fetches the task structures of all pipeline runs based on the provided pipeline_id.
 
         Args:
             pipeline_id (str): The ID of the pipeline to fetch task structures for.
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             list: A list of dictionaries containing pipeline workflow names and task structures for each run.
@@ -701,11 +798,20 @@ class NotebookPlugin:
                 >>>print("Task Structure:")
                 >>>print(json.dumps(details["task_structure"], indent=4))
         """
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
 
         # Fetch all run_ids using the pipeline_id
         run_ids = NotebookPlugin().get_run_ids_by_pipeline_id(
-            pipeline_id=pipeline_id, session_cookies=session_cookies
+            pipeline_id=pipeline_id,
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
         )
 
         if not run_ids:
@@ -793,16 +899,29 @@ class NotebookPlugin:
         return task_structures
 
     @staticmethod
-    def list_all_pipelines(session_cookies: dict = None):
+    def list_all_pipelines(
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         Lists all pipelines along with their IDs, handling pagination.
         Args:
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             list: A list of tuples containing (pipeline_name, pipeline_id).
         """
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
 
         pipelines_info = []
         next_page_token = None
@@ -826,20 +945,34 @@ class NotebookPlugin:
         return pipelines_info
 
     @staticmethod
-    def get_run_ids_by_pipeline_name(pipeline_name, session_cookies: dict = None):
+    def get_run_ids_by_pipeline_name(
+        pipeline_name,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         Fetches all run_ids for a given pipeline name.
 
         Args:
             pipeline_name (str): The name of the pipeline to search for.
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             list: A list of run_ids for the matching pipeline name.
         """
         run_ids = []
         next_page_token = None
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
         while True:
             runs_list = kfp_client.list_runs(page_size=100, page_token=next_page_token)
             for run in runs_list.runs:
@@ -855,18 +988,31 @@ class NotebookPlugin:
         return run_ids
 
     @staticmethod
-    def get_all_run_ids(session_cookies: dict = None):
+    def get_all_run_ids(
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         Fetches all run_ids available in the system.
         Args:
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             list: A list of all run_ids.
         """
         run_ids = []
         next_page_token = None
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
         while True:
             runs_list = kfp_client.list_runs(page_size=100, page_token=next_page_token)
             for run in runs_list.runs:
@@ -879,20 +1025,34 @@ class NotebookPlugin:
         return run_ids
 
     @staticmethod
-    def get_run_ids_by_name(run_name, session_cookies: dict = None):
+    def get_run_ids_by_name(
+        run_name,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         Fetches run_ids by run name.
 
         Args:
             run_name (str): The name of the run to search for.
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             list: A list of run_ids matching the run_name.
         """
         run_ids = []
         next_page_token = None
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
         while True:
             runs_list = kfp_client.list_runs(page_size=100, page_token=next_page_token)
             for run in runs_list.runs:
@@ -907,7 +1067,13 @@ class NotebookPlugin:
 
     @staticmethod
     def get_task_structure_by_task_id(
-        task_id, run_id=None, run_name=None, session_cookies: dict = None
+        task_id,
+        run_id=None,
+        run_name=None,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
     ):
         """
         Fetches the task structure of a specific task ID, optionally filtered by run_id or run_name.
@@ -916,7 +1082,10 @@ class NotebookPlugin:
             task_id (str): The task ID to look for.
             run_id (str, optional): The specific run ID to filter by. Defaults to None.
             run_name (str, optional): The specific run name to filter by. Defaults to None.
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             list: A list of dictionaries containing run IDs and their corresponding task info if found.
@@ -926,15 +1095,29 @@ class NotebookPlugin:
             >>>run_name = "Run of test_pipeline (ad001)"
             >>>get_task_structure_by_task_id(task_id, run_id, run_name)
         """
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
 
         # Fetch all run_ids available in the system
-        run_ids = NotebookPlugin().get_all_run_ids(session_cookies=session_cookies)
+        run_ids = NotebookPlugin().get_all_run_ids(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
 
         # If run_name is provided, filter by run_name
         if run_name:
             run_ids = NotebookPlugin().get_run_ids_by_name(
-                run_name=run_name, session_cookies=session_cookies
+                run_name=run_name,
+                api_url=api_url,
+                skip_tls_verify=skip_tls_verify,
+                session_cookies=session_cookies,
+                namespace=namespace,
             )
 
         # If run_id is provided, make it the only run to check
@@ -1052,7 +1235,9 @@ class NotebookPlugin:
         log_entries = []
         for pod in inference_pods:
             pod_logs = NotebookPlugin().get_pod_logs(
-                namespace, pod.metadata.name, container_name
+                pod_name=pod.metadata.name,
+                namespace=namespace,
+                container_name=container_name,
             )
             log_entry = {
                 "pod_name": pod.metadata.name,
@@ -1129,14 +1314,21 @@ class NotebookPlugin:
 
     @staticmethod
     def get_run_ids_by_pipeline_workflow_name(
-        pipeline_workflow_name, session_cookies: dict = None
+        pipeline_workflow_name,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
     ):
         """
         Fetches all run IDs associated with a given pipeline workflow name.
 
         Args:
             pipeline_workflow_name (str): The workflow name of the pipeline.
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             list: A list of run IDs associated with the provided workflow name.
@@ -1146,7 +1338,12 @@ class NotebookPlugin:
             >>> run_ids = get_run_ids_by_pipeline_workflow_name(workflow_name)
             >>> print(run_ids)
         """
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
 
         # Initialize variables for pagination
         run_ids = []
@@ -1191,7 +1388,12 @@ class NotebookPlugin:
 
     @staticmethod
     def get_pipeline_task_sequence(
-        pipeline_name=None, pipeline_workflow_name=None, session_cookies: dict = None
+        pipeline_name=None,
+        pipeline_workflow_name=None,
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
     ):
         """
         Fetches the task structures of all pipeline runs based on the provided pipeline name or pipeline workflow name.
@@ -1199,7 +1401,10 @@ class NotebookPlugin:
         Args:
             pipeline_name (str, optional): The name of the pipeline to fetch task structures for.
             pipeline_workflow_name (str, optional): The workflow name of the pipeline to fetch task structures for.
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             list: A list with details of task structures for each run.
@@ -1215,17 +1420,29 @@ class NotebookPlugin:
         Raises:
             ValueError: If neither pipeline_name nor pipeline_workflow_name is provided.
         """
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
 
         # Fetch all run_ids based on pipeline_name or pipeline_workflow_name
         if pipeline_name:
             run_ids = NotebookPlugin().get_run_ids_by_pipeline_name(
-                pipeline_name=pipeline_name, session_cookies=session_cookies
+                pipeline_name=pipeline_name,
+                api_url=api_url,
+                skip_tls_verify=skip_tls_verify,
+                session_cookies=session_cookies,
+                namespace=namespace,
             )
         elif pipeline_workflow_name:
             run_ids = NotebookPlugin().get_run_ids_by_pipeline_workflow_name(
                 pipeline_workflow_name=pipeline_workflow_name,
+                api_url=api_url,
+                skip_tls_verify=skip_tls_verify,
                 session_cookies=session_cookies,
+                namespace=namespace,
             )
         else:
             raise ValueError(
@@ -1327,35 +1544,91 @@ class NotebookPlugin:
     @staticmethod
     def get_pod_events(podname, namespace=KubeflowPlugin().get_default_namespace()):
         """
-        Fetches Kubernetes events for a specific pod in a namespace.
+        Fetch Kubernetes events only for the specified pod.
 
         Args:
-            podname (str): The name of the pod for which events are being fetched.
-            namespace (str): The namespace of the pod.
+            podname (str): Target pod name.
+            namespace (str): Kubernetes namespace.
 
         Returns:
-            dict: A dictionary with event details related to the specified pod.
+            dict: {
+                "podname": str,
+                "namespace": str,
+                "count": int,
+                "events": [
+                    {
+                        "type": str,
+                        "reason": str,
+                        "message": str,
+                        "count": int,
+                        "firstTimestamp": str|None,
+                        "lastTimestamp": str|None,
+                        "reportingComponent": str|None,
+                        "reportingInstance": str|None,
+                        "source": str|None,
+                        "involvedKind": str|None,
+                        "involvedName": str|None
+                    }, ...
+                ]
+            } or { "error": str, ... }
         """
         NotebookPlugin().load_k8s_config()
-
-        # Initialize the CoreV1Api client
         v1 = client.CoreV1Api()
-        event = {}
-        try:
-            # Fetch all events in the namespace
-            events = v1.list_namespaced_event(namespace=namespace)
 
-            event["kind"] = events.kind
-            event["apiVersion"] = events.api_version
-            event["metadata_resource_version"] = events.metadata.resource_version
-            event["items"] = events.items
-            return event
-        except client.exceptions.ApiException as e:
+        def to_iso(ts):
+            return ts.isoformat() if ts else None
+
+        try:
+            events_list = v1.list_namespaced_event(namespace=namespace)
+        except ApiException as e:
             return {
-                "error": f"Failed to fetch events: {str(e)}",
                 "podname": podname,
                 "namespace": namespace,
+                "count": 0,
+                "events": [],
+                "error": f"Failed to fetch events: {e}",
             }
+
+        filtered = []
+        for ev in events_list.items or []:
+            involved = getattr(ev, "involved_object", None)
+            if not involved:
+                continue
+
+            # Match exact pod name; adjust to `startswith` if needed for generated pod suffixes
+            if involved.name != podname:
+                continue
+
+            # Build event record
+            first_ts = (
+                getattr(ev, "first_timestamp", None)
+                or getattr(ev, "event_time", None)
+                or getattr(getattr(ev, "metadata", None), "creation_timestamp", None)
+            )
+            last_ts = getattr(ev, "last_timestamp", None)
+
+            filtered.append(
+                {
+                    "type": getattr(ev, "type", None),
+                    "reason": getattr(ev, "reason", None),
+                    "message": getattr(ev, "message", None),
+                    "count": getattr(ev, "count", 1),
+                    "firstTimestamp": to_iso(first_ts),
+                    "lastTimestamp": to_iso(last_ts),
+                    "reportingComponent": getattr(ev, "reporting_component", None),
+                    "reportingInstance": getattr(ev, "reporting_instance", None),
+                    "source": getattr(getattr(ev, "source", None), "component", None),
+                    "involvedKind": getattr(involved, "kind", None),
+                    "involvedName": getattr(involved, "name", None),
+                }
+            )
+
+        return {
+            "podname": podname,
+            "namespace": namespace,
+            "count": len(filtered),
+            "events": filtered,
+        }
 
     @staticmethod
     def convert_datetime(obj):
@@ -1399,12 +1672,8 @@ class NotebookPlugin:
             pod_dict = json.dumps(pod_dict, indent=4)
             return pod_dict
 
-        except client.exceptions.ApiException as e:
-            return {
-                "error": f"Failed to fetch pod definition: {str(e)}",
-                "podname": podname,
-                "namespace": namespace,
-            }
+        except client.exceptions.ApiException as exp:
+            raise exp
 
     @staticmethod
     def get_deployments(namespace):
@@ -1551,14 +1820,22 @@ class NotebookPlugin:
         return parsed_runs
 
     @staticmethod
-    def list_all_kfp_runs(session_cookies: dict = None):
+    def list_all_kfp_runs(
+        api_url: str = None,
+        skip_tls_verify: bool = False,
+        session_cookies: str = None,
+        namespace: str = None,
+    ):
         """
         List all Kubeflow Pipeline (KFP) runs by iterating through all pages of results.
 
         This method retrieves and parses all available KFP runs using the KFP client API,
         handling pagination via `next_page_token`.
         Args:
-            session_cookies (dict, optional): Optional session cookies for authentication.
+            api_url (str, optional): The API URL of the Kubeflow Pipelines instance. Defaults to None.
+            skip_tls_verify (bool, optional): Whether to skip TLS verification. Defaults to False.
+            session_cookies (str, optional): Optional session cookies for authentication.
+            namespace (str, optional): The user namespace to filter pipelines.
 
         Returns:
             list[dict]: A list of parsed runs, where each run is represented as a dictionary
@@ -1572,7 +1849,12 @@ class NotebookPlugin:
         """
         parsed_runs = []
         next_page_token = None
-        kfp_client = KubeflowPlugin().client(session_cookies)
+        kfp_client = KubeflowPlugin().client(
+            api_url=api_url,
+            skip_tls_verify=skip_tls_verify,
+            session_cookies=session_cookies,
+            namespace=namespace,
+        )
         while True:
             runs_response = kfp_client.list_runs(page_token=next_page_token)
             # print(runs_response)# Fetch KFP runs

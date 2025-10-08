@@ -1,25 +1,164 @@
 version: '3.8'
 
+networks:
+  ml-net:
+    driver: bridge
+
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:latest
     container_name: zookeeper
+    restart: unless-stopped
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
     ports:
       - "2181:2181"
+    networks:
+      - ml-net
 
   kafka:
     image: confluentinc/cp-kafka:latest
     container_name: kafka
+    restart: unless-stopped
     depends_on:
       - zookeeper
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     ports:
-      - "9092:9092"
+      - "9092:9092"   # internal
+      - "29092:29092" # host access
+    networks:
+      - ml-net
+
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - ml-net
+
+  mlflow:
+    image: python:3.10-slim
+    container_name: mlflow
+    restart: unless-stopped
+    depends_on:
+      - minio
+    environment:
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      MLFLOW_BACKEND_STORE_URI: sqlite:///mlflow.db
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: s3://mlflow/artifacts
+    command: >
+      bash -c "
+        set -e
+        apt-get update && apt-get install -y gcc build-essential &&
+        pip install --upgrade pip &&
+        pip install mlflow==2.1.1 boto3 psutil gunicorn &&
+        exec gunicorn mlflow.server:app --bind 0.0.0.0:5000 --workers 2 --threads 2 --timeout 120
+      "
+    ports:
+      - '5000:5000'
+    volumes:
+      - mlflow_data:/app
+      - ./dist:/dist:ro
+    working_dir: /app
+    networks:
+      - ml-net
+
+  kubeflow-pipelines:
+    image: gcr.io/ml-pipeline/api-server:2.0.0
+    container_name: kfp-api-server
+    restart: unless-stopped
+    environment:
+      KFP_HOST: http://0.0.0.0:8888
+      KFP_NAMESPACE: kubeflow
+      KFP_SERVICE_ACCOUNT: pipeline-runner
+      COGFLOW_CONFIG_FILE_PATH: /app/config.yaml
+      API_BASEPATH: http://0.0.0.0:8000
+    ports:
+      - "8888:8888"
+    volumes:
+      - kfp_data:/app
+    networks:
+      - ml-net
+
+  kserve:
+    image: python:3.10-slim
+    container_name: kserve
+    restart: unless-stopped
+    environment:
+      KSERVE_DOMAIN: example.com
+      KSERVE_NAMESPACE: kserve-system
+      KSERVE_RUNTIME_VERSION: v1
+      KSERVE_STORAGE_URI: s3://mlflow/models
+      KSERVE_SERVICE_ACCOUNT: kserve-service-account
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      COGFLOW_CONFIG_FILE_PATH: /app/config.yaml
+      API_BASEPATH: http://0.0.0.0:8000
+    command: >
+      bash -c "
+        pip install --upgrade pip &&
+        pip install kserve==0.12.0 flask &&
+        python -m flask run --host=0.0.0.0 --port=8080
+      "
+    ports:
+      - "8080:8080"
+    depends_on:
+      - minio
+      - mlflow
+    volumes:
+      - kserve_data:/app
+    networks:
+      - ml-net
+
+  jupyter:
+    image: python:3.10-slim
+    container_name: jupyter
+    restart: unless-stopped
+    environment:
+      JUPYTER_ENABLE_LAB: "yes"
+      JUPYTER_TOKEN: ""
+      API_BASEPATH: http://0.0.0.0:8000
+    command: >
+      bash -c "
+        pip install --upgrade pip &&
+        pip install jupyter jupyterlab &&
+        pip install mlflow==2.1.1 kfp==1.8.22 boto3 tenacity pandas numpy==1.24.4 kubernetes minio scikit-learn==1.2.0 awscli s3fs setuptools==68.2.2 kserve==0.12.0 shap ray==2.9.3 kafka-python==2.0.2 pyyaml requests &&
+        if ls /dist/*.whl 1> /dev/null 2>&1; then pip install /dist/*.whl; fi &&
+        jupyter lab --ip=0.0.0.0 --port=8888 --no-browser --allow-root --NotebookApp.token='' --NotebookApp.password=''
+      "
+    ports:
+      - "8889:8888"
+    volumes:
+      - jupyter_data:/home/jovyan/work
+      - ./dist:/dist:ro
+      - ./notebooks:/home/jovyan/work/notebooks
+    working_dir: /home/jovyan/work
+    networks:
+      - ml-net
+
+volumes:
+  minio_data:
+  mlflow_data:
+  kfp_data:
+  kserve_data:
+  jupyter_data:
