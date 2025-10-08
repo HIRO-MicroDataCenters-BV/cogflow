@@ -234,7 +234,7 @@ def register_dataset(
     )
 
 
-def get_dataset(dataset_id: int, endpoint: str):
+def get_dataset(dataset_id: int, endpoint: str = "/datasets"):
     """
     Generic method to call dataset API endpoints like /datasets/prometheus/{id}.
 
@@ -243,6 +243,23 @@ def get_dataset(dataset_id: int, endpoint: str):
     :return: API JSON response
     """
     return DatasetPlugin().get_dataset(dataset_id=dataset_id, endpoint=endpoint)
+
+
+def download_dataset(dataset_id: int, output_file_path: str = None):
+    """
+    Downloads a dataset by its ID.
+
+    Args:
+        dataset_id (int): The ID of the dataset to download.
+        output_file_path (str, optional): The path to save the downloaded dataset file.
+            If not provided, a default filename will be used.
+
+    Returns:
+        str: The path to the downloaded dataset file.
+    """
+    return DatasetPlugin().download_dataset(
+        dataset_id=dataset_id, output_file_path=output_file_path
+    )
 
 
 def delete_registered_model(model_name):
