@@ -2,8 +2,10 @@
 This module provides functionality related to components used for training builder.
 """
 
+import datetime
 import os
 import io
+
 import yaml
 import requests
 from ..pluginmanager import PluginManager
@@ -65,17 +67,21 @@ class ComponentPlugin:
             minio_client.make_bucket(bucket_name)
         if not object_name:
             parsed = self.parse_component_yaml(yaml_path)
-            object_name = f"{parsed['name'].replace(' ', '_')}.yaml"
+            timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+            object_name = f"{parsed['name'].replace(' ', '_')}_{timestamp}.yaml"
         with open(yaml_path, "rb") as f:
             content = f.read()
-        minio_client.put_object(
-            bucket_name,
-            object_name,
-            io.BytesIO(content),
-            len(content),
-            content_type="application/x-yaml",
-        )
-        url = minio_client.presigned_get_object(bucket_name, object_name)
+        try:
+            minio_client.put_object(
+                bucket_name,
+                object_name,
+                io.BytesIO(content),
+                len(content),
+                content_type="application/x-yaml",
+            )
+        except Exception as ex:
+            raise RuntimeError(f"Failed to upload {object_name} to MinIO: {ex}") from ex
+        url = f"/{bucket_name}/{object_name}"
         return url, object_name
 
     def register_component(
@@ -121,3 +127,24 @@ class ComponentPlugin:
         response = requests.post(url, json=data, headers=headers, timeout=10)
         response.raise_for_status()
         return response.json()
+
+    @staticmethod
+    def download_yaml_from_minio(bucket_name, object_name, local_path):
+        """
+        Downloads a YAML file from MinIO storage to a local path.
+
+        Args:
+            bucket_name (str): MinIO bucket name.
+            object_name (str): Object name in the bucket.
+            local_path (str): Local file path to save the downloaded file.
+
+        Raises:
+            RuntimeError: If the download fails.
+        """
+        minio_client = DatasetPlugin().create_minio_client()
+        try:
+            minio_client.fget_object(bucket_name, object_name, local_path)
+        except Exception as ex:
+            raise RuntimeError(
+                f"Failed to download {object_name} from MinIO: {ex}"
+            ) from ex
