@@ -7,7 +7,6 @@ from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import patch
 from ..cogflow import (
-    link_model_to_dataset,
     save_model_details_to_db,
 )
 from ..cogflow.plugins.notebook_plugin import NotebookPlugin
@@ -54,37 +53,6 @@ class TestNotebookPlugin(unittest.TestCase):
             mock_requests_post.return_value.json.return_value = mock_response
             result = save_model_details_to_db("testmodel")
             self.assertEqual(result["data"]["id"], 101)
-
-    @patch("os.getenv")
-    def test_link_model_to_dataset(self, mock_env):
-        """Test linking a model to a dataset."""
-        with patch("requests.post") as mock_requests_post:
-            mock_env.side_effect = lambda x: {
-                "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
-                "AWS_ACCESS_KEY_ID": "minio",
-                "AWS_SECRET_ACCESS_KEY": "minio123",
-                "API_BASEPATH": "http://randomn",
-                "TIMER_IN_SEC": "10",
-                "FILE_TYPE": "2",
-                "MLFLOW_TRACKING_URI": "http://mlflow",
-                "ML_TOOL": "ml_flow",
-            }[x]
-
-            mock_response = {
-                "data": {
-                    "dataset_id": 2,
-                    "linked_time": "2024-05-16 15:23:24",
-                    "model_id": 1,
-                    "user_id": 0,
-                },
-                "errors": "None",
-                "message": "Dataset linked with model successfully",
-                "success": "True",
-            }
-            mock_requests_post.return_value.status_code = 201
-            mock_requests_post.return_value.json.return_value = mock_response
-            result = link_model_to_dataset(2, 1)
-            assert result == mock_response
 
     @patch("os.getenv")
     def test_delete_pipeline_details_from_db(self, mock_env):

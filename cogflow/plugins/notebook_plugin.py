@@ -1247,7 +1247,7 @@ class NotebookPlugin:
             log_entries.append(log_entry)
         # Convert log entries list to JSON string
         json_logs = json.dumps(log_entries, indent=4)
-        return {"logs": json_logs}
+        return json_logs
 
     @staticmethod
     def get_pod_logs(
@@ -1743,11 +1743,11 @@ class NotebookPlugin:
                 # Collect all the details into a dictionary
                 inferenceservices_details.append(
                     {
-                        "NAME": name,
-                        "URL": url,
-                        "READY": ready,
-                        "LATESTREADYREVISION": latest_ready_revision,
-                        "AGE": age,
+                        "name": name,
+                        "url": url,
+                        "ready": ready,
+                        "latestreadyrevision": latest_ready_revision,
+                        "age": age,
                     }
                 )
 

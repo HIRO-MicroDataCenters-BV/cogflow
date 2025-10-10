@@ -72,6 +72,11 @@ GRPC_PORT = 5557
 # Docker images
 BASE_IMAGE = "hiroregistry/cogflow:latest"
 FL_COGFLOW_BASE_IMAGE = "hiroregistry/flcogflow:latest"
+TRANSFORMER_BASE_IMAGE = "hiroregistry/k8-transformer:v0.19.15"
+
+# endpoints
+DATASETS = "/datasets"
+
 
 # MESSAGE_BROKER plugin
 MESSAGE_BROKER_DATASETS_URL = "/datasets"

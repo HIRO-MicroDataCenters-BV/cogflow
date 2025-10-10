@@ -3,6 +3,7 @@
 """
 
 import re
+import uuid
 from datetime import datetime
 import requests
 from . import plugin_config
@@ -185,3 +186,43 @@ def make_get_request(
     except requests.exceptions.RequestException as exp:
         print(f"Error making GET request: {exp}")
         raise Exception(f"Error making GET request: {exp}")
+
+
+def uuid_to_canonical(value: str) -> str:
+    """
+    Convert a non-canonical (32-character hex) UUID string into
+    canonical (hyphenated) UUID string format.
+
+    Example:
+        '123e4567e89b12d3a456426614174000' -> '123e4567-e89b-12d3-a456-426614174000'
+
+    Performs full validation and raises ValueError for invalid inputs.
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"UUID must be a string, got {type(value).__name__}")
+
+    try:
+        u = uuid.UUID(value)  # Accepts both hyphenated and non-hyphenated
+        return str(u)  # Always returns canonical (hyphenated) form
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError(f"Invalid UUID value: {value!r}")
+
+
+def uuid_to_hex(value: str) -> str:
+    """
+    Convert a UUID (canonical or hex string) to non-canonical (32-character hex) form.
+
+    Example:
+        '123e4567-e89b-12d3-a456-426614174000' -> '123e4567e89b12d3a456426614174000'
+        '123e4567e89b12d3a456426614174000'     -> '123e4567e89b12d3a456426614174000'
+
+    Performs full validation to ensure the input is a valid UUID.
+    Raises ValueError for invalid formats or types.
+    """
+    try:
+        # Convert to a UUID object (validates input)
+        u = uuid.UUID(value)
+        # Return its hex-only version (no hyphens)
+        return u.hex
+    except (ValueError, AttributeError, TypeError):
+        raise ValueError(f"Invalid UUID value: {value!r}")

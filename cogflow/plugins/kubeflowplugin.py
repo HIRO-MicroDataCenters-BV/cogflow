@@ -522,13 +522,23 @@ class KubeflowPlugin:
             percentage = traffic[0].get("percent", 100)
 
         model_name = annotations.get("model_name") or metadata.get("name")
+        # Calculate the age of the InferenceService (from creationTimestamp)
+        creation_timestamp = metadata.get("creationTimestamp", None)
+        if creation_timestamp:
+            creation_time = datetime.strptime(creation_timestamp, "%Y-%m-%dT%H:%M:%SZ")
+            age = str(datetime.now() - creation_time).split(".", maxsplit=1)[0]
+
+        else:
+            age = "Unknown"
 
         isvc_info = {
             "model_name": model_name,
+            "served_model_url": status_dict.get("address", {}).get("url"),
             "model_id": annotations.get("model_id"),
             "model_version": annotations.get("model_version"),
-            "creation_timestamp": metadata.get("creationTimestamp"),
-            "served_model_url": status_dict.get("address", {}).get("url"),
+            "dataset_id": annotations.get("dataset_id"),
+            "creation_timestamp": creation_timestamp,
+            "age": age,
             "status": status,
             "traffic_percentage": percentage,
         }
@@ -1185,6 +1195,7 @@ class KubeflowPlugin:
         transformer_parameters: Optional[Dict] = None,
         protocol_version: Optional[str] = None,
         namespace: Optional[str] = None,
+        model_format: Optional[str] = None,
     ) -> str:
         """
         Update an existing KServe InferenceService to point at a new model version.
@@ -1203,6 +1214,7 @@ class KubeflowPlugin:
                 Required if transformer_image is provided.
             namespace (str, optional): Kubernetes namespace of the InferenceService.
             protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
+            model_format (str, optional): Model format, e.g., "tensorflow", "pytorch", "sklearn", etc.
 
         Returns:
             str: Success message with model name and version.
@@ -1286,6 +1298,8 @@ class KubeflowPlugin:
             model_patch = {"storageUri": model_uri}
             if protocol_version:
                 model_patch["protocolVersion"] = protocol_version
+            if model_format:
+                model_patch["modelFormat"] = {"name": model_format}
 
             patch_body = {
                 "metadata": {"annotations": annotations_patch},
@@ -1330,6 +1344,7 @@ class KubeflowPlugin:
         transformer_image: str = None,
         transformer_parameters: dict = None,
         protocol_version: str = None,
+        model_format: str = None,
     ):
         """
         Create a KServe InferenceService with optional transformer.
@@ -1347,6 +1362,7 @@ class KubeflowPlugin:
             - "PROMETHEUS_METRICS": Comma-separated metrics
             Required if transformer_image is provided.
             protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
+            model_format (str, optional): Model format, e.g., "tensorflow", "pytorch", "sklearn", etc.
         """
         PluginManager().verify_activation(KubeflowPlugin().section)
 
@@ -1358,7 +1374,7 @@ class KubeflowPlugin:
 
         # Predictor spec
         model_spec_kwargs = {
-            "model_format": V1beta1ModelFormat(name=plugin_config.MODEL_TYPE),
+            "model_format": V1beta1ModelFormat(name=model_format),
             "storage_uri": model_uri,
         }
         if protocol_version:

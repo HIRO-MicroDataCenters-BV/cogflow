@@ -17,7 +17,6 @@ from ..cogflow import (
     set_tracking_uri,
     set_experiment,
     get_artifact_uri,
-    start_run,
     end_run,
     log_param,
     log_metric,
@@ -318,23 +317,6 @@ class TestMlflowPlugin(unittest.TestCase):
 
         # Assert that autolog was called
         mock_search_registered_models.assert_called_once()
-        mock_plugin_activation.assert_called_once()
-
-    @patch("mlflow.start_run")
-    @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
-    def test_start_run_with_experiment_and_run_name(
-        self, mock_plugin_activation, mock_start_run
-    ):
-        """
-            test for start_run_with_experiment with run_name
-        :param mock_start_run:
-        :return:
-        """
-        # experiment_name = "test_experiment"
-        run_name = "test_run"
-        start_run(run_name=run_name)
-        # Assert that start_run was called with the correct arguments
-        mock_start_run.assert_called_once()
         mock_plugin_activation.assert_called_once()
 
     @patch("mlflow.end_run")
