@@ -878,10 +878,10 @@ class MlflowPlugin:
         model_info = self.mlflow.models.get_model_info(model_uri)
         flavors = model_info.flavors.keys()
 
-        if "python_function" in flavors:
-            return "mlflow"
-        elif "sklearn" in flavors:
+        if "sklearn" in flavors:
             return "sklearn"
+        elif "python_function" in flavors:
+            return "mlflow"
         else:
             return "unknown"
 

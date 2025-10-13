@@ -2613,7 +2613,7 @@ def serve_model(
 
         # Resolve model details
         model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
-            model_id=model_id,
+            model_id=uuid_to_hex(model_id),
             artifact_path=artifact_path,
             model_name=model_name,
             model_version=model_version,
@@ -2836,7 +2836,7 @@ def update_served_model(
 
         # Resolve model details (same as serve_model)
         model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
-            model_id=model_id,
+            model_id=uuid_to_hex(model_id),
             artifact_path=artifact_path,
             model_name=model_name,
             model_version=model_version,

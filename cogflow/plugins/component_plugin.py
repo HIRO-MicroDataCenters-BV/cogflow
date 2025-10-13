@@ -85,7 +85,7 @@ class ComponentPlugin:
         return url, object_name
 
     def register_component(
-        self, yaml_path, bucket_name, category, creator, api_key=None
+        self, yaml_path, bucket_name, category, creator=None, api_key=None
     ):
         """
         Registers a component by uploading its YAML definition to MinIO and
@@ -122,7 +122,9 @@ class ComponentPlugin:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         components = PluginManager().load_path("components")
-        url = f"{os.getenv(API_BASEPATH)}{components}?creator={creator}"
+        url = f"{os.getenv(API_BASEPATH)}{components}"
+        if creator:
+            url += f"?creator={creator}"
         response = requests.post(url, json=data, headers=headers, timeout=10)
         response.raise_for_status()
         return response.json()
