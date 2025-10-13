@@ -306,7 +306,7 @@ class KubeflowPlugin:
         if transformer_parameters:
             if not transformer_image:
                 raise ValueError(
-                    " transformer_image must be provided when transformer_parameters is set"
+                    "transformer_image must be provided when transformer_parameters is set"
                 )
 
             prometheus_url = transformer_parameters.get("PROMETHEUS_URL")
@@ -1353,7 +1353,7 @@ class KubeflowPlugin:
                 ) from e
 
             return (
-                f"InferenceService '{isvc_name}' updated successfully to model_name "
+                f"InferenceService '{isvc_name}' updated successfully to model"
                 f"'{model_name}' version '{model_version}'."
             )
 
@@ -1429,7 +1429,7 @@ class KubeflowPlugin:
         if transformer_parameters:
             if not transformer_image:
                 raise ValueError(
-                    " transformer_image must be provided when transformer_parameters is set"
+                    "transformer_image must be provided when transformer_parameters is set"
                 )
 
             prometheus_url = transformer_parameters.get("PROMETHEUS_URL")
