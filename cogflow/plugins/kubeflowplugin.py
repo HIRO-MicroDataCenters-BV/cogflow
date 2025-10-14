@@ -3,6 +3,7 @@ This module provides functionality related to Kubeflow Pipelines.
 """
 
 import inspect
+import json
 import logging
 import os
 import textwrap
@@ -28,7 +29,6 @@ from kubernetes.client import V1ObjectMeta, V1ContainerPort, ApiException
 from kubernetes.client.models import V1EnvVar
 from kubernetes.config import ConfigException
 from kubernetes.stream import stream
-from tenacity import retry, wait_exponential, stop_after_attempt
 
 from .. import plugin_config
 from ..pluginmanager import PluginManager
@@ -426,30 +426,13 @@ class KubeflowPlugin:
 
         kclient = KServeClient()
 
-        try:
-            if isvc_name:
+        def _get_isvc_info(isvc_response):
+            if not isvc_response:
+                return None
+            model_info = KubeflowPlugin._process_isvc(isvc_response)
+            return [model_info] if model_info else None
 
-                @retry(
-                    wait=wait_exponential(multiplier=2, min=1, max=10),
-                    stop=stop_after_attempt(30),
-                    reraise=True,
-                )
-                def assert_isvc_created(kserve_client, isvc_name):
-                    """Wait for the Inference Service to be created successfully."""
-                    is_ready = kserve_client.is_isvc_ready(
-                        isvc_name, namespace=namespace
-                    )
-                    return "Ready" if is_ready else "Not ready"
-
-                assert_isvc_created(kclient, isvc_name)
-                isvc_response = kclient.get(namespace=namespace, name=isvc_name)
-
-                model_info = KubeflowPlugin._process_isvc(isvc_response)
-                return [model_info] if model_info else []
-
-            # Get all isvc from default namespace
-            isvc_response = kclient.get(namespace=namespace)
-
+        def _get_all_isvc_info(isvc_response):
             if isinstance(isvc_response, dict) and "items" in isvc_response:
                 isvc_list = isvc_response["items"]
             elif hasattr(isvc_response, "items"):
@@ -460,32 +443,68 @@ class KubeflowPlugin:
                 )
             else:
                 isvc_list = [isvc_response] if isvc_response else []
-
-            served_models = []
-            for isvc in isvc_list:
-                if not isinstance(isvc, dict):
-                    continue
-
-                isvc_info = KubeflowPlugin._process_isvc(isvc)
-                if isvc_info:
-                    served_models.append(isvc_info)
-
-            # Sort models by creation_timestamp (newest first)
+            served_models = [
+                KubeflowPlugin._process_isvc(isvc)
+                for isvc in isvc_list
+                if isinstance(isvc, dict)
+            ]
+            served_models = [m for m in served_models if m]
             served_models.sort(
                 key=lambda x: x.get("creation_timestamp") or "", reverse=True
             )
-
             return served_models
 
+        def is_404_error(exc: Exception) -> bool:
+            cause = getattr(exc, "__cause__", None) or getattr(exc, "__context__", None)
+            if cause and cause is not exc and is_404_error(cause):
+                return True
+            if isinstance(exc, ApiException):
+                if (
+                    getattr(exc, "code", None) == 404
+                    or getattr(exc, "status", None) == 404
+                ):
+                    return True
+                reason_text = str(getattr(exc, "reason", "")).lower()
+                if "not found" in reason_text or "404" in reason_text:
+                    return True
+                try:
+                    body = getattr(exc, "body", None)
+                    if body:
+                        if '"code":404' in body or '"reason":"NotFound"' in body:
+                            return True
+                        data = json.loads(body)
+                        if data.get("code") == 404:
+                            return True
+                except Exception:
+                    pass
+            if "not found" in str(exc).lower():
+                return True
+            return False
+
+        try:
+            if isvc_name:
+                try:
+                    isvc_response = kclient.get(namespace=namespace, name=isvc_name)
+                except Exception as e:
+                    if is_404_error(e):
+                        return None
+                    raise
+                return _get_isvc_info(isvc_response)
+            isvc_response = kclient.get(namespace=namespace)
+            return _get_all_isvc_info(isvc_response)
         except ApiException as exp:
+            if is_404_error(exp):
+                return None
             print(f"API Exception: {exp}")
-            raise exp
+            raise
         except ConfigException as exp:
             print(f"Config Exception: {exp}")
-            raise exp
+            raise
         except Exception as exp:
+            if is_404_error(exp):
+                return None
             print(f"Unexpected Exception: {exp}")
-            raise exp
+            raise
 
     @staticmethod
     def _process_isvc(isvc: dict) -> dict:
