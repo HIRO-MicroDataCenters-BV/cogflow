@@ -303,10 +303,10 @@ class KubeflowPlugin:
 
         # Transformer (optional)
         transformer = None
-        if transformer_image:
-            if not transformer_parameters:
+        if transformer_parameters:
+            if not transformer_image:
                 raise ValueError(
-                    "transformer_parameters must be provided when transformer_image is set"
+                    "transformer_image must be provided when transformer_parameters is set"
                 )
 
             prometheus_url = transformer_parameters.get("PROMETHEUS_URL")
@@ -488,52 +488,90 @@ class KubeflowPlugin:
             raise exp
 
     @staticmethod
-    def _process_isvc(isvc):
+    def _process_isvc(isvc: dict) -> dict:
         """
         Helper method to process an InferenceService and extract served model information.
 
         Args:
-            isvc (dict):  InferenceService details
+            isvc (dict): InferenceService details
 
         Returns:
             dict: Processed model information
         """
-
         metadata = isvc.get("metadata", {})
-        annotations = metadata.get("annotations", {})
-        status_dict = isvc.get("status", {})
+        annotations = metadata.get("annotations", {}) or {}
+        status_dict = isvc.get("status", {}) or {}
 
+        # --- Basic identifiers ---
+        isvc_name = metadata.get("name") or "Unknown"
+        model_name = annotations.get("model_name") or None
+        model_id = annotations.get("model_id") or None
+        model_version = annotations.get("model_version") or None
+        dataset_id = annotations.get("dataset_id") or None
+
+        # --- Determine overall status ---
+        status = "not_ready"
+        message = None
         conditions = status_dict.get("conditions", [])
-        status = "not_ready"  # default
-
-        for condition in conditions:
-            if condition.get("type") == "Ready":
-                if condition.get("status") == "True":
+        for cond in conditions:
+            if cond.get("type") == "Ready":
+                if cond.get("status") == "True":
                     status = "ready"
                 break
 
-        # Get traffic percentage (default 100 if not found)
+        # --- Served model URL ---
+        served_model_url = (
+            status_dict.get("url")
+            or status_dict.get("address", {}).get("url")
+            or status_dict.get("components", {}).get("predictor", {}).get("url")
+            or status_dict.get("components", {}).get("transformer", {}).get("url")
+        )
+
+        # --- Traffic percentage ---
         components = status_dict.get("components", {})
         predictor = components.get("predictor", {})
-        traffic = predictor.get("traffic", [])
-        percentage = 100  # default
+        transformer = components.get("transformer", {})
 
-        if traffic and len(traffic) > 0:
-            percentage = traffic[0].get("percent", 100)
+        predictor_traffic = predictor.get("traffic", [])
+        transformer_traffic = transformer.get("traffic", [])
 
-        model_name = annotations.get("model_name") or metadata.get("name")
+        traffic_percentage = 100
+        if predictor_traffic:
+            traffic_percentage = predictor_traffic[0].get("percent", 100)
+        elif transformer_traffic:
+            traffic_percentage = transformer_traffic[0].get("percent", 100)
 
-        isvc_info = {
-            "model_name": model_name,
-            "model_id": annotations.get("model_id"),
-            "model_version": annotations.get("model_version"),
-            "creation_timestamp": metadata.get("creationTimestamp"),
-            "served_model_url": status_dict.get("address", {}).get("url"),
+        # --- Latest ready revisions ---
+        predictor_latest_ready = predictor.get("latestReadyRevision")
+        transformer_latest_ready = transformer.get("latestReadyRevision")
+
+        # --- Age calculation ---
+        creation_timestamp = metadata.get("creationTimestamp")
+        if creation_timestamp:
+            try:
+                creation_time = datetime.strptime(
+                    creation_timestamp, "%Y-%m-%dT%H:%M:%SZ"
+                )
+                age = str(datetime.utcnow() - creation_time).split(".", 1)[0]
+            except Exception:
+                age = "Unknown"
+        else:
+            age = "Unknown"
+
+        # --- Compose final dictionary ---
+        return {
+            "isvc_name": isvc_name,
+            "served_model_url": served_model_url,
             "status": status,
-            "traffic_percentage": percentage,
+            "model_id": model_id,
+            "model_name": model_name,
+            "model_version": model_version,
+            "dataset_id": dataset_id,
+            "creation_timestamp": creation_timestamp,
+            "age": age,
+            "traffic_percentage": traffic_percentage,
+            "latest_ready_revision": predictor_latest_ready or transformer_latest_ready,
         }
-
-        return isvc_info
 
     @staticmethod
     def delete_served_model(isvc_name: str):
@@ -1185,6 +1223,7 @@ class KubeflowPlugin:
         transformer_parameters: Optional[Dict] = None,
         protocol_version: Optional[str] = None,
         namespace: Optional[str] = None,
+        model_format: Optional[str] = None,
     ) -> str:
         """
         Update an existing KServe InferenceService to point at a new model version.
@@ -1203,6 +1242,7 @@ class KubeflowPlugin:
                 Required if transformer_image is provided.
             namespace (str, optional): Kubernetes namespace of the InferenceService.
             protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
+            model_format (str, optional): Model format, e.g., "tensorflow", "pytorch", "sklearn", etc.
 
         Returns:
             str: Success message with model name and version.
@@ -1286,6 +1326,8 @@ class KubeflowPlugin:
             model_patch = {"storageUri": model_uri}
             if protocol_version:
                 model_patch["protocolVersion"] = protocol_version
+            if model_format:
+                model_patch["modelFormat"] = {"name": model_format}
 
             patch_body = {
                 "metadata": {"annotations": annotations_patch},
@@ -1311,7 +1353,7 @@ class KubeflowPlugin:
                 ) from e
 
             return (
-                f"InferenceService '{isvc_name}' updated successfully to model "
+                f"InferenceService '{isvc_name}' updated successfully to model"
                 f"'{model_name}' version '{model_version}'."
             )
 
@@ -1330,6 +1372,7 @@ class KubeflowPlugin:
         transformer_image: str = None,
         transformer_parameters: dict = None,
         protocol_version: str = None,
+        model_format: str = None,
     ):
         """
         Create a KServe InferenceService with optional transformer.
@@ -1347,6 +1390,7 @@ class KubeflowPlugin:
             - "PROMETHEUS_METRICS": Comma-separated metrics
             Required if transformer_image is provided.
             protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
+            model_format (str, optional): Model format, e.g., "tensorflow", "pytorch", "sklearn", etc.
         """
         PluginManager().verify_activation(KubeflowPlugin().section)
 
@@ -1358,7 +1402,7 @@ class KubeflowPlugin:
 
         # Predictor spec
         model_spec_kwargs = {
-            "model_format": V1beta1ModelFormat(name=plugin_config.MODEL_TYPE),
+            "model_format": V1beta1ModelFormat(name=model_format),
             "storage_uri": model_uri,
         }
         if protocol_version:
@@ -1382,10 +1426,10 @@ class KubeflowPlugin:
 
         # Transformer (optional)
         transformer = None
-        if transformer_image:
-            if not transformer_parameters:
+        if transformer_parameters:
+            if not transformer_image:
                 raise ValueError(
-                    "transformer_parameters must be provided when transformer_image is set"
+                    "transformer_image must be provided when transformer_parameters is set"
                 )
 
             prometheus_url = transformer_parameters.get("PROMETHEUS_URL")

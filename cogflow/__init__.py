@@ -77,10 +77,7 @@ import inspect
 import json
 import os
 from typing import Callable, Union, Any, List, Optional, Dict, Mapping
-import random
-import string
 import time
-from uuid import UUID
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 import psutil
@@ -115,7 +112,7 @@ from .plugins.kubeflowplugin import CogContainer, KubeflowPlugin
 from .plugins.knative_plugin import KnativePlugin
 from .plugins.mlflowplugin import MlflowPlugin
 from .plugins.notebook_plugin import NotebookPlugin
-from .util import make_post_request, is_valid_s3_uri
+from .util import make_post_request, is_valid_s3_uri, uuid_to_hex, uuid_to_canonical
 
 pyfunc = MlflowPlugin().pyfunc
 mlflow = MlflowPlugin().mlflow
@@ -234,7 +231,7 @@ def register_dataset(
     )
 
 
-def get_dataset(dataset_id: int, endpoint: str = "/datasets"):
+def get_dataset(dataset_id: int, endpoint: str = plugin_config.DATASETS):
     """
     Generic method to call dataset API endpoints like /datasets/prometheus/{id}.
 
@@ -332,7 +329,7 @@ def evaluate(
     time_out = plugin_config.TIME_OUT
     # Construct URLs
     run_id = model_uri.split("/")[4]
-    model_id = str(UUID(run_id))
+    model_id = uuid_to_canonical(run_id)
     url_metrics = (
         os.getenv(plugin_config.API_BASEPATH)
         + f"/models/{model_id}"
@@ -349,6 +346,7 @@ def evaluate(
     final_memory_used_mb = round(final_memory_info.used / (1024**2), 2)  # Convert to MB
 
     # Attempt to make POST requests, continue regardless of success or failure
+    headers = {"kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()}
     try:
         metrics = result.metrics
         metrics.update(
@@ -357,19 +355,21 @@ def evaluate(
                 "memory_utilization": final_memory_used_mb,
             }
         )
-        print("metrics", metrics)
-        response = requests.post(url=url_metrics, json=metrics, timeout=time_out)
-        response.raise_for_status()
+
+        requests.post(url=url_metrics, json=metrics, headers=headers, timeout=time_out)
+
     except Exception as exp:
         print(f"Failed to post metrics: {exp}")
 
     serialized_artifacts = NotebookPlugin().serialize_artifacts(result.artifacts)
     # Now you can use serialized_artifacts in your HTTP request
     try:
-        response = requests.post(
-            url=url_artifacts, json=serialized_artifacts, timeout=time_out
+        requests.post(
+            url=url_artifacts,
+            json=serialized_artifacts,
+            headers=headers,
+            timeout=time_out,
         )
-        response.raise_for_status()
     except Exception as exp:
         print(f"Failed to post artifacts: {exp}")
 
@@ -650,6 +650,29 @@ def log_param(key: str, value: Any):
     return MlflowPlugin().log_param(key=key, value=value)
 
 
+def log_params(params: Dict[str, Any]) -> None:
+    """
+    Log a batch of params for the current run. If no run is active, this method will create a
+    new active run.
+
+    :param params: Dictionary of param_name: String -> value: (String, but will be string-ified if
+                   not)
+    :returns: None
+
+    . test-code-block:: python
+        :caption: Example
+
+        import cogflow
+
+        params = {"learning_rate": 0.01, "n_estimators": 10}
+
+        # Log a batch of parameters
+        with cogflow.start_run():
+            cogflow.log_params(params)
+    """
+    return MlflowPlugin().log_params(params=params)
+
+
 def log_metric(
     key: str,
     value: float,
@@ -668,6 +691,34 @@ def log_metric(
         value=value,
         step=step,
     )
+
+
+def log_metrics(metrics: Dict[str, float], step: Optional[int] = None) -> None:
+    """
+    Log multiple metrics for the current run. If no run is active, this method will create a new
+    active run.
+
+    :param metrics: Dictionary of metric_name: String -> value: Float. Note that some special
+                    values such as +/- Infinity may be replaced by other values depending on
+                    the store. For example, sql based store may replace +/- Infinity with
+                    max / min float values.
+    :param step: A single integer step at which to log the specified
+                 Metrics. If unspecified, each metric is logged at step zero.
+
+    :returns: None
+
+    . test-code-block:: python
+        :caption: Example
+
+        import cogflow
+
+        metrics = {"mse": 2500.00, "rmse": 50.00}
+
+        # Log a batch of metrics
+        with cogflow.start_run():
+            cogflow.log_metrics(metrics)
+    """
+    return MlflowPlugin().log_metrics(metrics=metrics, step=step)
 
 
 def log_model(
@@ -759,14 +810,20 @@ def log_model(
             model_id=model_id,
         )
         model_dict = {
-            "model_id": model_id,
-            "model_name": str(model_details.get("model_name") or "None"),
-            "model_version": str(model_details.get("model_version") or "0"),
+            "model_id": uuid_to_canonical(model_id),
+            "model_name": str(
+                model_details.get("model_name")
+                or active_run.data.tags.get("mlflow.runName")
+            ),
+            "model_version": int(model_details.get("model_version") or 0),
             "register_date": active_run.info.start_time,
             "type": "log_model",
-            "description": active_run.data.tags.get("mlflow.note.content"),
-            "USER_ID": KubeflowPlugin().get_current_user_from_namespace(),
+            "description": str(
+                active_run.data.tags.get("mlflow.note.content") or "log_model"
+            ),
+            "user_id": KubeflowPlugin().get_current_user_from_namespace(),
         }
+
         path = PluginManager().load_path(path_name="log_model")
         url = f"{os.getenv('API_BASEPATH')}{path}"
 
@@ -854,7 +911,7 @@ def link_model_to_dataset(dataset_id, model_id):
         model_id (str): The ID of the model.
     """
     return NotebookPlugin().link_model_to_dataset(
-        dataset_id=dataset_id, model_id=model_id
+        dataset_id=dataset_id, model_id=uuid_to_canonical(model_id)
     )
 
 
@@ -866,7 +923,9 @@ def save_model_uri_to_db(model_id, model_uri):
     :param model_uri: URI of the model to save.
     :return: Response from the database save operation.
     """
-    return NotebookPlugin().save_model_uri_to_db(model_id=model_id, model_uri=model_uri)
+    return NotebookPlugin().save_model_uri_to_db(
+        model_id=uuid_to_canonical(model_id), model_uri=model_uri
+    )
 
 
 def save_model_details_to_db(registered_model_name):
@@ -1438,6 +1497,51 @@ def log_artifact(
         )
 
 
+def log_artifacts(
+    local_dir: str, artifact_path: Optional[str] = None, run_id: Optional[str] = None
+) -> None:
+    """
+    Log all the contents of a local directory as artifacts of the run. If no run is active,
+    this method will create a new active run.
+
+    :param local_dir: Path to the directory of files to write.
+    :param artifact_path: If provided, the directory in ``artifact_uri`` to write to.
+    :param run_id: The ID of the run to log the artifact(s) to.
+    If not provided, logs to the active run or creates a new one.
+    :return: None
+
+    . test-code-block:: python
+        :caption: Example
+
+        import json
+        import os
+        import cogflow
+
+        # Create some files to preserve as artifacts
+        features = "rooms, zipcode, median_price, school_rating, transport"
+        data = {"state": "TX", "Available": 25, "Type": "Detached"}
+
+        # Create a couple of artifact files under the directory "data"
+        os.makedirs("data", exist_ok=True)
+        with open("data/data.json", 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        with open("data/features.txt", 'w') as f:
+            f.write(features)
+
+        # Write all files in "data" to root artifact_uri/states
+        with cogflow.start_run():
+            cogflow.log_artifacts("data", artifact_path="states")
+    """
+    if run_id is not None:
+        return cogclient.log_artifacts(
+            run_id=run_id, local_dir=local_dir, artifact_path=artifact_path
+        )
+    else:
+        return MlflowPlugin().log_artifacts(
+            local_dir=local_dir, artifact_path=artifact_path
+        )
+
+
 original_pyfunc_log_model = pyfunc.log_model
 
 
@@ -1497,29 +1601,6 @@ def custom_log_model(
         metadata=metadata,
         **kwargs,
     )
-
-    try:
-        # If registered_model_name is not provided, generate it
-        if registered_model_name is None:
-            # Check if sk_model is a string
-            if isinstance(python_model, str):
-                registered_model_name = python_model
-            else:
-                # Generate a random string to use as the model name
-                registered_model_name = "".join(
-                    random.choices(string.ascii_letters + string.digits, k=10)
-                )
-        response = NotebookPlugin().save_model_details_to_db(registered_model_name)
-        # print("response", response)
-        model_id = response["data"]["id"]
-        # print("model_id", model_id)
-        if result.model_uri:
-            artifact_uri = get_artifact_uri(artifact_path=result.artifact_path)
-            # Construct the model URI
-            # print("model_uri", artifact_uri)
-            NotebookPlugin().save_model_uri_to_db(model_id, model_uri=artifact_uri)
-    except Exception as exp:
-        print(f"Failed to log model details to DB: {exp}")
 
     return result
 
@@ -2398,16 +2479,27 @@ def fl_client_component(
     return decorator
 
 
-def register_component(
-    yaml_path, bucket_name, category=None, creator=None, api_key=None
-):
+def get_current_user_from_namespace() -> str:
+    """
+    Fetch the current Kubeflow user ID by reading the owner annotation
+    from the user's namespace.
+
+    Returns:
+        str: The user ID of the notebook owner.
+
+    Raises:
+        RuntimeError: If the owner annotation is not found.
+    """
+    return KubeflowPlugin().get_current_user_from_namespace()
+
+
+def register_component(yaml_path, bucket_name, category, api_key=None):
     """
     Registers a component by uploading its YAML definition to MinIO and
     posting its metadata to a registry API.
 
     Args:
         category: category of component.
-        creator: creator of component.
         yaml_path (str): Path to the component YAML file.
         bucket_name (str): MinIO bucket to upload the YAML.
         api_key (str, optional): Bearer token for authorization. Defaults to None.
@@ -2418,6 +2510,7 @@ def register_component(
     Raises:
         requests.HTTPError: If the API returns an error status.
     """
+    creator = get_current_user_from_namespace()
     return ComponentPlugin().register_component(
         yaml_path=yaml_path,
         bucket_name=bucket_name,
@@ -2450,7 +2543,7 @@ def get_full_model_uri_from_run_or_registry(
     """
 
     return MlflowPlugin().get_full_model_uri_from_run_or_registry(
-        model_id=model_id,
+        model_id=uuid_to_hex(model_id),
         artifact_path=artifact_path,
         model_name=model_name,
         model_version=model_version,
@@ -2464,9 +2557,10 @@ def serve_model(
     model_name: str = None,
     model_version: str = None,
     dataset_id: str = None,
-    transformer_image: str = None,
+    transformer_image: str = plugin_config.TRANSFORMER_BASE_IMAGE,
     transformer_parameters: dict = None,
     protocol_version: str = None,
+    model_format: str = None,
 ):
     """
     Resolve a model and create a KServe InferenceService.
@@ -2483,6 +2577,7 @@ def serve_model(
             Required if transformer_parameters is provided.
         transformer_parameters (dict, optional): Parameters for the transformer.
         protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
+        model_format (str, optional): Model format (e.g., "mlflow", "sklearn").
 
     Examples:
         # Serve using run ID (with optional artifact path)
@@ -2502,7 +2597,8 @@ def serve_model(
         ...         "PROMETHEUS_URL": "http://prometheus:9090",
         ...         "PROMETHEUS_METRICS": "metric1,metric2"
         ...     },
-        ...     protocol_version="v2"
+        ...     protocol_version="v2",
+        ...     model_format="mlflow"
         ... )
 
     Raises:
@@ -2517,7 +2613,7 @@ def serve_model(
 
         # Resolve model details
         model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
-            model_id=model_id,
+            model_id=uuid_to_hex(model_id),
             artifact_path=artifact_path,
             model_name=model_name,
             model_version=model_version,
@@ -2548,17 +2644,24 @@ def serve_model(
                     ),
                 }
 
+        # Set model_format if not provided
+        if model_format is None:
+            model_format = MlflowPlugin().detect_model_format(
+                model_details["model_uri"]
+            )
+
         # Serve via KubeflowPlugin
         KubeflowPlugin().serve_model(
             model_uri=model_details["model_uri"],
             isvc_name=isvc_name,
-            model_id=model_details["model_id"],
+            model_id=uuid_to_canonical(model_details["model_id"]),
             model_name=model_details["model_name"],
             model_version=model_details["model_version"],
             dataset_id=dataset_id,
             transformer_image=transformer_image,
             transformer_parameters=transformer_parameters,
             protocol_version=protocol_version,
+            model_format=model_format,
         )
 
     except Exception as e:
@@ -2695,10 +2798,11 @@ def update_served_model(
     model_name: Optional[str] = None,
     model_version: Optional[str] = None,
     dataset_id: Optional[str] = None,
-    transformer_image: Optional[str] = None,
+    transformer_image: Optional[str] = plugin_config.TRANSFORMER_BASE_IMAGE,
     transformer_parameters: Optional[dict] = None,
     protocol_version: Optional[str] = None,
     namespace: Optional[str] = None,
+    model_format: Optional[str] = None,
 ) -> str:
     """
     Update an existing KServe InferenceService to point at a new model version.
@@ -2715,6 +2819,7 @@ def update_served_model(
         transformer_parameters (dict, optional): Parameters for the transformer.
         protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
         namespace (str, optional): Kubernetes namespace of the InferenceService.
+        model_format (str, optional): Model format (e.g., "mlflow", "sklearn").
 
     Returns:
         str: The served model URL on success.
@@ -2731,7 +2836,7 @@ def update_served_model(
 
         # Resolve model details (same as serve_model)
         model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
-            model_id=model_id,
+            model_id=uuid_to_hex(model_id),
             artifact_path=artifact_path,
             model_name=model_name,
             model_version=model_version,
@@ -2762,18 +2867,25 @@ def update_served_model(
                     ),
                 }
 
+        # Set model_format if not provided
+        if model_format is None:
+            model_format = MlflowPlugin().detect_model_format(
+                model_details["model_uri"]
+            )
+
         # Update the InferenceService
         return KubeflowPlugin().update_served_model(
             isvc_name=isvc_name,
             model_name=model_details["model_name"],
             model_version=model_details["model_version"],
             model_uri=model_details["model_uri"],
-            model_id=model_details["model_id"],
+            model_id=uuid_to_canonical(model_details["model_id"]),
             dataset_id=dataset_id,
             transformer_image=transformer_image,
             transformer_parameters=transformer_parameters,
             protocol_version=protocol_version,
             namespace=namespace,
+            model_format=model_format,
         )
 
     except Exception as e:
@@ -2816,7 +2928,7 @@ def get_model_url(
     info = KubeflowPlugin().get_served_models(isvc_name=isvc_name, namespace=namespace)
     if isinstance(info, list):  # sometimes returns [ { ... } ]
         info = info[0]
-    return info["served_model_url"]
+    return info.get("served_model_url", None)
 
 
 def update_artifact(
@@ -3008,19 +3120,141 @@ def delete_artifact(
         raise RuntimeError(f"Unexpected error during S3 deletion: {e}") from e
 
 
-def detect_model_type(model_uri: str) -> str:
+def search_runs(
+    experiment_ids: List[str],
+    filter_string: str = "",
+    max_results: int = None,
+    order_by: Optional[List[str]] = None,
+    page_token: Optional[str] = None,
+):
     """
-    Detect the model type (flavor) from an model URI.
+    Search for Runs that fit the specified criteria.
+
+    :param experiment_ids: List of experiment IDs, or a single int or string id.
+    :param filter_string: Filter query string, defaults to searching all runs.
+    :param max_results: Maximum number of runs desired.
+    :param order_by: List of columns to order by (e.g., "metrics.rmse"). The ``order_by`` column
+                 can contain an optional ``DESC`` or ``ASC`` value. The default is ``ASC``.
+                 The default ordering is to sort by ``start_time DESC``, then ``run_id``.
+    :param page_token: Token specifying the next page of results. It should be obtained from
+        a ``search_runs`` call.
+
+    :return: A :py:class:`PagedList <mlflow.store.entities.PagedList>` of
+        :py:class:`Run <mlflow.entities.Run>` objects that satisfy the search expressions.
+        If the underlying tracking store supports pagination, the token for the next page may
+        be obtained via the ``token`` attribute of the returned object.
+
+    . code-block:: python
+        :caption: Example
+
+        import cogflow
+        from cogflow import cogclient
+
+        def print_run_info(runs):
+            for r in runs:
+                print("run_id: {}".format(r.info.run_id))
+                print("lifecycle_stage: {}".format(r.info.lifecycle_stage))
+                print("metrics: {}".format(r.data.metrics))
+
+                # Exclude cogflow system tags
+
+                tags = {k: v for k, v in r.data.tags.items() if not k.startswith("mlflow.")}
+                print("tags: {}".format(tags))
+
+        # Create an experiment and log two runs with metrics and tags under the experiment
+        experiment_id = cogflow.create_experiment("Social NLP Experiments")
+        with cogflow.start_run(experiment_id=experiment_id) as run:
+            cogflow.log_metric("m", 1.55)
+            cogflow.set_tag("s.release", "1.1.0-RC")
+        with cogflow.start_run(experiment_id=experiment_id):
+            cogflow.log_metric("m", 2.50)
+            cogflow.set_tag("s.release", "1.2.0-GA")
+
+        # Search all runs under experiment id and order them by
+        # descending value of the metric 'm'
+        client = cogclient
+        runs = client.search_runs(experiment_id, order_by=["metrics.m DESC"])
+        print_run_info(runs)
+        print("--")
+
+        # Delete the first run
+        client.delete_run(run_id=run.info.run_id)
+
+        # Search only deleted runs under the experiment id and use a case-insensitive pattern
+        # in the filter_string for the tag.
+        filter_string = "tags.s.release ILIKE '%rc%'"
+        runs = client.search_runs(experiment_id, run_view_type=ViewType.DELETED_ONLY,
+                                    filter_string=filter_string)
+        print_run_info(runs)
+
+    . code-block:: text
+        :caption: Output
+
+        run_id: 0efb2a68833d4ee7860a964fad31cb3f
+        lifecycle_stage: active
+        metrics: {'m': 2.5}
+        tags: {'s.release': '1.2.0-GA'}
+        run_id: 7ab027fd72ee4527a5ec5eafebb923b8
+        lifecycle_stage: active
+        metrics: {'m': 1.55}
+        tags: {'s.release': '1.1.0-RC'}
+        --
+        run_id: 7ab027fd72ee4527a5ec5eafebb923b8
+        lifecycle_stage: deleted
+        metrics: {'m': 1.55}
+        tags: {'s.release': '1.1.0-RC'}
+    """
+
+    return MlflowPlugin().search_runs(
+        experiment_ids=experiment_ids,
+        filter_string=filter_string,
+        max_results=max_results,
+        order_by=order_by,
+        page_token=page_token,
+    )
+
+
+def create_experiment(
+    name: str,
+    artifact_location: str = None,
+    tags: dict = None,
+) -> str:
+    """
+    Create a new experiment.
 
     Args:
-        model_uri (str): Path/URI to the model.
+        name (str): Name of the experiment to create.
+        artifact_location (str, optional): Base location to store artifacts
+            for runs in this experiment. If not provided, the default
+            artifact root from config is used.
+        tags (dict, optional): Dictionary of key-value tags to set on the experiment.
 
     Returns:
-        str: "mlflow" if pyfunc flavor is present,
-             "sklearn" if sklearn flavor is present,
-             otherwise "unknown".
+        str: The experiment ID of the newly created experiment.
+
+    Raises:
+       exceptions: If experiment creation fails.
+
+    Examples:
+        >>> from cogflow import cogclient
+
+        # Create a basic experiment
+        >>> exp_id = cogclient.create_experiment("my_experiment")
+        >>> print(exp_id)
+        '2'
+
+        # Create an experiment with custom artifact location and tags
+        >>> exp_id = cogclient.create_experiment(
+        ...     "experiment_with_tags",
+        ...     artifact_location="s3://mlflow/artifacts",
+        ...     tags={"team": "ml", "env": "staging"}
+        ... )
+        >>> print(exp_id)
+        '3'
     """
-    return MlflowPlugin().detect_model_type(model_uri=model_uri)
+    return MlflowPlugin().create_experiment(
+        name=name, artifact_location=artifact_location, tags=tags
+    )
 
 
 __all__ = [
