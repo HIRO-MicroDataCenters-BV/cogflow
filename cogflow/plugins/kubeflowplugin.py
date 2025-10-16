@@ -1526,7 +1526,7 @@ class KubeflowPlugin:
                 )
         else:
             # First-time rollout → must be partial (1–99)
-            if not 0 < canary_traffic_percent < 100:
+            if not 1 <= canary_traffic_percent <= 99:
                 raise ValueError(
                     f"Invalid canary_traffic_percent={canary_traffic_percent}. "
                     "For initial rollout, must be between 1 and 99."

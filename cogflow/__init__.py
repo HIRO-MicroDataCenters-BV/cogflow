@@ -3321,7 +3321,7 @@ def register_prometheus_dataset(
         description: Dataset description.
         prometheus_url: URL of Prometheus endpoint.
         metric_features: Comma-separated list of metrics to capture.
-        dataset_type: The type of the dataset in (train dataset - 0,inference dataset 1, both- 2).
+        dataset_type: The type of the dataset in (train dataset - 0, inference dataset 1, both- 2).
         feature_list: Additional Prometheus label filters or static metadata.
         connection_parameter: Additional connection or auth params.
         target_namespace: Namespace to query metrics from.
@@ -3338,10 +3338,16 @@ def register_prometheus_dataset(
         RuntimeError: On API or connection failure.
     """
     # Validate required parameters
-    if not all(
-        [dataset_name, description, prometheus_url, metric_features, dataset_type]
-    ):
-        raise ValueError("Missing required parameters.")
+    required_params = [
+        ("dataset_name", dataset_name),
+        ("description", description),
+        ("prometheus_url", prometheus_url),
+        ("metric_features", metric_features),
+        ("dataset_type", dataset_type),
+    ]
+    missing = [name for name, value in required_params if not value]
+    if missing:
+        raise ValueError(f"Missing required parameters: {', '.join(missing)}")
 
     feature_list = feature_list or {}
     connection_parameter = connection_parameter or {}
