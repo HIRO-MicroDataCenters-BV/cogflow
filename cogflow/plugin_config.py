@@ -76,6 +76,7 @@ TRANSFORMER_BASE_IMAGE = "hiroregistry/k8-transformer:latest"
 
 # endpoints
 DATASETS = "/datasets"
+PROMETHEUS_DATASETS = "/datasets/prometheus"
 
 
 # MESSAGE_BROKER plugin

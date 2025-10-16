@@ -509,36 +509,29 @@ class KubeflowPlugin:
     @staticmethod
     def _process_isvc(isvc: dict) -> dict:
         """
-        Helper method to process an InferenceService and extract served model information.
+        Process a KServe InferenceService object and extract detailed
+        model rollout and canary traffic information.
 
         Args:
-            isvc (dict): InferenceService details
+            isvc (dict): Raw InferenceService object from KServe API.
 
         Returns:
-            dict: Processed model information
+            dict: Processed information with rollout awareness.
         """
-        metadata = isvc.get("metadata", {})
+        metadata = isvc.get("metadata", {}) or {}
         annotations = metadata.get("annotations", {}) or {}
         status_dict = isvc.get("status", {}) or {}
+        spec_dict = isvc.get("spec", {}) or {}
 
-        # --- Basic identifiers ---
-        isvc_name = metadata.get("name") or "Unknown"
-        model_name = annotations.get("model_name") or None
-        model_id = annotations.get("model_id") or None
-        model_version = annotations.get("model_version") or None
-        dataset_id = annotations.get("dataset_id") or None
+        # --- Identifiers ---
+        isvc_name = metadata.get("name", "Unknown")
+        model_name = annotations.get("model_name")
+        model_id = annotations.get("model_id")
+        model_version = annotations.get("model_version")
+        dataset_id = annotations.get("dataset_id")
+        creation_timestamp = metadata.get("creationTimestamp")
 
-        # --- Determine overall status ---
-        status = "not_ready"
-        message = None
-        conditions = status_dict.get("conditions", [])
-        for cond in conditions:
-            if cond.get("type") == "Ready":
-                if cond.get("status") == "True":
-                    status = "ready"
-                break
-
-        # --- Served model URL ---
+        # --- Base URLs ---
         served_model_url = (
             status_dict.get("url")
             or status_dict.get("address", {}).get("url")
@@ -546,26 +539,78 @@ class KubeflowPlugin:
             or status_dict.get("components", {}).get("transformer", {}).get("url")
         )
 
-        # --- Traffic percentage ---
+        # --- Status ---
+        status = "not_ready"
+        for cond in status_dict.get("conditions", []):
+            if cond.get("type") == "Ready":
+                if cond.get("status") == "True":
+                    status = "ready"
+                break
+
+        # --- Components (predictor + transformer) ---
         components = status_dict.get("components", {})
         predictor = components.get("predictor", {})
         transformer = components.get("transformer", {})
 
+        # Extract predictor/transformer traffic
         predictor_traffic = predictor.get("traffic", [])
-        transformer_traffic = transformer.get("traffic", [])
 
-        traffic_percentage = 100
-        if predictor_traffic:
-            traffic_percentage = predictor_traffic[0].get("percent", 100)
-        elif transformer_traffic:
-            traffic_percentage = transformer_traffic[0].get("percent", 100)
+        # --- Canary detection ---
+        canary_spec = spec_dict.get("predictor", {}).get("canary")
+        canary_traffic_percent = spec_dict.get("predictor", {}).get(
+            "canaryTrafficPercent"
+        )
+        has_canary = canary_spec is not None or canary_traffic_percent is not None
 
-        # --- Latest ready revisions ---
-        predictor_latest_ready = predictor.get("latestReadyRevision")
-        transformer_latest_ready = transformer.get("latestReadyRevision")
+        # --- Traffic computation ---
+        total_traffic = 0
+        traffic_entries = []
+
+        def _extract_traffic_entries(source_traffic, component_name):
+            entries = []
+            for item in source_traffic or []:
+                entries.append(
+                    {
+                        "revision": item.get("revisionName"),
+                        "percent": item.get("percent", 0),
+                        "tag": item.get("tag"),
+                        "component": component_name,
+                    }
+                )
+            return entries
+
+        traffic_entries.extend(_extract_traffic_entries(predictor_traffic, "predictor"))
+        total_traffic = sum(t["percent"] for t in traffic_entries if t["percent"])
+
+        # --- Determine stable vs canary ---
+        stable_revision = None
+        canary_revision = None
+        stable_traffic = None
+        canary_traffic = None
+
+        if has_canary:
+            for t in traffic_entries:
+                if t["percent"] and t["percent"] < 100:
+                    if not stable_revision:
+                        stable_revision = t["revision"]
+                        stable_traffic = t["percent"]
+                if t["percent"] and t["percent"] < 100 and t["tag"] == "canary":
+                    canary_revision = t["revision"]
+                    canary_traffic = t["percent"]
+
+            # fallback if only predictor used
+            if not canary_revision and len(traffic_entries) == 2:
+                canary_revision = traffic_entries[1]["revision"]
+                canary_traffic = traffic_entries[1]["percent"]
+                stable_revision = traffic_entries[0]["revision"]
+                stable_traffic = traffic_entries[0]["percent"]
+        else:
+            # single model
+            if traffic_entries:
+                stable_revision = traffic_entries[0].get("revision")
+                stable_traffic = traffic_entries[0].get("percent", 100)
 
         # --- Age calculation ---
-        creation_timestamp = metadata.get("creationTimestamp")
         if creation_timestamp:
             try:
                 creation_time = datetime.strptime(
@@ -577,20 +622,28 @@ class KubeflowPlugin:
         else:
             age = "Unknown"
 
-        # --- Compose final dictionary ---
-        return {
+        # --- Compose final object ---
+        model_info = {
             "isvc_name": isvc_name,
             "served_model_url": served_model_url,
             "status": status,
-            "model_id": model_id,
-            "model_name": model_name,
-            "model_version": model_version,
-            "dataset_id": dataset_id,
+            "model_id": model_id or None,
+            "model_name": model_name or None,
+            "model_version": model_version or None,
+            "dataset_id": dataset_id or None,
             "creation_timestamp": creation_timestamp,
             "age": age,
-            "traffic_percentage": traffic_percentage,
-            "latest_ready_revision": predictor_latest_ready or transformer_latest_ready,
+            "latest_ready_revision": predictor.get("latestReadyRevision")
+            or transformer.get("latestReadyRevision"),
+            "traffic_percentage": total_traffic or stable_traffic or 100,
+            "has_canary": bool(has_canary),
+            "stable_revision": stable_revision,
+            "canary_revision": canary_revision,
+            "stable_traffic_percent": stable_traffic,
+            "canary_traffic_percent": canary_traffic,
         }
+
+        return model_info
 
     @staticmethod
     def delete_served_model(isvc_name: str):
@@ -1243,51 +1296,48 @@ class KubeflowPlugin:
         protocol_version: Optional[str] = None,
         namespace: Optional[str] = None,
         model_format: Optional[str] = None,
+        canary_traffic_percent: Optional[int] = None,
+        enable_tag_routing: Optional[bool] = False,
     ) -> str:
         """
-        Update an existing KServe InferenceService to point at a new model version.
+        Update or roll out a model on an existing KServe InferenceService.
+
+        Supports:
+            - Normal update (no canary)
+            - Initial canary rollout (split traffic)
+            - Canary promotion (increase or full switch)
+            - Disable canary
 
         Args:
             isvc_name (str): Name of the KServe InferenceService to update.
             model_id (str, optional): Unique identifier for the model/run.
-            model_name (str, optional): Registered model name (alternative to model_id).
+            model_name (str, optional): Registered model name.
             model_version (str, optional): Registered model version.
-            model_uri (str): URI of the model.
-            dataset_id (str, optional): Dataset linked to the model.
-            transformer_image (str, optional): Image of the transformer.
-            transformer_parameters (dict, optional): Dict containing:
-                - "PROMETHEUS_URL": URL for Prometheus
-                - "PROMETHEUS_METRICS": Comma-separated metrics
-                Required if transformer_image is provided.
-            namespace (str, optional): Kubernetes namespace of the InferenceService.
-            protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
-            model_format (str, optional): Model format, e.g., "tensorflow", "pytorch", "sklearn", etc.
+            model_uri (str, optional): Model URI in artifact store.
+            dataset_id (str, optional): Linked dataset ID.
+            transformer_image (str, optional): Transformer image.
+            transformer_parameters (dict, optional): Transformer parameters.
+            protocol_version (str, optional): Protocol version (e.g., v1, v2).
+            namespace (str, optional): Namespace of ISVC.
+            model_format (str, optional): Model format (mlflow, sklearn, etc.)
+            canary_traffic_percent (int, optional): % of traffic routed to canary.
+            enable_tag_routing (bool, optional): Tag routing flag.
 
         Returns:
-            str: Success message with model name and version.
-
-        Raises:
-            ValueError: If neither model_id nor (model_name + model_version) is provided.
-            RuntimeError: If the InferenceService does not exist.
-            PermissionError: If RBAC/namespace access is forbidden.
-            Exception: For any errors during model resolution or patching.
+            str: Success message.
         """
         try:
             if not isvc_name:
                 raise ValueError("isvc_name is required")
 
-            if not model_id and not (model_name and model_version):
-                raise ValueError(
-                    "Must provide either model_id or (model_name and model_version)."
-                )
-
+            # Default namespace
             if not namespace:
                 namespace = KubeflowPlugin.get_default_namespace()
 
             KubeflowPlugin().load_k8s_config()
             co_api = client.CustomObjectsApi()
 
-            # Ensure the ISVC exists
+            # Retrieve ISVC object
             try:
                 isvc_obj = KServeClient().get(namespace=namespace, name=isvc_name)
                 KubeflowPlugin._process_isvc(isvc_obj)
@@ -1299,36 +1349,84 @@ class KubeflowPlugin:
                     )
                 if "(403)" in msg or "Forbidden" in msg:
                     raise PermissionError(
-                        f"Forbidden to get InferenceService '{isvc_name}' in namespace '{namespace}'. "
-                        "Check your RBAC/ServiceAccount and namespace."
+                        f"Forbidden to access InferenceService '{isvc_name}' in namespace '{namespace}'."
                     ) from e
                 raise
 
-            # Discover API group/version
-            try:
-                api_version = isvc_obj.get("apiVersion") or isvc_obj.get(
-                    "metadata", {}
-                ).get("apiVersion")
-                group, version = KubeflowPlugin()._parse_group_version(api_version)
-            except Exception as e:
-                print(f"Warning: Failed to parse apiVersion from InferenceService: {e}")
-                group, version = "serving.kserve.io", "v1beta1"
-
+            # Parse group/version
+            api_version = isvc_obj.get("apiVersion") or isvc_obj.get(
+                "metadata", {}
+            ).get("apiVersion", "serving.kserve.io/v1beta1")
+            group, version = KubeflowPlugin()._parse_group_version(api_version)
             plural = constants.KSERVE_PLURAL
 
+            # ------------------------------------------------------------------
+            # Detect existing canary & identify flow type
+            # ------------------------------------------------------------------
+            existing_canary = (
+                isvc_obj.get("spec", {})
+                .get("predictor", {})
+                .get("canaryTrafficPercent")
+                is not None
+            )
+
+            is_promotion = canary_traffic_percent is not None and existing_canary
+
+            # ------------------------------------------------------------------
+            # Promotion-only flow → patch ONLY traffic percent
+            # ------------------------------------------------------------------
+            if is_promotion:
+                KubeflowPlugin().validate_canary_traffic_percent(
+                    isvc_name, canary_traffic_percent
+                )
+
+                patch_body = {
+                    "spec": {
+                        "predictor": {"canaryTrafficPercent": canary_traffic_percent}
+                    }
+                }
+
+                co_api.patch_namespaced_custom_object(
+                    group=group,
+                    version=version,
+                    namespace=namespace,
+                    plural=plural,
+                    name=isvc_name,
+                    body=patch_body,
+                )
+
+                return f"InferenceService '{isvc_name}' canary traffic updated to {canary_traffic_percent}%."
+
+            # ------------------------------------------------------------------
+            # Initial rollout or normal update flow
+            # ------------------------------------------------------------------
+            if not model_id and not (model_name and model_version):
+                raise ValueError(
+                    "Initial rollout/update requires either model_id or (model_name + model_version)."
+                )
+
+            # Validate canary range if provided
+            if canary_traffic_percent is not None:
+                KubeflowPlugin().validate_canary_traffic_percent(
+                    isvc_name, canary_traffic_percent
+                )
+
+            # --- Annotations patch ---
             annotations_patch = {
                 "model_id": model_id,
                 "model_name": model_name,
                 "model_version": model_version,
-                "dataset_id": str(dataset_id) if dataset_id is not None else None,
+                "dataset_id": str(dataset_id) if dataset_id else None,
+                "enable_tag_routing": str(enable_tag_routing).lower(),
             }
 
+            # --- Transformer patch ---
             transformer_patch = {}
-            if transformer_image or transformer_parameters:
-                env_list = []
-                if transformer_parameters:
-                    for k, v in transformer_parameters.items():
-                        env_list.append({"name": k, "value": str(v)})
+            if transformer_parameters:
+                env_list = [
+                    {"name": k, "value": str(v)}
+                    for k, v in transformer_parameters.items()
+                ]
                 transformer_patch = {
                     "transformer": {
                         "containers": [
@@ -1341,44 +1439,101 @@ class KubeflowPlugin:
                     }
                 }
 
-            # Predictor model patch
-            model_patch = {"storageUri": model_uri}
+            # --- Model patch ---
+            model_patch = {}
+            if model_uri:
+                model_patch["storageUri"] = model_uri
             if protocol_version:
                 model_patch["protocolVersion"] = protocol_version
             if model_format:
                 model_patch["modelFormat"] = {"name": model_format}
 
+            predictor_patch = {"model": model_patch}
+
+            # --- Canary rollout logic ---
+            if canary_traffic_percent is not None:
+                predictor_patch.update(
+                    {
+                        "canary": {"model": model_patch},
+                        "canaryTrafficPercent": canary_traffic_percent,
+                    }
+                )
+
+            # --- Final patch body ---
             patch_body = {
                 "metadata": {"annotations": annotations_patch},
                 "spec": {
-                    "predictor": {"model": model_patch},
+                    "predictor": predictor_patch,
                     **transformer_patch,
                 },
             }
 
             # Apply patch
-            try:
-                co_api.patch_namespaced_custom_object(
-                    group=group,
-                    version=version,
-                    namespace=namespace,
-                    plural=plural,
-                    name=isvc_name,
-                    body=patch_body,
-                )
-            except ApiException as e:
-                raise RuntimeError(
-                    f"Failed to patch InferenceService '{isvc_name}': {e.reason}"
-                ) from e
-
-            return (
-                f"InferenceService '{isvc_name}' updated successfully to model"
-                f"'{model_name}' version '{model_version}'."
+            co_api.patch_namespaced_custom_object(
+                group=group,
+                version=version,
+                namespace=namespace,
+                plural=plural,
+                name=isvc_name,
+                body=patch_body,
             )
 
-        except Exception as e:
-            print(f"[ERROR] Failed to update served model: {e}")
-            raise
+            msg = f"InferenceService '{isvc_name}' updated successfully "
+            return msg
+
+        except Exception as exp:
+            raise exp
+
+    @staticmethod
+    def validate_canary_traffic_percent(
+        isvc_name: str, canary_traffic_percent: int
+    ) -> bool:
+        """
+        Validate the provided canary_traffic_percent value based on whether a canary
+        spec already exists in the given InferenceService object.
+
+        Rules:
+          - If no canary exists yet → canary_traffic_percent must be between 1 and 99.
+          - If canary already exists → canary_traffic_percent must be between 0 and 100.
+
+        Args:
+            isvc_name (str): Name of the KServe InferenceService.
+            canary_traffic_percent (int, optional): Desired canary traffic percentage.
+
+        Returns:
+            bool: True if valid, otherwise raises ValueError.
+
+        Raises:
+            ValueError: If canary_traffic_percent violates the above rules.
+        """
+
+        isvc_obj = KServeClient().get(
+            namespace=KubeflowPlugin().get_default_namespace(), name=isvc_name
+        )
+        # Check if canary already exists in the current ISVC
+        canary_spec_exists = (
+            isvc_obj.get("spec", {}).get("predictor", {}).get("canaryTrafficPercent")
+            is not None
+        )
+
+        # Validation rules
+        if canary_spec_exists:
+            # Existing canary → allow 0–100 range (promotion, disable, update)
+            if not 0 <= canary_traffic_percent <= 100:
+                raise ValueError(
+                    f"Invalid canary_traffic_percent={canary_traffic_percent}. "
+                    "While promotion/disable/update, must be between 0 and 100."
+                )
+        else:
+            # First-time rollout → must be partial (1–99)
+            if not 1 <= canary_traffic_percent <= 99:
+                raise ValueError(
+                    f"Invalid canary_traffic_percent={canary_traffic_percent}. "
+                    "For initial rollout, must be between 1 and 99."
+                )
+
+        # If all checks pass
+        return True
 
     @staticmethod
     def serve_model(
