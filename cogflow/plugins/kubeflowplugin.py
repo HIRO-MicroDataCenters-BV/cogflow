@@ -646,12 +646,13 @@ class KubeflowPlugin:
         return model_info
 
     @staticmethod
-    def delete_served_model(isvc_name: str):
+    def delete_served_model(isvc_name: str, namespace: str = None):
         """
         Delete a deployed model by its ISVC name.
 
         Args:
             isvc_name (str): Name of the deployed model.
+            namespace (str, optional): Namespace where the model is deployed.
 
         Returns:
             None
@@ -660,7 +661,9 @@ class KubeflowPlugin:
         PluginManager().verify_activation(KubeflowPlugin().section)
 
         try:
-            KServeClient().delete(isvc_name)
+            if namespace is None:
+                utils.get_default_target_namespace()
+            KServeClient().delete(isvc_name, namespace)
             print("Inference Service has been deleted successfully.")
         except Exception as exp:
             raise Exception(f"Failed to delete Inference Service: {exp}")
@@ -1547,6 +1550,7 @@ class KubeflowPlugin:
         transformer_parameters: dict = None,
         protocol_version: str = None,
         model_format: str = None,
+        namespace: str = None,
     ):
         """
         Create a KServe InferenceService with optional transformer.
@@ -1565,10 +1569,12 @@ class KubeflowPlugin:
             Required if transformer_image is provided.
             protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
             model_format (str, optional): Model format, e.g., "tensorflow", "pytorch", "sklearn", etc.
+            namespace (str, optional): Namespace to deploy the InferenceService.
         """
         PluginManager().verify_activation(KubeflowPlugin().section)
 
-        namespace = utils.get_default_target_namespace()
+        if namespace is None:
+            namespace = utils.get_default_target_namespace()
         if isvc_name is None:
             now = datetime.now()
             date = now.strftime("%d%M")

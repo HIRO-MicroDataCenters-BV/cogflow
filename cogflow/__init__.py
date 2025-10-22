@@ -2582,6 +2582,7 @@ def serve_model(
     transformer_parameters: dict = None,
     protocol_version: str = None,
     model_format: str = None,
+    namespace: str = None,
 ):
     """
     Resolve a model and create a KServe InferenceService.
@@ -2599,6 +2600,7 @@ def serve_model(
         transformer_parameters (dict, optional): Parameters for the transformer.
         protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
         model_format (str, optional): Model format (e.g., "mlflow", "sklearn").
+        namespace (str, optional): Kubernetes namespace to deploy the InferenceService.
 
     Examples:
         # Serve using run ID (with optional artifact path)
@@ -2683,6 +2685,7 @@ def serve_model(
             transformer_parameters=transformer_parameters,
             protocol_version=protocol_version,
             model_format=model_format,
+            namespace=namespace,
         )
 
     except Exception as e:
