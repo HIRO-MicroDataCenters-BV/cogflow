@@ -213,6 +213,8 @@ class DatasetPlugin:
         :param file_path: Path to the dataset file
         :return: API response in JSON
         """
+        PluginManager().load_config()
+
         url = f"{os.getenv('API_BASEPATH')}/datasets/file"
 
         # Form fields for multipart/form-data
@@ -425,6 +427,8 @@ class DatasetPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation("dataset_plugin")
+
+        PluginManager().load_config()
 
         # Get dataset file metadata
         download_url = f"{os.getenv('API_BASEPATH')}/datasets/{dataset_id}/file"
