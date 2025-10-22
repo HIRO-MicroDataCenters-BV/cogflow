@@ -89,6 +89,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
+        PluginManager().load_config()
 
         return self.cogclient.delete_registered_model(model_name)
 
@@ -196,6 +197,7 @@ class MlflowPlugin:
             dict: Evaluation results including various metrics and artifacts.
         """
         PluginManager().verify_activation(MlflowPlugin().section)
+        PluginManager().load_config()
         return self.mlflow.evaluate(
             model=model,
             data=data,
@@ -701,6 +703,7 @@ class MlflowPlugin:
         Raises:
             ValueError / Exception: If inputs are invalid or model path cannot be resolved.
         """
+        PluginManager().load_config()
         client = self.cogclient
 
         # 1. If model_name & model_version provided → get run_id from registry
@@ -882,6 +885,28 @@ class MlflowPlugin:
             return "sklearn"
         elif "python_function" in flavors:
             return "mlflow"
+        else:
+            return "unknown"
+
+    def detect_model_type(self, model_uri: str) -> str:
+        """
+        Detect the model type (flavor) from an MLflow model URI.
+
+        Args:
+            model_uri (str): Path/URI to the MLflow model.
+
+        Returns:
+            str: "pyfunc" if pyfunc flavor is present,
+                 "sklearn" if sklearn flavor is present,
+                 otherwise "unknown".
+        """
+        model_info = self.mlflow.models.get_model_info(model_uri)
+        flavors = model_info.flavors.keys()
+
+        if "sklearn" in flavors:
+            return "sklearn"
+        elif "python_function" in flavors:
+            return "pyfunc"
         else:
             return "unknown"
 

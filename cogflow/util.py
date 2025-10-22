@@ -140,7 +140,6 @@ def make_get_request(
         full_url = (
             f"{url.rstrip('/')}/{str(path_params).lstrip('/')}" if path_params else url
         )
-        # print(f"GET request to: {full_url} with query_params: {query_params}")
 
         if not paginate:
             response = requests.get(

@@ -404,6 +404,7 @@ def search_registered_models(
         matches the search criteria. Each dictionary contains details about the registered model,
         such as its name, creation timestamp, last updated timestamp, tags, and description.
     """
+    PluginManager().load_config()
     return MlflowPlugin().search_registered_models(
         filter_string=filter_string,
         max_results=max_results,
@@ -423,6 +424,7 @@ def load_model(model_uri: str, dst_path=None):
     Returns:
         Any: The loaded model object.
     """
+    PluginManager().load_config()
     return MlflowPlugin().load_model(model_uri=model_uri, dst_path=dst_path)
 
 
@@ -451,6 +453,7 @@ def register_model(
     Returns:
         ModelVersion: An instance of `ModelVersion` representing the registered model version.
     """
+    PluginManager().load_config()
     return MlflowPlugin().register_model(
         model=model_name,
         model_uri=model_uri,
@@ -463,6 +466,7 @@ def autolog():
     """
     Enables automatic logging of parameters, metrics, and models.
     """
+    PluginManager().load_config()
     return MlflowPlugin().autolog()
 
 
@@ -487,6 +491,7 @@ def create_registered_model(
     Returns:
         RegisteredModel: An instance of `RegisteredModel` representing the created registered model.
     """
+    PluginManager().load_config()
     return MlflowPlugin().create_registered_model(
         model=model, tags=tags, description=description
     )
@@ -530,6 +535,7 @@ def create_model_version(
     Returns:
         ModelVersion: An instance of `ModelVersion` representing the created model version.
     """
+    PluginManager().load_config()
     return MlflowPlugin().create_model_version(
         model=model,
         source=source,
@@ -548,6 +554,7 @@ def set_tracking_uri(tracking_uri):
     Args:
         tracking_uri (str): The tracking URI to set.
     """
+
     return MlflowPlugin().set_tracking_uri(tracking_uri=tracking_uri)
 
 
@@ -571,6 +578,7 @@ def set_experiment(
     Returns:
         None
     """
+    PluginManager().load_config()
     return MlflowPlugin().set_experiment(
         experiment_name=experiment_name, experiment_id=experiment_id
     )
@@ -619,6 +627,7 @@ def start_run(
     Returns:
         The Run object corresponding to the started or resumed run.
     """
+    PluginManager().load_config()
     return MlflowPlugin().start_run(
         run_id=run_id,
         experiment_id=experiment_id,
@@ -636,6 +645,7 @@ def end_run():
     Returns:
         str: The ID of the ended run.
     """
+    PluginManager().load_config()
     return MlflowPlugin().end_run()
 
 
@@ -647,6 +657,7 @@ def log_param(key: str, value: Any):
         key (str): The key of the parameter.
         value (Any): The value of the parameter.
     """
+    PluginManager().load_config()
     return MlflowPlugin().log_param(key=key, value=value)
 
 
@@ -670,6 +681,7 @@ def log_params(params: Dict[str, Any]) -> None:
         with cogflow.start_run():
             cogflow.log_params(params)
     """
+    PluginManager().load_config()
     return MlflowPlugin().log_params(params=params)
 
 
@@ -765,6 +777,7 @@ def log_model(
         pyfunc_predict_fn (str, optional): The prediction function to use.
         metadata (dict, optional): Metadata for the model.
     """
+    PluginManager().load_config()
     is_custom_pyfunc_model = isinstance(model, pyfunc.PythonModel) or (
         inspect.isclass(model) and issubclass(model, pyfunc.PythonModel)
     )
@@ -809,6 +822,7 @@ def log_model(
         model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
             model_id=model_id,
         )
+        model_type = MlflowPlugin().detect_model_type(model_details["model_uri"])
         model_dict = {
             "model_id": uuid_to_canonical(model_id),
             "model_name": str(
@@ -817,7 +831,7 @@ def log_model(
             ),
             "model_version": int(model_details.get("model_version") or 0),
             "register_date": active_run.info.start_time,
-            "type": "log_model",
+            "type": model_type,
             "description": str(
                 active_run.data.tags.get("mlflow.note.content") or "log_model"
             ),
@@ -884,6 +898,7 @@ def log_model_with_dataset(
         pyfunc_predict_fn (str, optional): The prediction function to use.
         metadata (dict, optional): Metadata for the model.
     """
+    PluginManager().load_config()
     return DatasetPlugin().log_model_with_dataset(
         sk_model=model,
         artifact_path=artifact_path,
@@ -910,6 +925,7 @@ def link_model_to_dataset(dataset_id, model_id):
         dataset_id (str): The ID of the dataset.
         model_id (str): The ID of the model.
     """
+    PluginManager().load_config()
     return NotebookPlugin().link_model_to_dataset(
         dataset_id=dataset_id, model_id=uuid_to_canonical(model_id)
     )
@@ -923,6 +939,7 @@ def save_model_uri_to_db(model_id, model_uri):
     :param model_uri: URI of the model to save.
     :return: Response from the database save operation.
     """
+    PluginManager().load_config()
     return NotebookPlugin().save_model_uri_to_db(
         model_id=uuid_to_canonical(model_id), model_uri=model_uri
     )
@@ -953,6 +970,7 @@ def get_model_latest_version(registered_model_name):
     Returns:
         str: The latest version of the registered model.
     """
+    PluginManager().load_config()
     return NotebookPlugin().get_model_latest_version(
         registered_model_name=registered_model_name
     )
@@ -977,6 +995,7 @@ def search_model_versions(
         the filter criteria. Each dictionary contains information about the model version,
         including its name, version number, creation time, run ID, and other metadata.
     """
+    PluginManager().load_config()
     return MlflowPlugin().search_model_versions(filter_string=filter_string)
 
 
@@ -1486,6 +1505,7 @@ def log_artifact(
         ...     log_artifact(local_path="plots/chart.png", artifact_path="images")
         # → stores as s3://mlflow/0/<active_run_id>/artifacts/images/chart.png
     """
+    PluginManager().load_config()
 
     if run_id is not None:
         return cogclient.log_artifact(
@@ -1532,6 +1552,7 @@ def log_artifacts(
         with cogflow.start_run():
             cogflow.log_artifacts("data", artifact_path="states")
     """
+    PluginManager().load_config()
     if run_id is not None:
         return cogclient.log_artifacts(
             run_id=run_id, local_dir=local_dir, artifact_path=artifact_path
@@ -2736,6 +2757,7 @@ def register_model_api(
         pyfunc_predict_fn (str, optional): The prediction function to use.
         metadata (dict, optional): Metadata for the model.
     """
+    PluginManager().load_config()
     is_custom_pyfunc_model = isinstance(model_name, pyfunc.PythonModel) or (
         inspect.isclass(model_name) and issubclass(model_name, pyfunc.PythonModel)
     )
@@ -3247,6 +3269,7 @@ def search_runs(
         metrics: {'m': 1.55}
         tags: {'s.release': '1.1.0-RC'}
     """
+    PluginManager().load_config()
 
     return MlflowPlugin().search_runs(
         experiment_ids=experiment_ids,
@@ -3295,6 +3318,7 @@ def create_experiment(
         >>> print(exp_id)
         '3'
     """
+    PluginManager().load_config()
     return MlflowPlugin().create_experiment(
         name=name, artifact_location=artifact_location, tags=tags
     )
@@ -3337,6 +3361,7 @@ def register_prometheus_dataset(
         ValueError: If required parameters are missing.
         RuntimeError: On API or connection failure.
     """
+    PluginManager().load_config()
     # Validate required parameters
     required_params = [
         ("dataset_name", dataset_name),
