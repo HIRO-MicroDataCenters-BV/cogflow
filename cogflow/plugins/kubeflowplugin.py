@@ -662,7 +662,7 @@ class KubeflowPlugin:
 
         try:
             if namespace is None:
-                utils.get_default_target_namespace()
+                namespace = utils.get_default_target_namespace()
             KServeClient().delete(isvc_name, namespace)
             print("Inference Service has been deleted successfully.")
         except Exception as exp:
