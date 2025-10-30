@@ -30,7 +30,7 @@ with open("LICENSE.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="cogflow",
-    version="1.11.12",
+    version="1.11.15",
     author="Sai_kireeti",
     author_email="sai.kireeti@hiro-microdatacenters.nl",
     description="COG modules",
@@ -38,7 +38,7 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     install_requires=[
-        "mlflow==2.1.1",
+        "mlflow==2.22.0",
         "kfp==1.8.22",
         "boto3",
         "tenacity",

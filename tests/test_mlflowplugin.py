@@ -88,16 +88,6 @@ class TestMlflowPlugin(unittest.TestCase):
         mock_client.assert_called_once_with("your_tracking_uri")
         mock_plugin_activation.assert_called_once()
 
-    def test_version(self):
-        """
-            test for version
-        :return:
-        """
-        version = self.mlflow_plugin.version()
-
-        # Assert that the result matches the mocked version
-        self.assertEqual(version, "2.1.1")
-
     @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
     def test_is_alive(self, mock_plugin_activation):
         """

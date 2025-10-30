@@ -78,6 +78,8 @@ import json
 import os
 from typing import Callable, Union, Any, List, Optional, Dict, Mapping
 import time
+from uuid import UUID
+
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 import psutil
@@ -112,7 +114,13 @@ from .plugins.kubeflowplugin import CogContainer, KubeflowPlugin
 from .plugins.knative_plugin import KnativePlugin
 from .plugins.mlflowplugin import MlflowPlugin
 from .plugins.notebook_plugin import NotebookPlugin
-from .util import make_post_request, is_valid_s3_uri, uuid_to_hex, uuid_to_canonical
+from .util import (
+    make_post_request,
+    is_valid_s3_uri,
+    uuid_to_hex,
+    uuid_to_canonical,
+    make_get_request,
+)
 
 pyfunc = MlflowPlugin().pyfunc
 mlflow = MlflowPlugin().mlflow
@@ -778,11 +786,19 @@ def log_model(
         metadata (dict, optional): Metadata for the model.
     """
     PluginManager().load_config()
-    is_custom_pyfunc_model = isinstance(model, pyfunc.PythonModel) or (
+    # --- Safe detection logic (no torch / sklearn import required) ---
+    cls_hierarchy = [cls.__name__.lower() for cls in type(model).mro()]
+
+    is_pyfunc = isinstance(model, pyfunc.PythonModel) or (
         inspect.isclass(model) and issubclass(model, pyfunc.PythonModel)
     )
+    is_pytorch = "module" in cls_hierarchy  # torch.nn.Module base class
+    is_sklearn = (
+        "baseestimator" in cls_hierarchy
+    )  # sklearn.base.BaseEstimator base class
+    # ---------------------------------------------------------------
 
-    if is_custom_pyfunc_model:
+    if is_pyfunc:
         # Log using pyfunc flavor
         result = custom_log_model(
             artifact_path=artifact_path,
@@ -795,7 +811,21 @@ def log_model(
             extra_pip_requirements=extra_pip_requirements,
             metadata=metadata,
         )
-    else:
+    elif is_pytorch:
+        # Log using PyTorchPlugin
+        result = pytorch.log_model(
+            pytorch_model=model,
+            artifact_path=artifact_path,
+            registered_model_name=registered_model_name,
+            conda_env=conda_env,
+            code_paths=code_paths,
+            signature=signature,
+            input_example=input_example,
+            pip_requirements=pip_requirements,
+            extra_pip_requirements=extra_pip_requirements,
+            metadata=metadata,
+        )
+    elif is_sklearn:
         # Log using MLflowPlugin (e.g., sklearn, XGBoost, etc.)
         result = MlflowPlugin().log_model(
             sk_model=model,
@@ -812,6 +842,8 @@ def log_model(
             pyfunc_predict_fn=pyfunc_predict_fn,
             metadata=metadata,
         )
+    else:
+        raise ValueError("Unsupported model type for logging")
 
     try:
         active_run = mlflow.active_run()
@@ -823,6 +855,7 @@ def log_model(
             model_id=model_id,
         )
         model_type = MlflowPlugin().detect_model_type(model_details["model_uri"])
+
         model_dict = {
             "model_id": uuid_to_canonical(model_id),
             "model_name": str(
@@ -1216,7 +1249,7 @@ def cogcomponent(
         output_component_file (str, optional): Path to save the component YAML file.
         Defaults to None.
         base_image (str, optional): Base Docker image for the component. Defaults to
-        "hiroregistry/cogflow:dev".
+        "hiroregistry/cogflow:latest".
         packages_to_install (List[str], optional): List of additional Python packages
         to install in the component.
         Defaults to None.
@@ -1649,17 +1682,20 @@ def get_served_models(
     return KubeflowPlugin().get_served_models(namespace=namespace, isvc_name=isvc_name)
 
 
-def delete_served_model(isvc_name: str):
+def delete_served_model(isvc_name: str, namespace: str = None):
     """
     Deletes a served model.
 
     Args:
         isvc_name (str): The name of the model to delete.
+        namespace (str, optional): The namespace where the model is served.
 
     Returns:
         str: Information message confirming the deletion of the served model.
     """
-    return KubeflowPlugin().delete_served_model(isvc_name=isvc_name)
+    return KubeflowPlugin().delete_served_model(
+        isvc_name=isvc_name, namespace=namespace
+    )
 
 
 def serve_model_v2_url(model_uri: str, name: str = None):
@@ -2412,11 +2448,11 @@ def create_fl_pipeline(
     )
 
 
-def create_fl_recipe(
+def create_fl_pipeline_dataspace(
     fl_client: Callable,
     fl_server: Callable,
-    connectors: list,
-    node_enforce: bool = True,
+    data_products: list,
+    node_enforce: bool = False,
 ):
     """
     Returns a KFP pipeline function that wires up:
@@ -2429,13 +2465,17 @@ def create_fl_recipe(
     fl_server must accept at minimum:
     - number_of_iterations: int
 
+    data_products (list): List of data product dictionaries, each containing:
+            - region (str)
+            - access_url (str)
+
     Any other parameters that fl_client/ fl_server declare will automatically
     become pipeline inputs and be forwarded along.
     """
-    return KubeflowPlugin().create_fl_pipeline(
+    return KubeflowPlugin().create_fl_pipeline_dataspace(
         fl_client=fl_client,
         fl_server=fl_server,
-        connectors=connectors,
+        data_products=data_products,
         node_enforce=node_enforce,
     )
 
@@ -3414,6 +3454,78 @@ def register_prometheus_dataset(
         raise RuntimeError(f"HTTP error: {http_err}")
     except Exception as exp:
         raise RuntimeError(f"Error while registering Prometheus dataset: {exp}")
+
+
+def load_component_from_id(component_id: UUID):
+    """
+    Fetches component metadata by ID via internal API, loads its YAML from MinIO,
+    and returns a Pipeline component.
+
+    Args:
+        component_id (uuid): Unique ID of the component in the system.
+
+    Returns:
+        kfp.components.Component: The loaded KFP component.
+
+    Raises:
+        RuntimeError: If metadata fetch or MinIO load fails.
+    """
+    PluginManager().load_config()
+    # --- Step 1: Fetch metadata from internal API ---
+    try:
+        resp = make_get_request(
+            f"{os.getenv('API_BASEPATH')}/training-builder-components/{component_id}",
+            timeout=10,
+        )
+
+        # handle both Response and dict
+        if hasattr(resp, "json"):
+            data = resp.json()
+        elif isinstance(resp, dict):
+            data = resp
+        else:
+            raise ValueError(f"Unexpected response type: {type(resp)}")
+
+        metadata = (
+            data.get("data") if isinstance(data, dict) and "data" in data else data
+        )
+
+    except Exception as ex:
+        raise RuntimeError(
+            f"Failed to fetch component metadata for ID {component_id}: {ex}"
+        ) from ex
+
+    # --- Step 2: Validate component_file path ---
+    component_file = metadata.get("component_file")
+    if not component_file or not component_file.startswith("/"):
+        raise ValueError(f"Invalid component_file in metadata: {component_file}")
+
+    # --- Step 3: Parse bucket/object from MinIO path ---
+    parts = component_file.strip("/").split("/", 1)
+    if len(parts) != 2:
+        raise ValueError(f"Invalid MinIO path format: {component_file}")
+
+    bucket_name, object_name = parts
+
+    # --- Step 4: Fetch YAML from MinIO ---
+    minio_client = create_minio_client()
+    try:
+        response = minio_client.get_object(bucket_name, object_name)
+        yaml_content = response.read().decode("utf-8")
+        response.close()
+        response.release_conn()
+    except Exception as ex:
+        raise RuntimeError(
+            f"Failed to load {object_name} from MinIO bucket {bucket_name}: {ex}"
+        ) from ex
+
+    # --- Step 5: Load into Kubeflow component ---
+    try:
+        return load_component(text=yaml_content)
+    except Exception as ex:
+        raise RuntimeError(
+            f"Failed to parse KFP component YAML for {object_name}: {ex}"
+        ) from ex
 
 
 __all__ = [
