@@ -76,6 +76,7 @@ register_dataset: Register a dataset.
 import inspect
 import json
 import os
+from datetime import datetime
 from typing import Callable, Union, Any, List, Optional, Dict, Mapping
 import time
 from uuid import UUID
@@ -863,7 +864,9 @@ def log_model(
                 or active_run.data.tags.get("mlflow.runName")
             ),
             "model_version": int(model_details.get("model_version") or 0),
-            "register_date": active_run.info.start_time,
+            "register_date": datetime.fromtimestamp(
+                active_run.info.start_time / 1000
+            ).isoformat(),
             "type": model_type,
             "description": str(
                 active_run.data.tags.get("mlflow.note.content") or "log_model"
