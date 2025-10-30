@@ -1,0 +1,255 @@
+"""
+cogflow.utils.common
+--------------------
+
+A collection of general-purpose utility functions used across CogFlow modules.
+
+This includes:
+    - Serialization helpers
+    - UUID format converters
+    - URI validators
+    - Namespace and ownership retrieval for Kubeflow environments
+
+These utilities are intentionally lightweight and free of heavy dependencies
+to remain import-safe across all submodules.
+"""
+
+import re
+import uuid
+from datetime import datetime
+from typing import Any, Dict
+
+from kubernetes import client, config
+
+from .logging import get_logger
+
+logger = get_logger(__name__)
+
+
+# -------------------------------------------------------------------------
+# 🔹 Serialization Utilities
+# -------------------------------------------------------------------------
+def custom_serializer(obj: Any) -> str:
+    """
+    Serialize unsupported objects (like datetime) into a JSON-safe format.
+
+    Args:
+        obj (Any): Object to serialize.
+
+    Returns:
+        str: Serialized string representation.
+
+    Raises:
+        TypeError: If the object type is unsupported.
+
+    Example:
+        >>> json.dumps({"time": datetime.utcnow()}, default=custom_serializer)
+    """
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
+def serialize_artifacts(artifacts: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert artifacts into a JSON-serializable format for API transmission.
+
+    Args:
+        artifacts (dict): Mapping of artifact names to artifact objects.
+
+    Returns:
+        dict: Dictionary of artifact URIs or string representations.
+
+    Example:
+        >>> serialize_artifacts({"roc_curve": Artifact(uri="s3://...")})
+        {'validation_artifacts': {'roc_curve': 's3://...'}}
+    """
+    serialized_artifacts = {}
+    for key, artifact in artifacts.items():
+        if hasattr(artifact, "uri"):
+            serialized_artifacts[key] = artifact.uri
+        else:
+            serialized_artifacts[key] = str(artifact)
+    return {"validation_artifacts": serialized_artifacts}
+
+
+# -------------------------------------------------------------------------
+# 🔹 Validation Utilities
+# -------------------------------------------------------------------------
+def is_valid_s3_uri(uri: str) -> bool:
+    """
+    Validate if a string is a proper S3 URI (e.g., s3://bucket/key).
+
+    Args:
+        uri (str): The URI string to validate.
+
+    Returns:
+        bool: True if valid S3 URI, False otherwise.
+
+    Example:
+        >>> is_valid_s3_uri("s3://my-bucket/model.pkl")
+        True
+    """
+    s3_uri_regex = re.compile(r"^s3://([a-z0-9.-]+)/(.*)$")
+    match = s3_uri_regex.match(uri)
+    valid = bool(match and match.group(1) and match.group(2))
+    logger.debug("Validating S3 URI '%s': %s", uri, valid)
+    return valid
+
+
+# -------------------------------------------------------------------------
+# 🔹 UUID Utilities
+# -------------------------------------------------------------------------
+def uuid_to_canonical(value: str) -> str:
+    """
+    Convert a UUID to canonical (hyphenated) format.
+
+    Args:
+        value (str): UUID string or hex.
+
+    Returns:
+        str: Canonical (hyphenated) UUID string.
+
+    Raises:
+        ValueError: If the input is invalid.
+
+    Example:
+        >>> uuid_to_canonical("7a1f6cf81d7e4d40b9a91c94ce6c3c0a")
+        '7a1f6cf8-1d7e-4d40-b9a9-1c94ce6c3c0a'
+    """
+    try:
+        canonical = str(uuid.UUID(value))
+        logger.debug("Converted UUID to canonical: %s", canonical)
+        return canonical
+    except (ValueError, AttributeError, TypeError):
+        logger.error("Invalid UUID value: %s", value)
+        raise ValueError(f"Invalid UUID value: {value!r}")
+
+
+def uuid_to_hex(value: str) -> str:
+    """
+    Convert a UUID to non-hyphenated (hex) format.
+
+    Args:
+        value (str): Canonical UUID string.
+
+    Returns:
+        str: Hex (non-hyphenated) UUID string.
+
+    Raises:
+        ValueError: If the input is invalid.
+
+    Example:
+        >>> uuid_to_hex("7a1f6cf8-1d7e-4d40-b9a9-1c94ce6c3c0a")
+        '7a1f6cf81d7e4d40b9a91c94ce6c3c0a'
+    """
+    try:
+        hex_value = uuid.UUID(value).hex
+        logger.debug("Converted UUID to hex: %s", hex_value)
+        return hex_value
+    except (ValueError, AttributeError, TypeError):
+        logger.error("Invalid UUID value: %s", value)
+        raise ValueError(f"Invalid UUID value: {value!r}")
+
+
+# -------------------------------------------------------------------------
+# 🔹 Kubernetes / Kubeflow Utilities
+# -------------------------------------------------------------------------
+def get_namespace() -> str:
+    """
+    Retrieve the default Kubernetes namespace based on the active configuration.
+
+    This function first loads Kubernetes configuration using `load_k8s_config()`.
+    Then, it attempts to read the namespace from:
+        1. The in-cluster service account file (if running in a Pod)
+        2. The current kubeconfig context (if running locally)
+        3. Defaults to "default" as a fallback
+
+    Returns:
+        str: The default namespace.
+
+    Example:
+        >>> get_namespace()
+        'admin'
+    """
+    try:
+        # 1️⃣ Ensure Kubernetes configuration is loaded
+        load_k8s_config()
+
+        # 2️⃣ Try reading the in-cluster namespace file
+        try:
+            with open(
+                "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+                "r",
+                encoding="utf-8",
+            ) as f:
+                namespace = f.read().strip()
+                logger.debug("Resolved in-cluster namespace: %s", namespace)
+                return namespace
+        except FileNotFoundError:
+            pass  # Not running inside a pod
+
+        # 3️⃣ Fallback: use the namespace from kubeconfig
+        _, current_context = config.list_kube_config_contexts()
+        namespace = current_context["context"].get("namespace", "default")
+        logger.debug("Resolved kubeconfig namespace: %s", namespace)
+        return namespace
+
+    except Exception as e:
+        logger.warning("Could not determine namespace, defaulting to 'default': %s", e)
+        return "default"
+
+
+def load_k8s_config() -> None:
+    """
+    Load the Kubernetes configuration.
+
+    Tries to load the in-cluster configuration if running inside a pod.
+    Falls back to local kubeconfig for external environments.
+
+    Raises:
+        ConfigException: If configuration could not be loaded.
+    """
+    try:
+        config.load_incluster_config()
+        logger.debug("Loaded in-cluster Kubernetes configuration.")
+    except config.config_exception.ConfigException:
+        try:
+            config.load_kube_config()
+            logger.debug("Loaded local kubeconfig file.")
+        except config.config_exception.ConfigException as e:
+            logger.error("Failed to load Kubernetes configuration.")
+            raise
+
+
+def get_current_user() -> str:
+    """
+    Fetch the current Kubeflow user ID by reading the owner annotation
+    from the user's namespace.
+
+    Returns:
+        str: The user ID of the notebook owner.
+
+    Raises:
+        RuntimeError: If the owner annotation is not found.
+    """
+    try:
+        namespace_name = get_namespace()
+
+        v1 = client.CoreV1Api()
+        ns_obj = v1.read_namespace(name=namespace_name)
+
+        annotations = ns_obj.metadata.annotations or {}
+        owner = annotations.get("owner")
+
+        if not owner:
+            raise RuntimeError(
+                f"No owner annotation found in namespace: {namespace_name}"
+            )
+
+        logger.debug("Resolved namespace owner: %s", owner)
+        return owner
+
+    except Exception as e:
+        logger.error("Failed to fetch user from namespace: %s", e)
+        raise RuntimeError("Unable to resolve current user ID") from e

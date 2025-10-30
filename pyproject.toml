@@ -1,3 +1,79 @@
 [build-system]
-requires = ["setuptools>=70.1.1", "wheel", "packaging>=23.0"]
+requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "cogflow"
+dynamic = ["version"]  # ✅ version read dynamically from __init__.py
+description = "COGFlow — modular machine learning workflow management system"
+readme = "README.md"
+license = { file = "LICENSE.md" }
+
+authors = [
+  { name = "Sai Kireeti", email = "sai.kireeti@hiro-microdatacenters.nl" }
+]
+
+requires-python = ">=3.10"
+keywords = ["ml", "workflow", "kfp", "federated-learning", "cogflow", "mlops"]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Developers",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Topic :: Software Development :: Libraries :: Python Modules"
+]
+
+dependencies = [
+  "mlflow==2.22.0",
+  "kfp==1.8.22",
+  "boto3",
+  "tenacity",
+  "kubernetes",
+  "minio",
+  "awscli",
+  "s3fs",
+  "kserve==0.12.0",
+  "ray==2.9.3",
+  "kafka-python==2.0.2",
+  "pyyaml",
+  "pydantic>=2.5.0",
+  "pydantic-settings>=2.1.0"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7.4.0",
+  "pytest-cov>=4.1.0",
+  "build",
+  "twine"
+]
+
+docs = [
+  "mkdocs>=1.6.0",
+  "mkdocs-material>=9.4.0",
+  "pdoc3>=0.11.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/HIRO-MicroDataCenters-BV/cogflow"
+Issues = "https://github.com/HIRO-MicroDataCenters-BV/cogflow/issues"
+Documentation = "https://hiro-microdatacenters-bv.github.io/cogflow"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cogflow*"]
+
+[tool.setuptools.package-data]
+"cogflow" = [
+  "core/*",
+  "utils/*",
+  "api.py",
+    "config.py",
+  "LICENSE.md"
+]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "-ra -q --cov=cogflow --cov-report=term-missing"
+testpaths = ["tests"]
