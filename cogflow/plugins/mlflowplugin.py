@@ -883,6 +883,8 @@ class MlflowPlugin:
 
         if "sklearn" in flavors:
             return "sklearn"
+        elif "pytorch" in flavors:
+            return "pytorch"
         elif "python_function" in flavors:
             return "mlflow"
         else:
@@ -905,6 +907,8 @@ class MlflowPlugin:
 
         if "sklearn" in flavors:
             return "sklearn"
+        elif "pytorch" in flavors:
+            return "pytorch"
         elif "python_function" in flavors:
             return "pyfunc"
         else:

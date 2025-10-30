@@ -1117,6 +1117,173 @@ class KubeflowPlugin:
         return flpipeline
 
     @staticmethod
+    def create_fl_pipeline_dataspace(
+        fl_client, fl_server, data_products: list, node_enforce: bool = True
+    ):
+        """
+        Returns a KFP pipeline function that wires up:
+        setup_links → fl_server → many fl_client → release_links
+
+        fl_client must accept at minimum:
+        - server_address: str
+        - local_data_connector
+
+        fl_server must accept at minimum:
+        - number_of_iterations: int
+
+        Any other parameters that fl_client/ fl_server declare will automatically
+        become pipeline inputs and be forwarded along.
+        """
+
+        def setup_links_func(name: str) -> str:
+            """
+            Set up a service in the default namespace with the given name.
+            Args:
+                name (str): Name of the service to be created.
+            Returns:
+                str: Name of the created service.
+            """
+            from cogflow import KubeflowPlugin
+
+            KubeflowPlugin().create_service(name=name)
+            return name
+
+        def release_links_func(name: str):
+            """
+            Release a service created by `setup_links_func`.
+            Deletes a previously created service by name in the default namespace.
+            Args:
+                name (str): Name of the service to be deleted.
+            Returns:
+                str: Result message of service deletion.
+            """
+            from cogflow import KubeflowPlugin
+
+            KubeflowPlugin().delete_service(name=name)
+
+        # Introspect client/server signatures
+        client_sig = inspect.signature(fl_client)
+        server_sig = inspect.signature(fl_server)
+
+        # Mandatory params
+        client_req = {"server_address", "local_data_connector"}
+        server_req = {"number_of_iterations"}
+
+        # ← CHANGE: only consider real kw/positional params, skip VAR_POSITIONAL and VAR_KEYWORD
+        def _valid_param_names(sig):
+            return [
+                name
+                for name, p in sig.parameters.items()
+                if p.kind
+                in (
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    inspect.Parameter.KEYWORD_ONLY,
+                )
+            ]
+
+        client_params = _valid_param_names(client_sig)  # ← CHANGE
+        server_params = _valid_param_names(server_sig)  # ← CHANGE
+
+        # Find any extra parameters
+        client_extra = [p for p in client_params if p not in client_req]
+        server_extra = [p for p in server_params if p not in server_req]
+        extra_params = list(dict.fromkeys(client_extra + server_extra))
+
+        # Build a list of inspect.Parameter for the pipeline signature
+        sig_params = []
+        # 1) local_data_connectors --removed
+        # 2) number_of_iterations
+        sig_params.append(
+            Parameter(
+                name="number_of_iterations",
+                kind=Parameter.POSITIONAL_OR_KEYWORD,
+                annotation=int,
+            )
+        )
+        # 3) extras, preserving defaults & annotations
+        for name in extra_params:
+            # pick whichever component declares it
+            param = client_sig.parameters.get(name, server_sig.parameters.get(name))
+            default = (
+                param.default if param.default is not inspect._empty else inspect._empty
+            )
+            ann = param.annotation if param.annotation is not inspect._empty else None
+            sig_params.append(
+                Parameter(
+                    name=name,
+                    kind=Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=ann,
+                    default=default,
+                )
+            )
+        pipeline_sig = Signature(parameters=sig_params)
+
+        # create component from func
+        setup_links = KubeflowPlugin.create_component_from_func(
+            setup_links_func, base_image="hiroregistry/cogflow_lite:latest"
+        )
+        release_links = KubeflowPlugin.create_component_from_func(
+            release_links_func, base_image="hiroregistry/cogflow_lite:latest"
+        )
+
+        def fl_pipeline_func(*args, _node_enforce=node_enforce, **kwargs):
+            # 2) bind positional → named arguments per our explicit signature
+            bound = fl_pipeline_func.__signature__.bind_partial(
+                *args, **kwargs
+            )  # ← CHANGE
+            bound.apply_defaults()  # ← CHANGE
+            args_map = bound.arguments  # ← CHANGE
+            # extract required inputs
+            # local_data_connectors = args_map["local_data_connectors"]
+            number_of_iterations = args_map["number_of_iterations"]
+
+            # split extras for client & server
+            server_kwargs = {k: args_map[k] for k in server_extra}
+            client_kwargs = {k: args_map[k] for k in client_extra}
+
+            # generate service name with run id later at runtime it will be replaced by run id
+            srv_name = "flserver-" + "{{workflow.uid}}"
+            # 1. create the k8s Service
+            setup_task = setup_links(name=srv_name)
+            # 1.1. tear down once the server is done
+            cleanup_task = release_links(name=srv_name)
+            # 2. start the FL server
+            with dsl.ExitHandler(cleanup_task):
+                server_task = fl_server(
+                    number_of_iterations=number_of_iterations, **server_kwargs
+                ).after(setup_task)
+                server_task.add_pod_label(name="app", value=srv_name)
+
+                # 3. fan-out clients in parallel -- We will revert back to this after v2
+                # supported grouping added later on kfp v2
+                # with dsl.ParallelFor(local_data_connectors) as connector:
+                for data_product in data_products:
+                    client_op = fl_client(
+                        server_address=setup_task.output,
+                        local_data_connector=data_product.get("region"),
+                        **client_kwargs,
+                    ).after(setup_task)
+
+                    region = data_product.get("access_url")
+                    # ← CHANGE: only add node selector if enforcement is enabled
+                    if _node_enforce:
+                        client_op.add_node_selector_constraint("region", region)
+
+                    client_op.set_display_name(  # ← CHANGE: moved inside loop
+                        f"client:{region}"  # ← CHANGE: display region
+                    )
+
+            # Attach the explicit signature so KFP can see all inputs
+
+        fl_pipeline_func.__signature__ = pipeline_sig
+
+        # Decorate as a pipeline
+        flpipeline = dsl.pipeline(
+            name="Federated Learning Pipeline", description="Auto-generated FL pipeline"
+        )(fl_pipeline_func)
+        return flpipeline
+
+    @staticmethod
     def create_fl_component_from_func(
         func,
         output_component_file=None,
