@@ -215,7 +215,7 @@ class DatasetPlugin:
         """
         PluginManager().load_config()
 
-        url = f"{os.getenv('API_BASEPATH')}/datasets/file"
+        url = f"{os.getenv('API_PATH')}/datasets/file"
 
         # Form fields for multipart/form-data
         form_data = {
@@ -431,7 +431,7 @@ class DatasetPlugin:
         PluginManager().load_config()
 
         # Get dataset file metadata
-        download_url = f"{os.getenv('API_BASEPATH')}/datasets/{dataset_id}/file"
+        download_url = f"{os.getenv('API_PATH')}/datasets/{dataset_id}/file"
         headers = {
             "kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()
         }

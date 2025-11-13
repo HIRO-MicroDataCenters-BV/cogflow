@@ -34,6 +34,7 @@ TIMER_IN_SEC = 10
 ML_TOOL = "mlflow"
 BUCKET_NAME = "mlflow"
 MODEL_TYPE = "mlflow"
+COMPONENTS_BUCKET_NAME = "components"
 
 MINIO_ENDPOINT_URL = "MLFLOW_S3_ENDPOINT_URL"
 MINIO_ACCESS_KEY = "AWS_ACCESS_KEY_ID"
@@ -44,7 +45,7 @@ TESTING_CONFIG = "config.app_config.TestingConfig"
 
 FILE_TYPE = 0
 
-API_BASEPATH = "API_BASEPATH"
+API_BASEPATH = "API_PATH"
 TIME_OUT = 300
 
 # log_model method parameters
@@ -77,6 +78,7 @@ TRANSFORMER_BASE_IMAGE = "hiroregistry/k8-transformer:latest"
 # endpoints
 DATASETS = "/datasets"
 PROMETHEUS_DATASETS = "/datasets/prometheus"
+TRAINING_BUILDER_COMPONENTS = "/training-builder-components"
 
 
 # MESSAGE_BROKER plugin

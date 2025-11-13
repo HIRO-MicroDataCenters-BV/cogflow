@@ -225,3 +225,21 @@ def uuid_to_hex(value: str) -> str:
         return u.hex
     except (ValueError, AttributeError, TypeError):
         raise ValueError(f"Invalid UUID value: {value!r}")
+
+
+def download_file(url: str, output_path: str, chunk_size: int = 8192) -> None:
+    """
+    Download a file from a URL and save it to the specified path.
+
+    Args:
+        url (str): The URL of the file to download.
+        output_path (str): The local path where the file will be saved.
+        chunk_size (int): Size of chunks to read at a time (default: 8192 bytes).
+    """
+    with requests.get(url, stream=True, timeout=DEFAULT_TIMEOUT) as response:
+        response.raise_for_status()  # Raise error for bad status codes
+        with open(output_path, "wb") as file:
+            for chunk in response.iter_content(chunk_size=chunk_size):
+                if chunk:  # filter out keep-alive chunks
+                    file.write(chunk)
+    print(f"✅ Downloaded: {output_path}")

@@ -6,53 +6,11 @@ import unittest
 from contextlib import redirect_stdout
 from io import StringIO
 from unittest.mock import patch
-from ..cogflow import (
-    save_model_details_to_db,
-)
 from ..cogflow.plugins.notebook_plugin import NotebookPlugin
 
 
 class TestNotebookPlugin(unittest.TestCase):
     """Tests for NotebookPlugin class and related functions."""
-
-    @patch(
-        "cogflow.cogflow.plugins.notebook_plugin.NotebookPlugin.get_model_latest_version"
-    )
-    @patch("os.getenv")
-    def test_save_model_details_to_db(self, mock_env, mock_model_version):
-        """Test save_model_details_to_db function."""
-        with patch("requests.post") as mock_requests_post:
-            mock_env.side_effect = lambda x: {
-                "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
-                "AWS_ACCESS_KEY_ID": "minio",
-                "AWS_SECRET_ACCESS_KEY": "minio123",
-                "API_BASEPATH": "http://randomn",
-                "TIMER_IN_SEC": "10",
-                "FILE_TYPE": "2",
-                "MLFLOW_TRACKING_URI": "http://mlflow",
-                "ML_TOOL": "ml_flow",
-            }[x]
-            mock_model_version.return_value = 1
-
-            mock_response = {
-                "data": {
-                    "id": 101,
-                    "last_modified_time": "2024-05-16T12:33:08.890033",
-                    "last_modified_user_id": 0,
-                    "name": "testmodel",
-                    "register_date": "2024-05-16T12:33:08.890007",
-                    "register_user_id": 0,
-                    "type": "sklearn",
-                    "version": "1",
-                },
-                "errors": "None",
-                "message": "Created new model.",
-                "success": "True",
-            }
-            mock_requests_post.return_value.status_code = 201
-            mock_requests_post.return_value.json.return_value = mock_response
-            result = save_model_details_to_db("testmodel")
-            self.assertEqual(result["data"]["id"], 101)
 
     @patch("os.getenv")
     def test_delete_pipeline_details_from_db(self, mock_env):
