@@ -76,12 +76,15 @@ register_dataset: Register a dataset.
 import inspect
 import json
 import os
+from collections import defaultdict
 from datetime import datetime
+from types import FunctionType
 from typing import Callable, Union, Any, List, Optional, Dict, Mapping
 import time
 from uuid import UUID
 
 import boto3
+import yaml
 from botocore.exceptions import NoCredentialsError, ClientError
 import psutil
 import numpy as np
@@ -745,6 +748,7 @@ def log_metrics(metrics: Dict[str, float], step: Optional[int] = None) -> None:
 def log_model(
     model,
     artifact_path,
+    model_type: str = None,
     registered_model_name=None,
     conda_env=None,
     code_paths=None,
@@ -773,6 +777,7 @@ def log_model(
     Args:
         model: The model to log.
         artifact_path (str): The artifact path to log the model to.
+        model_type (str, optional): The type of the model.
         registered_model_name (str, optional): The name to register the model under.
         conda_env (str, optional): The conda environment to use.
         code_paths (list, optional): List of paths to include in the model.
@@ -793,11 +798,27 @@ def log_model(
     is_pyfunc = isinstance(model, pyfunc.PythonModel) or (
         inspect.isclass(model) and issubclass(model, pyfunc.PythonModel)
     )
-    is_pytorch = "module" in cls_hierarchy  # torch.nn.Module base class
-    is_sklearn = (
-        "baseestimator" in cls_hierarchy
-    )  # sklearn.base.BaseEstimator base class
-    # ---------------------------------------------------------------
+
+    # Detect PyTorch models, including scvi / lightning / wrappers
+    is_pytorch = (
+        "module" in cls_hierarchy
+        or hasattr(model, "module")
+        or any("torch" in str(base.__module__).lower() for base in type(model).mro())
+    )
+
+    is_sklearn = "baseestimator" in cls_hierarchy
+
+    # ----------------------------------------------------------
+    # Apply optional user override (model_type)
+    # ----------------------------------------------------------
+    if model_type:
+        model_type = str(model_type).lower().strip()
+        if model_type in ("pytorch", "torch", "scvi", "lightning"):
+            is_pyfunc, is_pytorch, is_sklearn = False, True, False
+        elif model_type in ("sklearn", "xgboost", "rf", "tree"):
+            is_pyfunc, is_pytorch, is_sklearn = False, False, True
+        elif model_type in ("pyfunc", "python_function", "custom"):
+            is_pyfunc, is_pytorch, is_sklearn = True, False, False
 
     if is_pyfunc:
         # Log using pyfunc flavor
@@ -875,7 +896,7 @@ def log_model(
         }
 
         path = PluginManager().load_path(path_name="log_model")
-        url = f"{os.getenv('API_BASEPATH')}{path}"
+        url = f"{os.getenv(API_BASEPATH)}{path}"
 
         headers = {
             "kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()
@@ -1128,7 +1149,7 @@ def serve_model_v1(model_uri: str, isvc_name: str = None):
     return KubeflowPlugin().serve_model_v1(model_uri=model_uri, isvc_name=isvc_name)
 
 
-def load_component(file_path=None, url=None, text=None):
+def load_component(file_path=None, url=None, text=None, id: UUID = None):
     """Loads component from text, file or URL and creates a task factory
     function.
 
@@ -1138,24 +1159,43 @@ def load_component(file_path=None, url=None, text=None):
         file_path: Path of local file containing the component definition.
         url: The URL of the component file data.
         text: A string containing the component file data.
+        id: The ID of the component.
 
     Returns:
         A factory function with a strongly-typed signature.
         Once called with the required arguments, the factory constructs a
         pipeline task instance (ContainerOp).
     """
-    non_null_args_count = len(
-        [name for name, value in locals().items() if value is not None]
-    )
+    PluginManager().load_config()
+    # --- Sanity check ---
+    non_null_args_count = len([v for v in [file_path, url, text, id] if v is not None])
     if non_null_args_count != 1:
         raise ValueError("Need to specify exactly one source")
+
+    # --- Load base component factory ---
     if file_path:
-        return KubeflowPlugin().load_component_from_file(file_path=file_path)
-    if url:
-        return KubeflowPlugin().load_component_from_url(url=url)
-    if text:
-        return KubeflowPlugin().load_component_from_text(text=text)
-    raise ValueError("Need to specify a source")
+        base_comp = KubeflowPlugin().load_component_from_file(file_path=file_path)
+    elif url:
+        base_comp = KubeflowPlugin().load_component_from_url(url=url)
+    elif text:
+        base_comp = KubeflowPlugin().load_component_from_text(text=text)
+    elif id:
+        base_comp = ComponentPlugin().load_component_from_id(component_id=id)
+    else:
+        raise ValueError("Need to specify a source")
+
+    # --- Wrap with runtime env injection ---
+    def wrapped_component(*args, **kwargs):
+        component_op = base_comp(*args, **kwargs)
+        component_op = CogContainer.add_model_access(component_op)
+        return component_op
+
+    # Preserve metadata for KFP compatibility
+    wrapped_component.__signature__ = inspect.signature(base_comp)
+    wrapped_component.component_spec = getattr(base_comp, "component_spec", None)
+    wrapped_component.__name__ = getattr(base_comp, "__name__", "wrapped_component")
+
+    return wrapped_component
 
 
 def delete_pipeline(
@@ -1240,37 +1280,64 @@ def delete_pipeline(
 
 
 def cogcomponent(
-    output_component_file=None,
-    base_image=plugin_config.BASE_IMAGE,
-    packages_to_install=None,
+    output_component_file: Optional[str] = None,
+    base_image: str = plugin_config.BASE_IMAGE,
+    packages_to_install: Optional[List[str]] = None,
     annotations: Optional[Mapping[str, str]] = None,
+    name: Optional[str] = None,
+    category: Optional[str] = None,
+    register: bool = False,
+    overwrite: bool = False,
 ):
     """
-    Decorator to create a Kubeflow component from a Python function.
+    Decorator to create a Kubeflow component and optionally register it.
 
     Args:
-        output_component_file (str, optional): Path to save the component YAML file.
-        Defaults to None.
-        base_image (str, optional): Base Docker image for the component. Defaults to
-        "hiroregistry/cogflow:latest".
-        packages_to_install (List[str], optional): List of additional Python packages
-        to install in the component.
-        Defaults to None.
-        annotations: Optional. Allows adding arbitrary key-value data to the component
-        specification.
-
-    Returns:
-        Callable: A wrapped function that is now a Kubeflow component.
+        output_component_file (str, optional): Path to save component YAML locally.
+        base_image (str): Base Docker image for the component.
+        packages_to_install (List[str], optional): Extra Python packages.
+        annotations (Mapping[str, str], optional): Custom metadata.
+        name (str, optional): Name for registration.
+        category (str, optional): Category for registration.
+        register (bool): Register the component automatically.
+        overwrite (bool): Overwrite existing MinIO object if true.
     """
 
-    def decorator(func):
-        return create_component_from_func(
+    def decorator(func: Callable):
+        # Step 1: Build the component spec
+        component_op = create_component_from_func(
             func=func,
             output_component_file=output_component_file,
             base_image=base_image,
             packages_to_install=packages_to_install,
             annotations=annotations,
         )
+
+        # Step 2: Optional registration
+        if register and category:
+            try:
+                # ✅ Directly get YAML string from the ComponentSpec object
+                yaml_data = yaml.safe_dump(
+                    component_op.component_spec.to_dict(),
+                    sort_keys=False,
+                )
+
+                print(
+                    f"Registering component '{component_op.component_spec.name}' "
+                    f"under category '{category}'..."
+                )
+
+                register_component(
+                    name=name,
+                    yaml_data=yaml_data,
+                    category=category,
+                    overwrite=overwrite,
+                )
+
+            except Exception as e:
+                print(f"Component registration failed: {e}")
+
+        return component_op
 
     return decorator
 
@@ -1545,7 +1612,9 @@ def log_artifact(
 
     if run_id is not None:
         return cogclient.log_artifact(
-            run_id=run_id, local_path=local_path, artifact_path=artifact_path
+            run_id=uuid_to_hex(run_id),
+            local_path=local_path,
+            artifact_path=artifact_path,
         )
     else:
         return MlflowPlugin().log_artifact(
@@ -1591,7 +1660,7 @@ def log_artifacts(
     PluginManager().load_config()
     if run_id is not None:
         return cogclient.log_artifacts(
-            run_id=run_id, local_dir=local_dir, artifact_path=artifact_path
+            run_id=uuid_to_hex(run_id), local_dir=local_dir, artifact_path=artifact_path
         )
     else:
         return MlflowPlugin().log_artifacts(
@@ -2451,9 +2520,47 @@ def create_fl_pipeline(
     )
 
 
+def extract_data_products_from_json(data_input: Any) -> List[Dict[str, str]]:
+    """
+    Extracts data products (region and access URLs) from either:
+    - A JSON string, or
+    - A Python list/dict (already parsed JSON)
+
+    Args:
+        data_input (str | list | dict): JSON string or already parsed JSON.
+
+    Returns:
+        List[Dict[str, str]]: A list of {region, access_url} dictionaries.
+    """
+    # ✅ Step 1: Parse only if it's a string
+    if isinstance(data_input, str):
+        try:
+            data = json.loads(data_input)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON string: {e}")
+    else:
+        data = data_input  # Already parsed
+
+    # ✅ Step 2: Ensure we have a list of datasets
+    if isinstance(data, dict):
+        data = [data]
+
+    data_products = []
+
+    # ✅ Step 3: Extract connectors
+    for ds in data:
+        region = ds.get("region")
+        for dist in ds.get("distribution", []):
+            access_url = dist.get("accessURL")
+            if region and access_url:
+                data_products.append({"region": region, "access_url": access_url})
+
+    return data_products
+
+
 def create_fl_pipeline_dataspace(
-    fl_client: Callable,
-    fl_server: Callable,
+    fl_client: Union[Callable, object],
+    fl_server: Union[Callable, object],
     data_products: list,
     node_enforce: bool = False,
 ):
@@ -2461,23 +2568,55 @@ def create_fl_pipeline_dataspace(
     Returns a KFP pipeline function that wires up:
     setup_links → fl_server → many fl_client → release_links
 
-    fl_client must accept at minimum:
-    - server_address: str
-    - local_data_connector
-
-    fl_server must accept at minimum:
-    - number_of_iterations: int
-
-    data_products (list): List of data product dictionaries, each containing:
-            - region (str)
-            - access_url (str)
+    Args:
+        fl_client: Callable or KFP component factory function.
+        fl_server: Callable or KFP component factory function.
+        data_products (list): List of dicts:
+            [{"region": "...", "access_url": "..."}, ...]
+        node_enforce (bool): Whether to enforce region-based node scheduling.
 
     Any other parameters that fl_client/ fl_server declare will automatically
     become pipeline inputs and be forwarded along.
     """
+
+    # --- Helper to normalize to component ops ---
+    def _to_component(obj, label: str):
+
+        # Case 1: already a Kubeflow component (from load_component_from_id)
+        if hasattr(obj, "component_spec"):
+            print(f"Using preloaded {label} component.")
+            return obj
+
+        # Case 2: function — wrap it into a KFP component
+        if isinstance(obj, FunctionType):
+            print(f"Wrapping {label} function into Kubeflow component...")
+            return create_component_from_func(
+                obj,
+                base_image="hiroregistry/cogflow_lite:latest",
+            )
+
+        # Case 3: unsupported
+        raise TypeError(
+            f"Invalid {label} type: {type(obj)} — must be a function or Kubeflow component."
+        )
+
+    # --- Normalize both ---
+    fl_client_comp = _to_component(fl_client, "fl_client")
+    fl_server_comp = _to_component(fl_server, "fl_server")
+
+    # # --- Validate data products ---
+    # if not isinstance(data_products, list) or not all(
+    #     isinstance(dp, dict) and "region" in dp and "access_url" in dp
+    #     for dp in data_products
+    # ):
+    #     raise ValueError(
+    #         "data_products must be a list of dicts with keys 'region' and 'access_url'."
+    #     )
+    data_products = extract_data_products_from_json(data_products)
+
     return KubeflowPlugin().create_fl_pipeline_dataspace(
-        fl_client=fl_client,
-        fl_server=fl_server,
+        fl_client=fl_client_comp,
+        fl_server=fl_server_comp,
         data_products=data_products,
         node_enforce=node_enforce,
     )
@@ -2557,30 +2696,44 @@ def get_current_user_from_namespace() -> str:
     return KubeflowPlugin().get_current_user_from_namespace()
 
 
-def register_component(yaml_path, bucket_name, category, api_key=None):
+def register_component(
+    name: str = None,
+    yaml_path: str = None,
+    yaml_data: str = None,
+    category: str = None,
+    overwrite: bool = False,
+):
     """
-    Registers a component by uploading its YAML definition to MinIO and
-    posting its metadata to a registry API.
+    Registers a component by uploading its YAML definition (from file or memory)
+    to MinIO and posting its metadata to the registry API.
 
     Args:
-        category: category of component.
-        yaml_path (str): Path to the component YAML file.
-        bucket_name (str): MinIO bucket to upload the YAML.
-        api_key (str, optional): Bearer token for authorization. Defaults to None.
+        name (str, optional): Name of the component. If not provided, it will be
+            extracted from the YAML content.
+        yaml_path (str, optional): Local path to the component YAML file.
+        yaml_data (str, optional): Raw YAML string of the component.
+        category (str): Category / logical namespace.
+        overwrite (bool, optional): Overwrite existing MinIO object if true.
 
     Returns:
-        dict: JSON response from the registration API.
+        dict: {
+            "registry_response": <dict>,
+            "minio_url": "s3://{category}/{bucket}/{object_name}",
+            "object_name": "{object_name}.yaml"
+        }
 
     Raises:
-        requests.HTTPError: If the API returns an error status.
+        ValueError: If neither yaml_path nor yaml_data is provided.
+        requests.HTTPError: If the registry API returns an error.
     """
-    creator = get_current_user_from_namespace()
     return ComponentPlugin().register_component(
+        name=name,
         yaml_path=yaml_path,
-        bucket_name=bucket_name,
+        yaml_data=yaml_data,
+        bucket_name=plugin_config.COMPONENTS_BUCKET_NAME,
         category=category,
-        creator=creator,
-        api_key=api_key,
+        creator=get_current_user_from_namespace(),
+        overwrite=overwrite,
     )
 
 
@@ -3459,76 +3612,49 @@ def register_prometheus_dataset(
         raise RuntimeError(f"Error while registering Prometheus dataset: {exp}")
 
 
-def load_component_from_id(component_id: UUID):
+def get_run_artifact_uri(run_id: str) -> str:
     """
-    Fetches component metadata by ID via internal API, loads its YAML from MinIO,
-    and returns a Pipeline component.
-
+    Get the artifact URI for a given run ID.
     Args:
-        component_id (uuid): Unique ID of the component in the system.
+        run_id: run ID.
 
     Returns:
-        kfp.components.Component: The loaded KFP component.
+        str: Artifact URI.
 
-    Raises:
-        RuntimeError: If metadata fetch or MinIO load fails.
     """
     PluginManager().load_config()
-    # --- Step 1: Fetch metadata from internal API ---
-    try:
-        resp = make_get_request(
-            f"{os.getenv('API_BASEPATH')}/training-builder-components/{component_id}",
-            timeout=10,
-        )
+    run = cogclient.get_run(uuid_to_hex(run_id))
+    artifact_uri = run.info.artifact_uri
+    return artifact_uri
 
-        # handle both Response and dict
-        if hasattr(resp, "json"):
-            data = resp.json()
-        elif isinstance(resp, dict):
-            data = resp
-        else:
-            raise ValueError(f"Unexpected response type: {type(resp)}")
 
-        metadata = (
-            data.get("data") if isinstance(data, dict) and "data" in data else data
-        )
+def list_artifacts_grouped(run_id: str):
+    """
+    Recursively list artifacts for the given run_id,
+    grouped by directory.
 
-    except Exception as ex:
-        raise RuntimeError(
-            f"Failed to fetch component metadata for ID {component_id}: {ex}"
-        ) from ex
+    Returns:
+        dict: {
+            "root": [ "file_name", "..."],
+            "subdir": [ "file_name","..."]
+        }
+    """
+    PluginManager().load_config()
 
-    # --- Step 2: Validate component_file path ---
-    component_file = metadata.get("component_file")
-    if not component_file or not component_file.startswith("/"):
-        raise ValueError(f"Invalid component_file in metadata: {component_file}")
+    grouped = defaultdict(list)
 
-    # --- Step 3: Parse bucket/object from MinIO path ---
-    parts = component_file.strip("/").split("/", 1)
-    if len(parts) != 2:
-        raise ValueError(f"Invalid MinIO path format: {component_file}")
+    def _walk(path="", prefix="root"):
+        artifacts = cogclient.list_artifacts(uuid_to_hex(run_id), path)
+        for a in artifacts:
+            if a.is_dir:
+                _walk(a.path, prefix=a.path)
+            else:
+                # Extract directory name, fallback to root
+                directory = prefix or "root"
+                grouped[directory].append(a.path.split("/")[-1])
 
-    bucket_name, object_name = parts
-
-    # --- Step 4: Fetch YAML from MinIO ---
-    minio_client = create_minio_client()
-    try:
-        response = minio_client.get_object(bucket_name, object_name)
-        yaml_content = response.read().decode("utf-8")
-        response.close()
-        response.release_conn()
-    except Exception as ex:
-        raise RuntimeError(
-            f"Failed to load {object_name} from MinIO bucket {bucket_name}: {ex}"
-        ) from ex
-
-    # --- Step 5: Load into Kubeflow component ---
-    try:
-        return load_component(text=yaml_content)
-    except Exception as ex:
-        raise RuntimeError(
-            f"Failed to parse KFP component YAML for {object_name}: {ex}"
-        ) from ex
+    _walk()
+    return dict(grouped)
 
 
 __all__ = [

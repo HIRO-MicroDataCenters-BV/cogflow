@@ -1,24 +1,9 @@
-# Use the official Python image as the base image
-FROM python:3.10-slim
+# Use the immutable base image
+FROM hiroregistry/cogflowfltorch@sha256:cf55a95bca6487de597081dd4ea5ee62198092a56062f2b14debbca2d7c21471
 
-# Install Python packages
-RUN python3 -m pip install --no-cache-dir --upgrade pip
+# Upgrade CogFlow
+RUN pip uninstall -y cogflow && pip install cogflow==1.11.25
 
-# Install specific version of cogflow
-
-RUN pip3 install --ignore-installed cogflow==1.11.16
-
-# Install additional Python packages
-RUN pip3 install \
-    --no-cache-dir \
-    shap \
-    xgboost \
-    flwr==1.8.0 \
-    flwr_datasets
-
-
-# Install compatible protobuf version first
-RUN pip install --no-cache-dir protobuf==3.20.3
-
-# Verify the installation of cogflow
+# Optionally verify
 RUN python3 -c 'import cogflow'
+

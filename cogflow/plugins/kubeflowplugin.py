@@ -64,7 +64,7 @@ class CogContainer(kfp.dsl._container_op.Container):
             "AWS_ACCESS_KEY_ID",
             "AWS_SECRET_ACCESS_KEY",
             "MINIO_BUCKET_NAME",
-            "API_BASEPATH",
+            "API_PATH",
             "MLFLOW_TRACKING_URI",
             "KF_PIPELINES_SA_TOKEN_PATH",
             "MINIO_ENDPOINT_URL",
@@ -637,10 +637,10 @@ class KubeflowPlugin:
             or transformer.get("latestReadyRevision"),
             "traffic_percentage": total_traffic or stable_traffic or 100,
             "has_canary": bool(has_canary),
-            "stable_revision": stable_revision,
-            "canary_revision": canary_revision,
-            "stable_traffic_percent": stable_traffic,
-            "canary_traffic_percent": canary_traffic,
+            "stable_revision": canary_revision,
+            "canary_revision": stable_revision,
+            "stable_traffic_percent": canary_traffic,
+            "canary_traffic_percent": stable_traffic,
         }
 
         return model_info
@@ -1260,11 +1260,11 @@ class KubeflowPlugin:
                 for data_product in data_products:
                     client_op = fl_client(
                         server_address=setup_task.output,
-                        local_data_connector=data_product.get("region"),
+                        local_data_connector=data_product.get("access_url"),
                         **client_kwargs,
                     ).after(setup_task)
 
-                    region = data_product.get("access_url")
+                    region = data_product.get("region")
                     # ← CHANGE: only add node selector if enforcement is enabled
                     if _node_enforce:
                         client_op.add_node_selector_constraint("region", region)
@@ -1279,7 +1279,8 @@ class KubeflowPlugin:
 
         # Decorate as a pipeline
         flpipeline = dsl.pipeline(
-            name="Federated Learning Pipeline", description="Auto-generated FL pipeline"
+            name="Federated Learning Pipeline for Dataspace",
+            description="Auto-generated FL pipeline for Dataspace",
         )(fl_pipeline_func)
         return flpipeline
 
@@ -1695,11 +1696,11 @@ class KubeflowPlugin:
                     "While promotion/disable/update, must be between 0 and 100."
                 )
         else:
-            # First-time rollout → must be partial (1–99)
-            if not 1 <= canary_traffic_percent <= 99:
+            # First-time rollout → must be partial (1–100)
+            if not 1 <= canary_traffic_percent <= 100:
                 raise ValueError(
                     f"Invalid canary_traffic_percent={canary_traffic_percent}. "
-                    "For initial rollout, must be between 1 and 99."
+                    "For initial rollout, must be between 1 and 100."
                 )
 
         # If all checks pass
@@ -1779,25 +1780,17 @@ class KubeflowPlugin:
                     "transformer_image must be provided when transformer_parameters is set"
                 )
 
-            prometheus_url = transformer_parameters.get("PROMETHEUS_URL")
-            prometheus_metrics = transformer_parameters.get("PROMETHEUS_METRICS")
-
-            if not prometheus_url or not prometheus_metrics:
-                raise ValueError(
-                    "transformer_parameters must include both 'PROMETHEUS_URL' and 'PROMETHEUS_METRICS'"
-                )
+            # Create environment variables dynamically from the dict
+            env_vars = []
+            for key, value in transformer_parameters.items():
+                env_vars.append(client.V1EnvVar(name=key, value=str(value)))
 
             container_name = f"{isvc_name}-transformer".lower()
 
             transformer = client.V1Container(
                 name=container_name,
                 image=transformer_image,
-                env=[
-                    client.V1EnvVar(name="PROMETHEUS_URL", value=prometheus_url),
-                    client.V1EnvVar(
-                        name="PROMETHEUS_METRICS", value=prometheus_metrics
-                    ),
-                ],
+                env=env_vars,
             )
 
         # Build InferenceService
