@@ -65,8 +65,6 @@ Handles ML integration, model lifecycle, versioning, and registry operations.
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
 
-import psutil
-
 from ..utils.exceptions import (
     CogflowErrorHandler,
     CogflowModelError,
@@ -121,7 +119,6 @@ class ModelManager:
         # self.tensorflow = lazy_import("mlflow.tensorflow")
         self.xgboost = lazy_import("mlflow.xgboost")
         self.lightgbm = lazy_import("mlflow.lightgbm")
-        self.models = lazy_import("mlflow.models")
 
         # --- MLflow Support Types ---
         self.mlflowexception = lazy_import("mlflow.exceptions").MlflowException
@@ -382,7 +379,7 @@ class ModelManager:
             version = self.client.create_model_version(
                 name=model,
                 source=source,
-                run_id=run_id,
+                run_id=common.uuid_to_hex(run_id) if run_id else None,
                 tags=tags,
                 run_link=run_link,
                 description=description,
@@ -528,69 +525,69 @@ class ModelManager:
 
             logger.info("MLflow model evaluation completed successfully.")
 
-            # Capture system metrics
-            cpu_usage = psutil.cpu_percent(interval=1)
-            memory_info = psutil.virtual_memory()
-            memory_used_mb = round(memory_info.used / (1024**2), 2)
-
-            # Append resource metrics
-            metrics = dict(result.metrics)
-            metrics.update(
-                {
-                    "cpu_consumption": cpu_usage,
-                    "memory_utilization_mb": memory_used_mb,
-                }
-            )
-
-            # Prepare API URLs for CogFlow
-            run_id = model_uri.split("/")[4]
-            base_url = config.API_PATH
-            model_id = network.uuid_to_canonical(run_id)
-            url_metrics = f"{base_url}/models/{model_id}{config.VALIDATION_METRICS}"
-            url_artifacts = f"{base_url}/models/{model_id}{config.VALIDATION_ARTIFACTS}"
-
-            # Serialize artifacts
-            serialized_artifacts = network.serialize_artifacts(result.artifacts)
-
-            # Prepare headers
-            headers = {
-                "Content-Type": "application/json",
-                "kubeflow-userid": common.get_current_user(),
-            }
-
-            # POST metrics
-            try:
-                network.make_post_request(
-                    url_metrics,
-                    json=metrics,
-                    headers=headers,
-                    timeout=config.DEFAULT_TIMEOUT,
-                )
-                logger.info("Metrics successfully posted to %s", url_metrics)
-            except Exception as e:
-                CogflowErrorHandler.handle_exception(
-                    e,
-                    context="Posting evaluation metrics to CogFlow API",
-                    raise_as=CogflowConnectionError,
-                    re_raise=False,
-                )
-
-            # POST artifacts
-            try:
-                network.make_post_request(
-                    url_artifacts,
-                    json=serialized_artifacts,
-                    headers=headers,
-                    timeout=config.DEFAULT_TIMEOUT,
-                )
-                logger.info("Artifacts successfully posted to %s", url_artifacts)
-            except Exception as e:
-                CogflowErrorHandler.handle_exception(
-                    e,
-                    context="Posting evaluation artifacts to CogFlow API",
-                    raise_as=CogflowArtifactError,
-                    re_raise=False,
-                )
+            # # Capture system metrics
+            # cpu_usage = psutil.cpu_percent(interval=1)
+            # memory_info = psutil.virtual_memory()
+            # memory_used_mb = round(memory_info.used / (1024**2), 2)
+            #
+            # # Append resource metrics
+            # metrics = dict(result.metrics)
+            # metrics.update(
+            #     {
+            #         "cpu_consumption": cpu_usage,
+            #         "memory_utilization_mb": memory_used_mb,
+            #     }
+            # )
+            #
+            # # Prepare API URLs for CogFlow
+            # run_id = model_uri.split("/")[4]
+            # base_url = config.API_PATH
+            # model_id = network.uuid_to_canonical(run_id)
+            # url_metrics = f"{base_url}/models/{model_id}{config.VALIDATION_METRICS}"
+            # url_artifacts = f"{base_url}/models/{model_id}{config.VALIDATION_ARTIFACTS}"
+            #
+            # # Serialize artifacts
+            # serialized_artifacts = network.serialize_artifacts(result.artifacts)
+            #
+            # # Prepare headers
+            # headers = {
+            #     "Content-Type": "application/json",
+            #     "kubeflow-userid": common.get_current_user(),
+            # }
+            #
+            # # POST metrics
+            # try:
+            #     network.make_post_request(
+            #         url_metrics,
+            #         json=metrics,
+            #         headers=headers,
+            #         timeout=config.DEFAULT_TIMEOUT,
+            #     )
+            #     logger.info("Metrics successfully posted to %s", url_metrics)
+            # except Exception as e:
+            #     CogflowErrorHandler.handle_exception(
+            #         e,
+            #         context="Posting evaluation metrics to CogFlow API",
+            #         raise_as=CogflowConnectionError,
+            #         re_raise=False,
+            #     )
+            #
+            # # POST artifacts
+            # try:
+            #     network.make_post_request(
+            #         url_artifacts,
+            #         json=serialized_artifacts,
+            #         headers=headers,
+            #         timeout=config.DEFAULT_TIMEOUT,
+            #     )
+            #     logger.info("Artifacts successfully posted to %s", url_artifacts)
+            # except Exception as e:
+            #     CogflowErrorHandler.handle_exception(
+            #         e,
+            #         context="Posting evaluation artifacts to CogFlow API",
+            #         raise_as=CogflowArtifactError,
+            #         re_raise=False,
+            #     )
 
             # Return result
             return result
@@ -829,7 +826,6 @@ class ModelManager:
             filter_string (Optional[str]): A SQL-like query string used to filter model versions.
                 Examples:
                     - ``"name='my-model'"``
-                    - ``"name='my-model' and version='2'"``
 
         Returns:
             List[mlflow.entities.model_registry.ModelVersion]: A list of MLflow ModelVersion objects.
@@ -1190,12 +1186,12 @@ class ModelManager:
 
         try:
             logger.info(
-                "🏁 Starting MLflow run: name=%s, experiment_id=%s",
+                "Starting MLflow run: name=%s, experiment_id=%s",
                 run_name,
                 experiment_id,
             )
             run = self.mlflow.start_run(
-                run_id=run_id,
+                run_id=common.uuid_to_hex(run_id) if run_id else None,
                 experiment_id=experiment_id,
                 run_name=run_name,
                 nested=nested,
@@ -1349,6 +1345,8 @@ class ModelManager:
         self._warn_if_unhealthy("fetching experiment ID from run")
 
         try:
+            run_id = common.uuid_to_hex(run_id)
+            logger.debug("Converted run_id to hex format: %s", run_id)
             run = self.mlflow.get_run(run_id)
             exp_id = run.info.experiment_id
             logger.debug("Resolved experiment ID %s for run %s", exp_id, run_id)
@@ -1569,7 +1567,10 @@ class ModelManager:
             )
 
     def log_artifact(
-        self, local_path: str, artifact_path: Optional[str] = None
+        self,
+        local_path: str,
+        artifact_path: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> None:
         """
         Log a local file or directory as an artifact to the active MLflow run.
@@ -1577,9 +1578,16 @@ class ModelManager:
         Artifacts can be files like datasets, plots, or configuration files that
         are relevant to the experiment.
 
+        Behavior:
+          - If `run_id` is provided → logs the artifact(s) to that specific run
+            (works even if the run has already finished).
+          - If `run_id` is not provided → logs to the currently active run.
+            If no run is active, a new run will automatically be created.
+
         Args:
             local_path (str): Path to the local file or directory.
             artifact_path (Optional[str]): Optional subdirectory within the run’s artifact URI.
+            run_id (Optional[str]): The ID of the run to log the artifact to.
 
         Returns:
             None
@@ -1589,15 +1597,36 @@ class ModelManager:
             CogflowArtifactError: If artifact upload fails.
 
         Example:
-            >>> from cogflow import models
-            >>> models.log_artifact("outputs/metrics.json", artifact_path="results")
+            # Case 1: Log to a specific run (using run_id)
+            >>> log_artifact(
+            ...     local_path="reports/metrics.txt",
+            ...     artifact_path="reports",
+            ...     run_id="<run_id>"
+            ... )
+            # → stores as s3://mlflow/0/<run_id>/artifacts/reports/metrics.txt
+
+            # Case 2: Log to the currently active run (or auto-starts one)
+            >>> with cogflow.start_run() as run:
+            ...     log_artifact(local_path="plots/chart.png", artifact_path="images")
+            # → stores as s3://mlflow/0/<active_run_id>/artifacts/images/chart.png
         """
         self._warn_if_unhealthy("logging artifact")
 
         try:
-            logger.debug("Logging artifact: %s", local_path)
-            self.mlflow.log_artifact(local_path=local_path, artifact_path=artifact_path)
-            logger.info("Artifact logged successfully.")
+            if run_id is not None:
+                logger.debug("Logging artifact to run_id %s: %s", run_id, local_path)
+                self.client.log_artifact(
+                    run_id=common.uuid_to_hex(run_id),
+                    local_path=local_path,
+                    artifact_path=artifact_path,
+                )
+                logger.info("Artifact logged successfully to run %s.", run_id)
+            else:
+                logger.debug("Logging artifact: %s", local_path)
+                self.mlflow.log_artifact(
+                    local_path=local_path, artifact_path=artifact_path
+                )
+                logger.info("Artifact logged successfully.")
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1607,7 +1636,10 @@ class ModelManager:
             )
 
     def log_artifacts(
-        self, local_dir: str, artifact_path: Optional[str] = None
+        self,
+        local_dir: str,
+        artifact_path: Optional[str] = None,
+        run_id: Optional[str] = None,
     ) -> None:
         """
         Log all files within a directory as artifacts to the current MLflow run.
@@ -1615,6 +1647,7 @@ class ModelManager:
         Args:
             local_dir (str): Path to a local directory containing files to upload.
             artifact_path (Optional[str]): Optional destination path in artifact storage.
+            run_id (Optional[str]): The ID of the run to log the artifacts to.
 
         Returns:
             None
@@ -1630,9 +1663,23 @@ class ModelManager:
         self._warn_if_unhealthy("logging multiple artifacts")
 
         try:
-            logger.debug("Logging artifacts from directory: %s", local_dir)
-            self.mlflow.log_artifacts(local_dir=local_dir, artifact_path=artifact_path)
-            logger.info("All artifacts logged successfully.")
+            if run_id is not None:
+                logger.debug(
+                    "Logging artifacts to run_id %s from directory: %s",
+                    run_id,
+                    local_dir,
+                )
+                self.client.log_artifacts(
+                    run_id=common.uuid_to_hex(run_id),
+                    local_dir=local_dir,
+                    artifact_path=artifact_path,
+                )
+            else:
+                logger.debug("Logging artifacts from directory: %s", local_dir)
+                self.mlflow.log_artifacts(
+                    local_dir=local_dir, artifact_path=artifact_path
+                )
+                logger.info("All artifacts logged successfully.")
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1694,7 +1741,10 @@ class ModelManager:
                 order_by=order_by,
                 page_token=page_token,
             )
-            results = [rm.to_dictionary() for rm in registered_models]
+            results = [
+                rm.to_dictionary() if hasattr(rm, "to_dictionary") else rm.__dict__
+                for rm in registered_models
+            ]
             logger.info("Found %s registered model(s).", len(results))
             return results
         except Exception as e:
