@@ -1,44 +1,32 @@
+exclude: ^(\.venv311|\.venv|venv|pvenv|wrapper|examples)/
+
 repos:
--   repo: https://github.com/psf/black
+  - repo: https://github.com/psf/black
     rev: 24.8.0
     hooks:
-    -   id: black
+      - id: black
         name: Run black
         args:
-        - --exclude='(examples|venv|pvenv|wrapper|venv311)'
+          - --exclude='(\.venv311|\.venv|venv|pvenv|wrapper|examples)'
 
--   repo: https://github.com/hhatto/autopep8
+  - repo: https://github.com/hhatto/autopep8
     rev: v2.3.1
     hooks:
-    -   id: autopep8
+      - id: autopep8
         name: Run PEP8
         args:
-        - --in-place
-        - --max-line-length=120
-        - --exclude='(examples|venv|pvenv|wrapper|venv311)'
-        - --ignore=E203,W503
+          - --in-place
+          - --max-line-length=120
+          - --exclude='(\.venv311|\.venv|venv|pvenv|wrapper|examples)'
+          - --ignore=E203,W503
 
--   repo: local
+  - repo: local
     hooks:
-    -   id: pylint
+      - id: pylint
         name: Run pylint
         entry: pylint
         language: python
-        types:
-        - python
+        types: [python]
         args:
-        - --rcfile=.pylintrc
-        exclude: ^(\.venv311|examples|wrapper|venv|pvenv)/
-
-#-   repo: local
-#    hooks:
-#    -   id: pytest
-#        name: Run Pytest
-#        entry: pytest -s
-#        language: system
-#        pass_filenames: false
-#        always_run: true
-#        args:
-#        - tests
-#        files: \.py$
-#exclude: ^(venv|pvenv|build|dist|examples|wrapper)/
+          - --rcfile=.pylintrc
+        exclude: ^(\.venv311|\.venv|venv|pvenv|wrapper|examples)/

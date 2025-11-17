@@ -42,18 +42,24 @@ Handles ML integration, model lifecycle, versioning, and registry operations.
 🔹 Experiment Management
     - create_experiment
 
-🔹 Parameter & Metric Logging
+🔹 Parameter Logging
     - log_param
     - log_params
+
+🔹 Metric Logging
     - log_metric
     - log_metrics
 
 🔹 Artifact Management
-    - get_artifact_uri
     - log_artifact
     - log_artifacts
+    - get_artifact_uri
+
+🔹 Tracking Server Configuration
+    - set_tracking_uri
 
 -------------------------------------------------------------------------------
+
 """
 
 from datetime import datetime
@@ -181,6 +187,11 @@ class ModelManager:
 
         Returns:
             Any: The loaded model object.
+
+        Example:
+        >>> from cogflow import models
+        >>> model = models.load_model("runs:/a1b2c3d4e5/model")
+        >>> y_pred = model.predict(X_test)
         """
         self._warn_if_unhealthy("loading model")
         try:
@@ -416,9 +427,9 @@ class ModelManager:
         self._warn_if_unhealthy("deleting registered model")
 
         try:
-            logger.info("🗑️ Attempting to delete registered model: %s", model_name)
+            logger.info("Attempting to delete registered model: %s", model_name)
             self.client.delete_registered_model(model_name)
-            logger.info("✅ Successfully deleted registered model %s.", model_name)
+            logger.info("Successfully deleted registered model %s.", model_name)
             return True
 
         except Exception as e:
@@ -446,7 +457,7 @@ class ModelManager:
         validation_thresholds: Optional[dict] = None,
         baseline_model=None,
         env_manager: Optional[str] = None,
-    ) -> dict:
+    ) -> Any:
         """
         Evaluate a model and automatically log metrics & artifacts via CogFlow.
 
@@ -472,7 +483,7 @@ class ModelManager:
             env_manager (Optional[str]): Environment manager; defaults to `config.ENV_MANAGER`.
 
         Returns:
-            dict: Dictionary containing MLflow evaluation results, metrics, and artifacts.
+            Any: The evaluation result object containing metrics and artifacts.
 
         Raises:
             CogflowConnectionError: If MLflow tracking or backend API endpoints are unreachable.
@@ -498,7 +509,7 @@ class ModelManager:
         try:
             logger.info("Starting model evaluation for type %s.", model_type)
 
-            # 1️⃣ Evaluate model using MLflow
+            # Evaluate model using MLflow
             result = self.mlflow.evaluate(
                 model=model_uri,
                 data=data,
@@ -517,12 +528,12 @@ class ModelManager:
 
             logger.info("MLflow model evaluation completed successfully.")
 
-            # 2️⃣ Capture system metrics
+            # Capture system metrics
             cpu_usage = psutil.cpu_percent(interval=1)
             memory_info = psutil.virtual_memory()
             memory_used_mb = round(memory_info.used / (1024**2), 2)
 
-            # 3️⃣ Append resource metrics
+            # Append resource metrics
             metrics = dict(result.metrics)
             metrics.update(
                 {
@@ -531,23 +542,23 @@ class ModelManager:
                 }
             )
 
-            # 4️⃣ Prepare API URLs for CogFlow
+            # Prepare API URLs for CogFlow
             run_id = model_uri.split("/")[4]
             base_url = config.API_PATH
             model_id = network.uuid_to_canonical(run_id)
             url_metrics = f"{base_url}/models/{model_id}{config.VALIDATION_METRICS}"
             url_artifacts = f"{base_url}/models/{model_id}{config.VALIDATION_ARTIFACTS}"
 
-            # 5️⃣ Serialize artifacts
+            # Serialize artifacts
             serialized_artifacts = network.serialize_artifacts(result.artifacts)
 
-            # 6️⃣ Prepare headers
+            # Prepare headers
             headers = {
                 "Content-Type": "application/json",
                 "kubeflow-userid": common.get_current_user(),
             }
 
-            # 7️⃣ POST metrics
+            # POST metrics
             try:
                 network.make_post_request(
                     url_metrics,
@@ -564,7 +575,7 @@ class ModelManager:
                     re_raise=False,
                 )
 
-            # 8️⃣ POST artifacts
+            # POST artifacts
             try:
                 network.make_post_request(
                     url_artifacts,
@@ -581,13 +592,8 @@ class ModelManager:
                     re_raise=False,
                 )
 
-            # 9️⃣ Return result
-            return {
-                "metrics": metrics,
-                "artifacts": serialized_artifacts,
-                "evaluation_id": model_id,
-                "raw_result": result,
-            }
+            # Return result
+            return result
 
         except Exception as e:
             CogflowErrorHandler.handle_exception(
@@ -655,6 +661,18 @@ class ModelManager:
 
         Raises:
             CogflowModelError: If model logging or registration fails.
+
+        Example:
+            >>> from cogflow import models
+            >>> from sklearn.linear_model import LogisticRegression
+            >>> model = LogisticRegression().fit(X_train, y_train)
+            >>> models.log_model(
+            ...     model,
+            ...     artifact_path="sklearn-model",
+            ...     registered_model_name="my-logreg-model",
+            ...     input_example=X_train[:5]
+            ... )
+
         """
         self._warn_if_unhealthy("logging model")
         if signature is not None and not isinstance(signature, self.modelsignature):
@@ -747,7 +765,7 @@ class ModelManager:
             logger.info("Model successfully logged to MLflow.")
 
             # ----------------------------------------------------------
-            # 🔄 Post model metadata to CogFlow backend (if possible)
+            # Post model metadata to CogFlow backend (if possible)
             # ----------------------------------------------------------
             try:
                 active_run = self.mlflow.active_run()
@@ -921,12 +939,33 @@ class ModelManager:
             CogflowValidationError: If neither run ID nor name/version are provided.
 
         Example:
+            # 1. Resolve by run ID only
             >>> from cogflow import models
+            >>> info = models.get_full_model_uri_from_run_or_registry(model_id="a1b2c3d4e5")
+            >>> print(info["model_uri"])
+            s3://mlflow-artifacts/1234/a1b2c3d4e5/artifacts/model
+
+            # 2. Resolve by run ID and custom artifact path
+            >>> info = models.get_full_model_uri_from_run_or_registry(
+            ...     model_id="a1b2c3d4e5", artifact_path="custom_model"
+            ... )
+            >>> print(info["model_uri"])
+            s3://mlflow-artifacts/1234/a1b2c3d4e5/artifacts/custom_model
+
+            # 3. Resolve by registered model name and version
             >>> info = models.get_full_model_uri_from_run_or_registry(
             ...     model_name="sentiment-analyzer", model_version="3"
             ... )
             >>> print(info["model_uri"])
             s3://mlflow-artifacts/sentiment-analyzer/3/model
+
+            # 4. Resolve by registered model name, version, and artifact path
+            >>> info = models.get_full_model_uri_from_run_or_registry(
+            ...     model_name="sentiment-analyzer", model_version="3", artifact_path="subdir/model"
+            ... )
+            >>> print(info["model_uri"])
+            s3://mlflow-artifacts/sentiment-analyzer/3/model/subdir/model
+
         """
         if not (model_id or (model_name and model_version)):
             CogflowErrorHandler.log_and_raise(
@@ -1602,9 +1641,6 @@ class ModelManager:
                 re_raise=True,
             )
 
-    # -------------------------------------------------------------------------
-    # 🔎 Model Registry Search
-    # -------------------------------------------------------------------------
     def search_registered_models(
         self,
         filter_string: Optional[str] = None,
@@ -1744,6 +1780,19 @@ class ModelManager:
 
         Raises:
             Exception: If retrieval fails or no active run exists.
+
+        Example:
+            >>> from cogflow import models
+            >>> # Get the base artifact URI for the current run
+            >>> uri = models.get_artifact_uri()
+            >>> print(uri)
+            s3://mlflow-artifacts/1234/abcd5678/artifacts
+
+            >>> # Get the URI for a specific artifact path within the run
+            >>> uri = models.get_artifact_uri(artifact_path="plots/roc_curve.png")
+            >>> print(uri)
+            s3://mlflow-artifacts/1234/abcd5678/artifacts/plots/roc_curve.png
+
         """
         if not self._ensure_health():
             logger.warning(
@@ -1777,6 +1826,15 @@ class ModelManager:
 
         Raises:
             Exception: If experiment creation fails.
+        Example:
+            >>> from cogflow import models
+            >>> exp_id = models.create_experiment(
+            ...     name="my_new_experiment",
+            ...     artifact_location="s3://mlflow-artifacts/experiments/my_new_experiment",
+            ...     tags={"team": "mlops", "purpose": "ablation study"}
+            ... )
+            >>> print(exp_id)
+            42
         """
         if not self._ensure_health():
             logger.warning(
