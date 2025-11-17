@@ -7,7 +7,7 @@ name = "cogflow"
 dynamic = ["version"]  # ✅ version read dynamically from __init__.py
 description = "COGFlow — modular machine learning workflow management system"
 readme = "README.md"
-license = { file = "LICENSE.md" }
+license = "MIT"
 
 authors = [
   { name = "Sai Kireeti", email = "sai.kireeti@hiro-microdatacenters.nl" }
@@ -25,20 +25,12 @@ classifiers = [
 ]
 
 dependencies = [
-  "mlflow==2.22.0",
-  "kfp==1.8.22",
-  "boto3",
-  "tenacity",
-  "kubernetes",
-  "minio",
-  "awscli",
-  "s3fs",
-  "kserve==0.12.0",
-  "ray==2.9.3",
-  "kafka-python==2.0.2",
-  "pyyaml",
-  "pydantic>=2.5.0",
-  "pydantic-settings>=2.1.0"
+    "mlflow (==2.22.0)",
+    "kfp (==1.8.22)",
+    "pyyaml (>=6.0.2,<7)",
+    "pydantic (<2.0.0)",
+    "scikit-learn (==1.7.0)",
+    "tenacity"
 ]
 
 [project.optional-dependencies]
@@ -62,18 +54,24 @@ Documentation = "https://hiro-microdatacenters-bv.github.io/cogflow"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["cogflow*"]
+include = ["cogflow","cogflow*"]
 
 [tool.setuptools.package-data]
 "cogflow" = [
   "core/*",
   "utils/*",
   "api.py",
-    "config.py",
+  "config.py",
   "LICENSE.md"
 ]
+
+[tool.setuptools]
+license-files = ["LICENSE.md"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --cov=cogflow --cov-report=term-missing"
 testpaths = ["tests"]
+
+[tool.setuptools.dynamic]
+version = {attr = "cogflow.__version__"}

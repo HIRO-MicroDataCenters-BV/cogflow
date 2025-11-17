@@ -14,6 +14,8 @@ def get_logger(name: str = "cogflow") -> logging.Logger:
     from ..config import config  # lazy import to avoid circulars
 
     logger = logging.getLogger(name)
+    # IMPORTANT: prevent duplicate logs by stopping propagation
+    logger.propagate = False
     if not logger.handlers:
         handler = logging.StreamHandler()
         formatter = logging.Formatter(

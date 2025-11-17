@@ -112,7 +112,7 @@ class ModelManager:
         self.sklearn = lazy_import("mlflow.sklearn")
         self.pyfunc = lazy_import("mlflow.pyfunc")
         self.pytorch = lazy_import("mlflow.pytorch")
-        self.tensorflow = lazy_import("mlflow.tensorflow")
+        # self.tensorflow = lazy_import("mlflow.tensorflow")
         self.xgboost = lazy_import("mlflow.xgboost")
         self.lightgbm = lazy_import("mlflow.lightgbm")
         self.models = lazy_import("mlflow.models")
@@ -137,22 +137,21 @@ class ModelManager:
         logger.info("Initializing ModelManager...")
 
         if not self._healthy:
-            msg = (
-                f"MLflow tracking server at '{config.MLFLOW_TRACKING_URI}' "
-                f"is not reachable. Some operations may fail."
-            )
+            msg = "MLflow tracking server at %s is not reachable. Some operations may fail."
             if strict:
-                CogflowErrorHandler.log_and_raise(msg, CogflowConnectionError)
-            logger.warning(msg)
+                CogflowErrorHandler.log_and_raise(
+                    msg % config.MLFLOW_TRACKING_URI, CogflowConnectionError
+                )
+            logger.warning(msg, config.MLFLOW_TRACKING_URI)
         else:
-            logger.info("✅ MLflow tracking server is healthy and reachable.")
+            logger.info("MLflow tracking server is healthy and reachable.")
 
     @staticmethod
     def _check_tracking_server_health() -> bool:
         """Perform a one-time health check for the MLflow tracking server."""
         uri = config.MLFLOW_TRACKING_URI
         try:
-            network.make_get_request(uri, timeout=config.DEFAULT_TIMEOUT)
+            network.make_health_check_request(uri, timeout=config.DEFAULT_TIMEOUT)
             return True
         except Exception as e:
             CogflowErrorHandler.handle_exception(
@@ -171,7 +170,7 @@ class ModelManager:
         """Log a warning if MLflow tracking may be unreachable."""
         if not self._ensure_health():
             logger.warning(
-                "⚠️ MLflow tracking server may be unreachable — %s may fail.", action
+                "MLflow tracking server may be unreachable — %s may fail.", action
             )
 
     def load_model(self, model_uri: str, dst_path: Optional[str] = None) -> Any:
@@ -185,9 +184,9 @@ class ModelManager:
         """
         self._warn_if_unhealthy("loading model")
         try:
-            logger.info("📦 Loading model from URI: %s", model_uri)
+            logger.info("Loading model from URI: %s", model_uri)
             model = self.mlflow.sklearn.load_model(model_uri, dst_path)
-            logger.info("✅ Model loaded successfully from: %s", model_uri)
+            logger.info("Model loaded successfully from: %s", model_uri)
             return model
         except FileNotFoundError as e:
             CogflowErrorHandler.handle_exception(
@@ -247,7 +246,7 @@ class ModelManager:
         await_registration_for = await_registration_for or config.AWAIT_REGISTRATION_FOR
 
         try:
-            logger.info("📦 Registering model '%s from URI: %s", model_name, model_uri)
+            logger.info("Registering model '%s from URI: %s", model_name, model_uri)
             model_version = self.mlflow.register_model(
                 model_uri=model_uri,
                 name=model_name,
@@ -255,7 +254,7 @@ class ModelManager:
                 tags=tags,
             )
             logger.info(
-                "✅ Successfully registered model %s (version=%s).",
+                "Successfully registered model %s (version=%s).",
                 model_name,
                 model_version.version,
             )
@@ -305,11 +304,11 @@ class ModelManager:
         self._warn_if_unhealthy("creating registered model")
 
         try:
-            logger.info("🆕 Creating registered model: %s", model)
+            logger.info("Creating registered model: %s", model)
             registered_model = self.client.create_registered_model(
                 name=model, tags=tags, description=description
             )
-            logger.info("✅ Registered model %s created successfully.", model)
+            logger.info("Registered model %s created successfully.", model)
             return registered_model
 
         except Exception as e:
@@ -368,7 +367,7 @@ class ModelManager:
         await_creation_for = await_creation_for or config.AWAIT_REGISTRATION_FOR
 
         try:
-            logger.info("📦 Creating model version for %s from %s", model, source)
+            logger.info("Creating model version for %s from %s", model, source)
             version = self.client.create_model_version(
                 name=model,
                 source=source,
@@ -379,7 +378,7 @@ class ModelManager:
                 await_creation_for=await_creation_for,
             )
             logger.info(
-                "✅ Model version %s created successfully for %s.",
+                "Model version %s created successfully for %s.",
                 version.version,
                 model,
             )
@@ -497,7 +496,7 @@ class ModelManager:
         env_manager = env_manager or config.ENV_MANAGER
 
         try:
-            logger.info("⚙️ Starting model evaluation for type %s.", model_type)
+            logger.info("Starting model evaluation for type %s.", model_type)
 
             # 1️⃣ Evaluate model using MLflow
             result = self.mlflow.evaluate(
@@ -516,7 +515,7 @@ class ModelManager:
                 env_manager=env_manager,
             )
 
-            logger.info("✅ MLflow model evaluation completed successfully.")
+            logger.info("MLflow model evaluation completed successfully.")
 
             # 2️⃣ Capture system metrics
             cpu_usage = psutil.cpu_percent(interval=1)
@@ -534,7 +533,7 @@ class ModelManager:
 
             # 4️⃣ Prepare API URLs for CogFlow
             run_id = model_uri.split("/")[4]
-            base_url = config.COG_API_PATH
+            base_url = config.API_PATH
             model_id = network.uuid_to_canonical(run_id)
             url_metrics = f"{base_url}/models/{model_id}{config.VALIDATION_METRICS}"
             url_artifacts = f"{base_url}/models/{model_id}{config.VALIDATION_ARTIFACTS}"
@@ -556,7 +555,7 @@ class ModelManager:
                     headers=headers,
                     timeout=config.DEFAULT_TIMEOUT,
                 )
-                logger.info("📊 Metrics successfully posted to %s", url_metrics)
+                logger.info("Metrics successfully posted to %s", url_metrics)
             except Exception as e:
                 CogflowErrorHandler.handle_exception(
                     e,
@@ -573,7 +572,7 @@ class ModelManager:
                     headers=headers,
                     timeout=config.DEFAULT_TIMEOUT,
                 )
-                logger.info("🧾 Artifacts successfully posted to %s", url_artifacts)
+                logger.info("Artifacts successfully posted to %s", url_artifacts)
             except Exception as e:
                 CogflowErrorHandler.handle_exception(
                     e,
@@ -695,7 +694,7 @@ class ModelManager:
 
             if is_pyfunc:
                 logger.info(
-                    "📦 Logging custom PyFunc model using MLflow.pyfunc.log_model()"
+                    "Logging custom PyFunc model using MLflow.pyfunc.log_model()"
                 )
                 result = self.mlflow.pyfunc.log_model(
                     artifact_path=artifact_path,
@@ -710,7 +709,7 @@ class ModelManager:
                 )
             elif is_pytorch:
                 # Log using PyTorchPlugin
-                logger.info("📦 Logging PyTorch model using MLflow.pytorch.log_model()")
+                logger.info("Logging PyTorch model using MLflow.pytorch.log_model()")
                 result = self.pytorch.log_model(
                     pytorch_model=model,
                     artifact_path=artifact_path,
@@ -725,7 +724,7 @@ class ModelManager:
                 )
             elif is_sklearn:
                 logger.info(
-                    "📦 Logging scikit-learn model using MLflow.sklearn.log_model()"
+                    "Logging scikit-learn model using MLflow.sklearn.log_model()"
                 )
                 result = self.sklearn.log_model(
                     sk_model=model,
@@ -745,7 +744,7 @@ class ModelManager:
             else:
                 raise ValueError("Unsupported model type for logging")
 
-            logger.info("✅ Model successfully logged to MLflow.")
+            logger.info("Model successfully logged to MLflow.")
 
             # ----------------------------------------------------------
             # 🔄 Post model metadata to CogFlow backend (if possible)
@@ -778,16 +777,16 @@ class ModelManager:
                     "user_id": common.get_current_user(),
                 }
 
-                url = f"{config.COG_API_PATH}{config.LOG_MODEL}"
+                url = f"{config.API_PATH}{config.LOG_MODEL}"
 
                 headers = {"kubeflow-userid": model_dict["user_id"]}
 
                 network.make_post_request(url=url, data=model_dict, headers=headers)
-                logger.info("📤 Logged model metadata to CogFlow backend: %s", url)
+                logger.info("Logged model metadata to CogFlow backend: %s", url)
 
             except Exception as post_err:
                 logger.warning(
-                    "⚠️ Failed to post model metadata to CogFlow backend: %s",
+                    "Failed to post model metadata to CogFlow backend: %s",
                     str(post_err),
                 )
 
@@ -832,11 +831,9 @@ class ModelManager:
         self._warn_if_unhealthy("searching model versions")
 
         try:
-            logger.info(
-                "🔍 Searching for model versions with filter: %s", filter_string
-            )
+            logger.info("Searching for model versions with filter: %s", filter_string)
             results = self.client.search_model_versions(filter_string=filter_string)
-            logger.info("✅ Found %s model version(s).", len(results))
+            logger.info("Found %s model version(s).", len(results))
             return results
 
         except Exception as e:
@@ -874,9 +871,7 @@ class ModelManager:
         self._warn_if_unhealthy("fetching model URI")
 
         try:
-            logger.info(
-                "🔗 Fetching model URI for %s (version %s)", model_name, version
-            )
+            logger.info("Fetching model URI for %s (version %s)", model_name, version)
             mv = self.client.get_model_version(name=model_name, version=version)
             uri = mv.source
             logger.debug("Resolved model URI: %s", uri)
@@ -1000,7 +995,7 @@ class ModelManager:
                     model_version = results[0].version
 
             logger.info(
-                "✅ Resolved model URI for %s: %s",
+                "Resolved model URI for %s: %s",
                 model_name or model_id,
                 model_uri,
             )
@@ -1168,9 +1163,7 @@ class ModelManager:
                 tags=tags,
                 description=description,
             )
-            logger.info(
-                "✅ MLflow run started successfully (run_id=%s).", run.info.run_id
-            )
+            logger.info("MLflow run started successfully (run_id=%s).", run.info.run_id)
             return run
 
         except Exception as e:
@@ -1202,9 +1195,9 @@ class ModelManager:
         self._warn_if_unhealthy("ending MLflow run")
 
         try:
-            logger.info("🛑 Ending the current MLflow run...")
+            logger.info("Ending the current MLflow run...")
             run = self.mlflow.end_run()
-            logger.info("✅ MLflow run ended successfully.")
+            logger.info("MLflow run ended successfully.")
             return run
 
         except Exception as e:
@@ -1245,12 +1238,12 @@ class ModelManager:
 
         try:
             logger.info(
-                "🧪 Setting experiment: name=%s, id=%s", experiment_name, experiment_id
+                "Setting experiment: name=%s, id=%s", experiment_name, experiment_id
             )
             self.mlflow.set_experiment(
                 experiment_name=experiment_name, experiment_id=experiment_id
             )
-            logger.info("✅ Active experiment set successfully.")
+            logger.info("Active experiment set successfully.")
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1283,9 +1276,9 @@ class ModelManager:
         self._warn_if_unhealthy("setting tag")
 
         try:
-            logger.debug("🏷️ Setting tag %s=%s", key, value)
+            logger.debug("Setting tag %s=%s", key, value)
             self.mlflow.set_tag(key=key, value=value)
-            logger.info("✅ Tag %s set successfully.", key)
+            logger.info("Tag %s set successfully.", key)
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1371,7 +1364,7 @@ class ModelManager:
         self._warn_if_unhealthy("searching runs")
 
         try:
-            logger.info("🔍 Searching MLflow runs with filter: %s", filter_string)
+            logger.info("Searching MLflow runs with filter: %s", filter_string)
             results = self.client.search_runs(
                 experiment_ids=experiment_ids,
                 filter_string=filter_string,
@@ -1381,7 +1374,7 @@ class ModelManager:
                 order_by=order_by,
                 page_token=page_token,
             )
-            logger.info("✅ Found %s matching runs.", len(results))
+            logger.info("Found %s matching runs.", len(results))
             return results
 
         except Exception as e:
@@ -1417,9 +1410,9 @@ class ModelManager:
         self._warn_if_unhealthy("logging parameter")
 
         try:
-            logger.debug("🧩 Logging parameter: %s=%s", key, value)
+            logger.debug("Logging parameter: %s=%s", key, value)
             self.mlflow.log_param(key, value)
-            logger.info("✅ Parameter %s logged successfully.", key)
+            logger.info("Parameter %s logged successfully.", key)
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1450,9 +1443,9 @@ class ModelManager:
         self._warn_if_unhealthy("logging multiple parameters")
 
         try:
-            logger.debug("🧩 Logging multiple parameters: %s", params)
+            logger.debug("Logging multiple parameters: %s", params)
             self.mlflow.log_params(params)
-            logger.info("✅ %s parameters logged successfully.", len(params))
+            logger.info("%s parameters logged successfully.", len(params))
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1487,9 +1480,9 @@ class ModelManager:
         self._warn_if_unhealthy("logging metric")
 
         try:
-            logger.debug("📈 Logging metric: %s=%s, step=%s", key, value, step)
+            logger.debug("Logging metric: %s=%s, step=%s", key, value, step)
             self.mlflow.log_metric(key, value, step=step)
-            logger.info("✅ Metric %s logged successfully at step %s.", key, step)
+            logger.info("Metric %s logged successfully at step %s.", key, step)
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1523,10 +1516,10 @@ class ModelManager:
         self._warn_if_unhealthy("logging multiple metrics")
 
         try:
-            logger.debug("📊 Logging multiple metrics: %s, step=%s", metrics, step)
+            logger.debug("Logging multiple metrics: %s, step=%s", metrics, step)
             self.mlflow.log_metrics(metrics, step=step)
             logger.info(
-                "✅ %s metrics logged successfully at step %s.", len(metrics), step
+                "%s metrics logged successfully at step %s.", len(metrics), step
             )
         except Exception as e:
             CogflowErrorHandler.handle_exception(
@@ -1563,9 +1556,9 @@ class ModelManager:
         self._warn_if_unhealthy("logging artifact")
 
         try:
-            logger.debug("📁 Logging artifact: %s", local_path)
+            logger.debug("Logging artifact: %s", local_path)
             self.mlflow.log_artifact(local_path=local_path, artifact_path=artifact_path)
-            logger.info("✅ Artifact logged successfully.")
+            logger.info("Artifact logged successfully.")
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1598,9 +1591,9 @@ class ModelManager:
         self._warn_if_unhealthy("logging multiple artifacts")
 
         try:
-            logger.debug("📂 Logging artifacts from directory: %s", local_dir)
+            logger.debug("Logging artifacts from directory: %s", local_dir)
             self.mlflow.log_artifacts(local_dir=local_dir, artifact_path=artifact_path)
-            logger.info("✅ All artifacts logged successfully.")
+            logger.info("All artifacts logged successfully.")
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1658,7 +1651,7 @@ class ModelManager:
         self._warn_if_unhealthy("searching registered models")
         max_results = max_results or config.MAX_RESULTS
         try:
-            logger.debug("🔍 Searching registered models: filter=%s", filter_string)
+            logger.debug("Searching registered models: filter=%s", filter_string)
             registered_models = self.client.search_registered_models(
                 filter_string=filter_string,
                 max_results=max_results,
@@ -1666,7 +1659,7 @@ class ModelManager:
                 page_token=page_token,
             )
             results = [rm.to_dictionary() for rm in registered_models]
-            logger.info("✅ Found %s registered model(s).", len(results))
+            logger.info("Found %s registered model(s).", len(results))
             return results
         except Exception as e:
             CogflowErrorHandler.handle_exception(
@@ -1701,9 +1694,9 @@ class ModelManager:
         try:
             logger.info("Enabling MLflow autologging.")
             self.mlflow.autolog()
-            logger.info("✅ MLflow autologging successfully enabled.")
+            logger.info("MLflow autologging successfully enabled.")
         except Exception as e:
-            logger.error("❌ Failed to enable MLflow autologging: %s", e)
+            logger.error("Failed to enable MLflow autologging: %s", e)
             raise
 
     def set_tracking_uri(self, tracking_uri: str) -> None:
@@ -1730,9 +1723,9 @@ class ModelManager:
         try:
             logger.info("Setting MLflow tracking URI: %s", tracking_uri)
             self.mlflow.set_tracking_uri(tracking_uri)
-            logger.info("✅ MLflow tracking URI updated successfully.")
+            logger.info("MLflow tracking URI updated successfully.")
         except Exception as e:
-            logger.error("❌ Failed to set MLflow tracking URI: %s", e)
+            logger.error("Failed to set MLflow tracking URI: %s", e)
             raise
 
     def get_artifact_uri(self, artifact_path: Optional[str] = None) -> str:
@@ -1762,7 +1755,7 @@ class ModelManager:
             logger.debug("Retrieved artifact URI: %s", uri)
             return uri
         except Exception as e:
-            logger.error("❌ Failed to get artifact URI: %s", e)
+            logger.error("Failed to get artifact URI: %s", e)
             raise
 
     def create_experiment(
@@ -1795,12 +1788,10 @@ class ModelManager:
             exp_id = self.client.create_experiment(
                 name=name, artifact_location=artifact_location, tags=tags
             )
-            logger.info(
-                "✅ Experiment %s created successfully with ID: %s", name, exp_id
-            )
+            logger.info("Experiment %s created successfully with ID: %s", name, exp_id)
             return exp_id
         except Exception as e:
-            logger.error("❌ Failed to create experiment %s: %s", name, e)
+            logger.error("Failed to create experiment %s: %s", name, e)
             raise
 
 
@@ -1808,44 +1799,14 @@ class ModelManager:
 _models = ModelManager()
 
 # Exposed SDK-level methods (single source of truth)
-load_model = _models.load_model
-log_model = _models.log_model
-evaluate = _models.evaluate
-register_model = _models.register_model
-autolog = _models.autolog
-set_experiment = _models.set_experiment
-start_run = _models.start_run
-end_run = _models.end_run
-log_metric = _models.log_metric
-log_param = _models.log_param
-log_artifact = _models.log_artifact
-log_artifacts = _models.log_artifacts
-log_params = _models.log_params
-log_metrics = _models.log_metrics
-get_full_model_uri_from_run_or_registry = (
-    _models.get_full_model_uri_from_run_or_registry
-)
-set_tag = _models.set_tag
-create_experiment = _models.create_experiment
+for attr_name in dir(ModelManager):
+    # Skip private methods and dunder methods
+    if attr_name.startswith("_"):
+        continue
 
-# Public exports (used by top-level cogflow)
-__all__ = [
-    "ModelManager",
-    "load_model",
-    "log_model",
-    "evaluate",
-    "register_model",
-    "autolog",
-    "set_experiment",
-    "start_run",
-    "end_run",
-    "log_metric",
-    "log_param",
-    "log_artifact",
-    "log_artifacts",
-    "log_params",
-    "log_metrics",
-    "get_full_model_uri_from_run_or_registry",
-    "set_tag",
-    "create_experiment",
-]
+    attr = getattr(ModelManager, attr_name)
+
+    # Only export methods (callables) that belong to ModelManager
+    if callable(attr):
+        # Bind the method to the singleton instance
+        globals()[attr_name] = getattr(_models, attr_name)

@@ -182,6 +182,39 @@ def make_delete_request(
 # ---------------------------------------------------------------------
 
 
+def make_health_check_request(
+    url: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    headers: Optional[dict] = None,
+) -> bool:
+    """
+    Lightweight GET request used only for health checks.
+
+    - Does NOT expect JSON.
+    - Treats ANY 2xx response as success.
+    - Does NOT retry aggressively (configurable if needed).
+    """
+
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+
+        if 200 <= response.status_code < 300:
+            logger.info("Health check to %s succeeded (%s).", url, response.status_code)
+            return True
+
+        logger.warning(
+            "Health check to %s failed (%s): %s",
+            url,
+            response.status_code,
+            response.text[:200],
+        )
+        return False
+
+    except requests.RequestException as exp:
+        logger.exception("Health check request to %s failed: %s", url, exp)
+        return False
+
+
 def custom_serializer(obj: Any) -> str:
     """Serialize objects like datetime to ISO format."""
     if isinstance(obj, datetime):

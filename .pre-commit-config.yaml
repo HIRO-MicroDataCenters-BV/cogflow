@@ -5,7 +5,7 @@ repos:
     -   id: black
         name: Run black
         args:
-        - --exclude='(examples|venv|pvenv|wrapper)'
+        - --exclude='(examples|venv|pvenv|wrapper|venv311)'
 
 -   repo: https://github.com/hhatto/autopep8
     rev: v2.3.1
@@ -15,7 +15,7 @@ repos:
         args:
         - --in-place
         - --max-line-length=120
-        - --exclude='(examples|venv|pvenv|wrapper)'
+        - --exclude='(examples|venv|pvenv|wrapper|venv311)'
         - --ignore=E203,W503
 
 -   repo: local
@@ -28,7 +28,7 @@ repos:
         - python
         args:
         - --rcfile=.pylintrc
-        exclude: ^(examples|wrapper|venv|pvenv)/
+        exclude: ^(\.venv311|examples|wrapper|venv|pvenv)/
 
 #-   repo: local
 #    hooks:
