@@ -30,3 +30,16 @@ repos:
         args:
           - --rcfile=.pylintrc
         exclude: ^(\.venv311|\.venv|venv|pvenv|wrapper|examples)/
+
+  -   repo: local
+      hooks:
+      -   id: pytest
+          name: Run Pytest
+          entry: pytest -s
+          language: system
+          pass_filenames: false
+          always_run: true
+          args:
+          - tests
+          files: \.py$
+          exclude: ^(\.venv311|\.venv|venv|pvenv|wrapper|examples)/

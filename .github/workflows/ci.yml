@@ -33,4 +33,5 @@ jobs:
         run: |
           find . -name '*.py' | xargs pylint --rcfile=./.pylintrc --max-line-length=120
         continue-on-error: false
-
+      - name: Run tests
+        run: pytest tests/
