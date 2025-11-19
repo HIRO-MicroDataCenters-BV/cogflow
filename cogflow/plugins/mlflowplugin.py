@@ -9,8 +9,11 @@ import mlflow as ml
 import numpy as np
 import pandas as pd
 import requests
+from mlflow.entities import ViewType, Run
 from mlflow.exceptions import MlflowException
 from mlflow.models.signature import ModelSignature
+from mlflow.store.entities import PagedList
+from mlflow.store.tracking import SEARCH_MAX_RESULTS_DEFAULT
 from mlflow.tracking import MlflowClient
 from scipy.sparse import csr_matrix, csc_matrix
 from .. import plugin_config
@@ -86,6 +89,7 @@ class MlflowPlugin:
         """
         # Verify plugin activation
         PluginManager().verify_activation(MlflowPlugin().section)
+        PluginManager().load_config()
 
         return self.cogclient.delete_registered_model(model_name)
 
@@ -193,6 +197,7 @@ class MlflowPlugin:
             dict: Evaluation results including various metrics and artifacts.
         """
         PluginManager().verify_activation(MlflowPlugin().section)
+        PluginManager().load_config()
         return self.mlflow.evaluate(
             model=model,
             data=data,
@@ -499,6 +504,38 @@ class MlflowPlugin:
             step=step,
         )
 
+    def log_metrics(
+        self, metrics: Dict[str, float], step: Optional[int] = None
+    ) -> None:
+        """
+        Log multiple metrics for the current run. If no run is active, this method will create a new
+        active run.
+
+        :param metrics: Dictionary of metric_name: String -> value: Float. Note that some special
+                        values such as +/- Infinity may be replaced by other values depending on
+                        the store. For example, sql based store may replace +/- Infinity with
+                        max / min float values.
+        :param step: A single integer step at which to log the specified
+                     Metrics. If unspecified, each metric is logged at step zero.
+
+        :returns: None
+
+        . test-code-block:: python
+            :caption: Example
+
+            import cogflow
+
+            metrics = {"mse": 2500.00, "rmse": 50.00}
+
+            # Log a batch of metrics
+            with cogflow.start_run():
+                cogflow.log_metrics(metrics)
+        """
+        # Verify plugin activation
+        PluginManager().verify_activation(MlflowPlugin().section)
+
+        return self.mlflow.log_metrics(metrics, step=step)
+
     def log_model(
         self,
         sk_model,
@@ -666,6 +703,7 @@ class MlflowPlugin:
         Raises:
             ValueError / Exception: If inputs are invalid or model path cannot be resolved.
         """
+        PluginManager().load_config()
         client = self.cogclient
 
         # 1. If model_name & model_version provided → get run_id from registry
@@ -827,3 +865,206 @@ class MlflowPlugin:
         """
         run = self.mlflow.get_run(run_id)
         return run.info.experiment_id
+
+    def detect_model_format(self, model_uri: str) -> str:
+        """
+        Detect the model format (flavor) from an MLflow model URI.
+
+        Args:
+            model_uri (str): Path/URI to the MLflow model.
+
+        Returns:
+            str: "mlflow" if pyfunc flavor is present,
+                 "sklearn" if sklearn flavor is present,
+                 otherwise "unknown".
+        """
+        model_info = self.mlflow.models.get_model_info(model_uri)
+        flavors = model_info.flavors.keys()
+
+        if "sklearn" in flavors:
+            return "sklearn"
+        elif "pytorch" in flavors:
+            return "pytorch"
+        elif "python_function" in flavors:
+            return "mlflow"
+        else:
+            return "unknown"
+
+    def detect_model_type(self, model_uri: str) -> str:
+        """
+        Detect the model type (flavor) from an MLflow model URI.
+
+        Args:
+            model_uri (str): Path/URI to the MLflow model.
+
+        Returns:
+            str: "pyfunc" if pyfunc flavor is present,
+                 "sklearn" if sklearn flavor is present,
+                 otherwise "unknown".
+        """
+        model_info = self.mlflow.models.get_model_info(model_uri)
+        flavors = model_info.flavors.keys()
+
+        if "sklearn" in flavors:
+            return "sklearn"
+        elif "pytorch" in flavors:
+            return "pytorch"
+        elif "python_function" in flavors:
+            return "pyfunc"
+        else:
+            return "unknown"
+
+    def log_params(self, params: Dict[str, Any]) -> None:
+        """
+        Log a batch of params for the current run. If no run is active, this method will create a
+        new active run.
+
+        :param params: Dictionary of param_name: String -> value: (String, but will be string-ified if
+                       not)
+        :returns: None
+
+        . test-code-block:: python
+            :caption: Example
+
+            import cogflow
+
+            params = {"learning_rate": 0.01, "n_estimators": 10}
+
+            # Log a batch of parameters
+            with cogflow.start_run():
+                cogflow.log_params(params)
+        """
+        return self.mlflow.log_params(params)
+
+    def log_artifacts(
+        self, local_dir: str, artifact_path: Optional[str] = None
+    ) -> None:
+        """
+        Log all the contents of a local directory as artifacts of the run. If no run is active,
+        this method will create a new active run.
+
+        :param local_dir: Path to the directory of files to write.
+        :param artifact_path: If provided, the directory in ``artifact_uri`` to write to.
+
+        . test-code-block:: python
+            :caption: Example
+
+            import json
+            import os
+            import cogflow
+
+            # Create some files to preserve as artifacts
+            features = "rooms, zipcode, median_price, school_rating, transport"
+            data = {"state": "TX", "Available": 25, "Type": "Detached"}
+
+            # Create a couple of artifact files under the directory "data"
+            os.makedirs("data", exist_ok=True)
+            with open("data/data.json", 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+            with open("data/features.txt", 'w') as f:
+                f.write(features)
+
+            # Write all files in "data" to root artifact_uri/states
+            with cogflow.start_run():
+                cogflow.log_artifacts("data", artifact_path="states")
+        """
+        return self.mlflow.log_artifacts(
+            local_dir=local_dir, artifact_path=artifact_path
+        )
+
+    def search_runs(
+        self,
+        experiment_ids: List[str],
+        filter_string: str = "",
+        run_view_type: int = ViewType.ACTIVE_ONLY,
+        max_results: int = SEARCH_MAX_RESULTS_DEFAULT,
+        order_by: Optional[List[str]] = None,
+        page_token: Optional[str] = None,
+    ) -> PagedList[Run]:
+        """
+        Search for Runs that fit the specified criteria.
+
+        :param experiment_ids: List of experiment IDs, or a single int or string id.
+        :param filter_string: Filter query string, defaults to searching all runs.
+        :param run_view_type: one of enum values ACTIVE_ONLY, DELETED_ONLY, or ALL runs
+                              defined in :py:class:`mlflow.entities.ViewType`.
+        :param max_results: Maximum number of runs desired.
+        :param order_by: List of columns to order by (e.g., "metrics.rmse"). The ``order_by`` column
+                     can contain an optional ``DESC`` or ``ASC`` value. The default is ``ASC``.
+                     The default ordering is to sort by ``start_time DESC``, then ``run_id``.
+        :param page_token: Token specifying the next page of results. It should be obtained from
+            a ``search_runs`` call.
+
+        :return: A :py:class:`PagedList <mlflow.store.entities.PagedList>` of
+            :py:class:`Run <mlflow.entities.Run>` objects that satisfy the search expressions.
+            If the underlying tracking store supports pagination, the token for the next page may
+            be obtained via the ``token`` attribute of the returned object.
+
+        . code-block:: python
+            :caption: Example
+
+            import cogflow
+            from cogflow import cogclient
+
+            def print_run_info(runs):
+                for r in runs:
+                    print("run_id: {}".format(r.info.run_id))
+                    print("lifecycle_stage: {}".format(r.info.lifecycle_stage))
+                    print("metrics: {}".format(r.data.metrics))
+
+                    # Exclude cogflow system tags
+
+                    tags = {k: v for k, v in r.data.tags.items() if not k.startswith("mlflow.")}
+                    print("tags: {}".format(tags))
+
+            # Create an experiment and log two runs with metrics and tags under the experiment
+            experiment_id = cogflow.create_experiment("Social NLP Experiments")
+            with cogflow.start_run(experiment_id=experiment_id) as run:
+                cogflow.log_metric("m", 1.55)
+                cogflow.set_tag("s.release", "1.1.0-RC")
+            with cogflow.start_run(experiment_id=experiment_id):
+                cogflow.log_metric("m", 2.50)
+                cogflow.set_tag("s.release", "1.2.0-GA")
+
+            # Search all runs under experiment id and order them by
+            # descending value of the metric 'm'
+            client = cogclient
+            runs = client.search_runs(experiment_id, order_by=["metrics.m DESC"])
+            print_run_info(runs)
+            print("--")
+
+            # Delete the first run
+            client.delete_run(run_id=run.info.run_id)
+
+            # Search only deleted runs under the experiment id and use a case-insensitive pattern
+            # in the filter_string for the tag.
+            filter_string = "tags.s.release ILIKE '%rc%'"
+            runs = client.search_runs(experiment_id, run_view_type=ViewType.DELETED_ONLY,
+                                        filter_string=filter_string)
+            print_run_info(runs)
+
+        . code-block:: text
+            :caption: Output
+
+            run_id: 0efb2a68833d4ee7860a964fad31cb3f
+            lifecycle_stage: active
+            metrics: {'m': 2.5}
+            tags: {'s.release': '1.2.0-GA'}
+            run_id: 7ab027fd72ee4527a5ec5eafebb923b8
+            lifecycle_stage: active
+            metrics: {'m': 1.55}
+            tags: {'s.release': '1.1.0-RC'}
+            --
+            run_id: 7ab027fd72ee4527a5ec5eafebb923b8
+            lifecycle_stage: deleted
+            metrics: {'m': 1.55}
+            tags: {'s.release': '1.1.0-RC'}
+        """
+        return self.cogclient.search_runs(
+            experiment_ids=experiment_ids,
+            filter_string=filter_string,
+            run_view_type=run_view_type,
+            max_results=max_results,
+            order_by=order_by,
+            page_token=page_token,
+        )

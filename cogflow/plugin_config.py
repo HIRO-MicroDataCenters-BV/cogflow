@@ -33,7 +33,8 @@ SECRET_ACCESS_KEY = "AWS_SECRET_ACCESS_KEY"
 TIMER_IN_SEC = 10
 ML_TOOL = "mlflow"
 BUCKET_NAME = "mlflow"
-MODEL_TYPE = "sklearn"
+MODEL_TYPE = "mlflow"
+COMPONENTS_BUCKET_NAME = "components"
 
 MINIO_ENDPOINT_URL = "MLFLOW_S3_ENDPOINT_URL"
 MINIO_ACCESS_KEY = "AWS_ACCESS_KEY_ID"
@@ -44,7 +45,7 @@ TESTING_CONFIG = "config.app_config.TestingConfig"
 
 FILE_TYPE = 0
 
-API_BASEPATH = "API_BASEPATH"
+API_BASEPATH = "API_PATH"
 TIME_OUT = 300
 
 # log_model method parameters
@@ -61,10 +62,24 @@ MAX_RESULTS = 100
 # create_fl_component_from_func method parameters
 CONTAINER_PORT = 8080
 
+# DEX configuration
+POD_NAME = "dex-auth-0"
+NAMESPACE = "kubeflow"
+CONTAINER = "dex"
+CONFIG_PATH = "/etc/dex/config.docker.yaml"
+GRPC_PORT = 5557
+
 
 # Docker images
 BASE_IMAGE = "hiroregistry/cogflow:latest"
 FL_COGFLOW_BASE_IMAGE = "hiroregistry/flcogflow:latest"
+TRANSFORMER_BASE_IMAGE = "hiroregistry/k8-transformer:latest"
+
+# endpoints
+DATASETS = "/datasets"
+PROMETHEUS_DATASETS = "/datasets/prometheus"
+TRAINING_BUILDER_COMPONENTS = "/training-builder-components"
+
 
 # MESSAGE_BROKER plugin
 MESSAGE_BROKER_DATASETS_URL = "/datasets"

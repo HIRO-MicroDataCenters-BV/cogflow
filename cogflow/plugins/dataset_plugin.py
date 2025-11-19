@@ -4,7 +4,6 @@ This module provides functionality related to Dataset upload via plugin.
 
 import io
 import os
-import json
 from typing import Union
 from urllib.parse import urlparse
 import numpy as np
@@ -15,9 +14,10 @@ from mlflow.models.signature import ModelSignature
 from scipy.sparse import csr_matrix, csc_matrix
 from .. import plugin_config
 from ..pluginmanager import PluginManager
-from ..util import make_post_request
+from ..util import make_post_request, make_get_request
 from .notebook_plugin import NotebookPlugin
 from .mlflowplugin import MlflowPlugin
+from .kubeflowplugin import KubeflowPlugin
 
 
 class DatasetMetadata:
@@ -25,11 +25,11 @@ class DatasetMetadata:
     Class used for  metadata of Dataset
     """
 
-    def __init__(self, name, description, source, fmt: str):
+    def __init__(self, name, description, file_path, dataset_type: str):
         self.name = name
         self.description = description
-        self.source = source
-        self.format = fmt
+        self.file_path = file_path
+        self.dataset_type = dataset_type
 
     def is_file_path(self):
         """
@@ -37,7 +37,7 @@ class DatasetMetadata:
             is local file path
         :return: boolean true or false
         """
-        return os.path.isfile(self.source)
+        return os.path.isfile(self.file_path)
 
     def is_external_url(self):
         """
@@ -45,7 +45,7 @@ class DatasetMetadata:
             external url
         :return: boolean true or false
         """
-        parsed_url = urlparse(self.source)
+        parsed_url = urlparse(self.file_path)
         return bool(parsed_url.scheme) and parsed_url.netloc
 
     def to_dict(self):
@@ -55,8 +55,8 @@ class DatasetMetadata:
         return {
             "name": self.name,
             "description": self.description,
-            "source": self.source,
-            "format": self.format,
+            "file_path": self.file_path,
+            "dataset_type": self.dataset_type,
         }
 
 
@@ -201,68 +201,66 @@ class DatasetPlugin:
             return False
 
     @staticmethod
-    def register_dataset(details: DatasetMetadata):
+    def register_dataset(
+        dataset_type: int, name: str, file_path: str, description: str = None
+    ):
         """
-        Register a dataset with the given details.
+        Register a dataset by uploading a file to the API using make_post_request.
 
-        Args:
-            details (DatasetMetadata): Details of the dataset to register, including name, source,
-                description, and other metadata.
-
-        Returns:
-            dict: A dictionary containing information about the registered dataset, including its
-                ID, name, description, and other metadata.
-
-        Raises:
-            Exception: If an error occurs during the registration process.
+        :param dataset_type: 0 (train), 1 (inference), 2 (both)
+        :param name: Dataset name
+        :param description: Optional dataset description
+        :param file_path: Path to the dataset file
+        :return: API response in JSON
         """
-        # Verify plugin activation
-        PluginManager().verify_activation(DatasetPlugin().section)
-
         PluginManager().load_config()
 
-        try:
-            output_file = details.name.replace(
-                " ", "_"
-            )  # if details.name has spaces in it
-            params = None
-            data = None
-            files = None
-            if details.is_external_url():
-                # If the dataset is hosted online
-                path = PluginManager().load_path("dataset_register")
-                data = {
-                    "url": details.source,
-                    "file_name": output_file,
-                }
-            elif details.is_file_path():
-                path = PluginManager().load_path("dataset")
-                params = {
-                    "dataset_type": 1,
-                    "dataset_source_type": 0,
-                    "dataset_name": details.name,
-                    "description": details.description,
-                }
-                files = details.source
-            else:
-                print("Not a valid source")
-                raise Exception("Not a valid source")
-            url = os.getenv(plugin_config.API_BASEPATH) + path
-            return make_post_request(url=url, data=data, params=params, files=files)
-        except Exception as exp:
-            print(str(exp))
-            raise exp
+        url = f"{os.getenv('API_PATH')}/datasets/file"
 
-    def save_dataset_details(self, dataset):
+        # Form fields for multipart/form-data
+        form_data = {
+            "dataset_type": str(dataset_type),
+            "name": name,
+            "description": description or "",
+        }
+
+        # Header with kubeflow user id
+        headers = {
+            "kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()
+        }
+
+        # Files dictionary; key must match FastAPI parameter name "files"
+        with open(file_path, "rb") as f:
+            files = {"files": (os.path.basename(file_path), f)}
+            response = make_post_request(
+                url=url, data=form_data, files=files, headers=headers
+            )
+
+        return response
+
+    def save_dataset_details(self, dataset_metadata):
         """
-            method to save dataset details
-        :param dataset: dataset details
-        :return: dataset_id from the db
+        Save dataset details by registering the dataset via the API.
+
+        Parameters
+        ----------
+        dataset_metadata : DatasetMetadata
+            Instance containing name, description, file_path, and dataset_type.
+
+        Returns
+        -------
+        str
+            The dataset_id returned by the API.
         """
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
 
-        response = self.register_dataset(dataset)
+        response = self.register_dataset(
+            dataset_type=int(dataset_metadata.dataset_type),
+            name=dataset_metadata.name,
+            file_path=dataset_metadata.file_path,
+            description=dataset_metadata.description,
+        )
         dataset_id = response["data"]["dataset_id"]
         return dataset_id
 
@@ -358,33 +356,112 @@ class DatasetPlugin:
         NotebookPlugin().link_model_to_dataset(dataset_id, model_id)
         return result
 
-    def get_dataset(self, name):
+    @staticmethod
+    def get_dataset(dataset_id: int, endpoint: str):
         """
-        get dataset file after register it by giving the name
+        Generic method to call dataset API endpoints like /datasets/prometheus/{id}.
+
+        :param dataset_id: Dataset ID to fetch
+        :param endpoint: API endpoint path (e.g., "/datasets/prometheus")
+        :return: API JSON response
+        """
+        PluginManager().load_config()
+
+        url = f"{os.getenv(plugin_config.API_BASEPATH)}{endpoint}"
+
+        headers = {
+            "kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()
+        }
+
+        resp = make_get_request(
+            url=url,
+            path_params=dataset_id,
+            headers=headers,
+        )
+
+        return resp.get("data")
+
+    def download_from_s3(self, file_path: str, file_name: str, output_file_path: str):
+        """
+        Download a file from S3/MinIO storage.
+
+        :param file_path: S3 path (e.g., "s3://bucket-name/path")
+        :param file_name: Name of the file to download
+        :param output_file_path: Local path where file will be saved
+        :return: str: Path to the downloaded file
+        """
+        # Parse S3 URL to extract bucket and object path
+        if file_path.startswith("s3://"):
+            # Remove s3:// prefix and split bucket from path
+            s3_path = file_path[5:]  # Remove 's3://' prefix
+            bucket_name = s3_path.split("/")[0]  # First part is bucket name
+            object_prefix = "/".join(s3_path.split("/")[1:])  # Rest is object prefix
+
+            # Construct full object name
+            if object_prefix:
+                object_name = f"{object_prefix.rstrip('/')}/{file_name}"
+            else:
+                object_name = file_name
+        else:
+            raise Exception(f"Invalid S3 path format: {file_path}")
+
+        # Create MinIO client and download file
+        minio_client = self.create_minio_client()
+
+        try:
+            # Download the file from S3 using MinIO client
+            minio_client.fget_object(bucket_name, object_name, output_file_path)
+            return output_file_path
+        except Exception as e:
+            raise Exception(f"Failed to download file from S3 location: {str(e)}")
+
+    @staticmethod
+    def download_dataset(dataset_id: int, output_file_path: str = None):
+        """
+        Download a dataset by its ID and save it to a specified output file.
+
+        :param dataset_id: The ID of the dataset to download.
+        :param output_file_path: The path where the downloaded dataset will be saved.
+                           If None, saves to current working directory with original filename.
+        :return: str: Path to the downloaded file
         """
         # Verify plugin activation
-        PluginManager().verify_activation(self.section)
+        PluginManager().verify_activation("dataset_plugin")
 
         PluginManager().load_config()
 
-        path = f"{PluginManager().load_path('dataset')}/{name}"
-        url = os.getenv(plugin_config.API_BASEPATH) + path
-        response = requests.get(url, timeout=10)
+        # Get dataset file metadata
+        download_url = f"{os.getenv('API_PATH')}/datasets/{dataset_id}/file"
+        headers = {
+            "kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()
+        }
 
-        # Check if the request was successful
-        if response.status_code == 200:
-            result = response.text
-            client = self.create_minio_client()
-            # Define the S3 bucket name and the file name
-            result = json.loads(result)
-            bucket_name = result["data"][0]["dataset_uploads"][0]["file_path"].split(
-                "//"
-            )[-1]
-            file_name = result["data"][0]["dataset_uploads"][0]["file_name"]
+        # Get dataset file info with S3 location details
+        dataset_response = make_get_request(download_url, headers=headers)
 
-            client.fget_object(bucket_name, file_name, file_name)
+        if not dataset_response or "data" not in dataset_response:
+            raise Exception(f"Failed to get dataset {dataset_id} information.")
 
-            print(f"Downloaded {file_name} from {bucket_name}")
-            return file_name
+        dataset_data = dataset_response["data"]
 
-        return None
+        # Check if file_name exists in response
+        if "file_name" not in dataset_data or not dataset_data["file_name"]:
+            raise Exception(f"File is not present for dataset {dataset_id}.")
+
+        # Extract S3 path components
+        file_path = dataset_data["file_path"]
+        file_name = dataset_data["file_name"]
+
+        # If output_file_path is not provided, use current working directory with original filename
+        if output_file_path is None:
+            output_file_path = os.path.join(os.getcwd(), file_name)
+        else:
+            # If output_file_path is a directory, join it with the file_name
+            if os.path.isdir(output_file_path):
+                output_file_path = os.path.join(output_file_path, file_name)
+
+        # Create DatasetPlugin instance to call download_from_s3 method
+        dataset_plugin = DatasetPlugin()
+        dataset_plugin.download_from_s3(file_path, file_name, output_file_path)
+
+        return output_file_path

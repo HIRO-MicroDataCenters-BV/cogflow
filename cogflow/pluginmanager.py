@@ -128,8 +128,12 @@ class PluginManager:
             if not os.getenv(var_name):
                 os.environ[var_name] = value
 
+        host_name = None
+        if config.has_option("settings", "HOSTNAME"):
+            host_name = config.get("settings", "HOSTNAME").strip()
+
         # Set environment variables from the config file if not already set
-        set_env_if_not_exists("API_BASEPATH", config.get("settings", "API_BASEPATH"))
+        set_env_if_not_exists("API_PATH", config.get("settings", "API_PATH"))
         set_env_if_not_exists("TIMER_IN_SEC", config.get("settings", "TIMER_IN_SEC"))
         set_env_if_not_exists("FILE_TYPE", config.get("settings", "FILE_TYPE"))
         set_env_if_not_exists(
@@ -140,9 +144,12 @@ class PluginManager:
         )
         set_env_if_not_exists("ML_TOOL", config.get("settings", "ML_TOOL"))
 
+        if host_name == "cog-api-dev-0":
+            os.environ["API_PATH"] = "http://cog-api-dev.kubeflow/apidev"
+
         # Validate that the environment variables are set
         required_vars = [
-            "API_BASEPATH",
+            "API_PATH",
             "TIMER_IN_SEC",
             "FILE_TYPE",
             "MLFLOW_TRACKING_URI",

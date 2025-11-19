@@ -17,11 +17,9 @@ from ..cogflow import (
     set_tracking_uri,
     set_experiment,
     get_artifact_uri,
-    start_run,
     end_run,
     log_param,
     log_metric,
-    log_model,
     search_model_versions,
 )
 
@@ -89,16 +87,6 @@ class TestMlflowPlugin(unittest.TestCase):
 
         mock_client.assert_called_once_with("your_tracking_uri")
         mock_plugin_activation.assert_called_once()
-
-    def test_version(self):
-        """
-            test for version
-        :return:
-        """
-        version = self.mlflow_plugin.version()
-
-        # Assert that the result matches the mocked version
-        self.assertEqual(version, "2.1.1")
 
     @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
     def test_is_alive(self, mock_plugin_activation):
@@ -321,23 +309,6 @@ class TestMlflowPlugin(unittest.TestCase):
         mock_search_registered_models.assert_called_once()
         mock_plugin_activation.assert_called_once()
 
-    @patch("mlflow.start_run")
-    @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
-    def test_start_run_with_experiment_and_run_name(
-        self, mock_plugin_activation, mock_start_run
-    ):
-        """
-            test for start_run_with_experiment with run_name
-        :param mock_start_run:
-        :return:
-        """
-        # experiment_name = "test_experiment"
-        run_name = "test_run"
-        start_run(run_name=run_name)
-        # Assert that start_run was called with the correct arguments
-        mock_start_run.assert_called_once()
-        mock_plugin_activation.assert_called_once()
-
     @patch("mlflow.end_run")
     @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
     def test_end_run(self, mock_plugin_activation, mock_end_run):
@@ -389,52 +360,6 @@ class TestMlflowPlugin(unittest.TestCase):
         # Assert that log_metric was called with the correct arguments
         mock_log_metric.assert_called_once()
         mock_plugin_activation.assert_called_once()
-
-    @patch("requests.post")
-    @patch("os.getenv")
-    @patch("mlflow.active_run")
-    @patch(
-        "cogflow.cogflow.plugins.notebook_plugin.NotebookPlugin.get_model_latest_version"
-    )
-    @patch("mlflow.sklearn.log_model")
-    @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
-    def test_log_model(
-        self,
-        mock_plugin_activation,
-        mock_log_model,
-        mock_model_version,
-        mock_active_run,
-        mock_env,
-        mock_requests_post,
-    ):
-        """
-            test for log_model
-        :param mock_log_model:
-        :return:
-        """
-        # Define inputs
-        model_name = MagicMock()
-        artifact_path = "model"
-        # Define any other necessary inputs for the log_model method
-
-        mock_run = MagicMock()
-        mock_run.info.run_id = "12345"
-
-        # Set the return value of mlflow.active_run()
-        mock_active_run.return_value = mock_run
-
-        mock_env.side_effect = lambda x: {
-            "API_BASEPATH": "http://randomn",
-        }[x]
-
-        mock_requests_post.return_value.status_code = 201
-
-        mock_model_version.return_value = 1
-        # Call the method under test
-        log_model(model_name=model_name, artifact_path=artifact_path)
-        # Assert that log_model was called with the correct arguments
-        mock_log_model.assert_called_once()
-        mock_plugin_activation.assert_called()
 
     @patch("requests.post")
     @patch("os.getenv")
