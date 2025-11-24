@@ -15,10 +15,10 @@ to remain import-safe across all submodules.
 """
 
 import re
-import uuid
 from datetime import datetime
 from typing import Any, Dict
 
+from uuid import UUID
 from kubernetes import client, config
 
 from .logging import get_logger
@@ -100,30 +100,49 @@ def is_valid_s3_uri(uri: str) -> bool:
 # -------------------------------------------------------------------------
 # 🔹 UUID Utilities
 # -------------------------------------------------------------------------
-def uuid_to_canonical(value: str) -> str:
-    """
-    Convert a UUID to canonical (hyphenated) format.
+UUID_COMPACT_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+UUID_HYPHEN_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
-    Args:
-        value (str): UUID string or hex.
+
+def normalize_uuid(value) -> str:
+    """
+    Normalize UUID to canonical hyphenated form.
+
+    Accepts:
+        - UUID object
+        - hyphenated UUID string
+        - 32-char compact hex UUID string
 
     Returns:
-        str: Canonical (hyphenated) UUID string.
+        str: canonical hyphenated UUID string
 
     Raises:
-        ValueError: If the input is invalid.
-
-    Example:
-        >>> uuid_to_canonical("7a1f6cf81d7e4d40b9a91c94ce6c3c0a")
-        '7a1f6cf8-1d7e-4d40-b9a9-1c94ce6c3c0a'
+        ValueError: if not a valid UUID
     """
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid UUID type: {type(value)}")
+
+    value = value.strip()
+
+    # Case 1 — 32-char compact UUID → parse & return canonical
+    if UUID_COMPACT_RE.match(value):
+        return str(UUID(hex=value))
+
+    # Case 2 — hyphenated UUID
+    if UUID_HYPHEN_RE.match(value):
+        return str(UUID(value))
+
+    # Final fallback — try parsing anyway
     try:
-        canonical = str(uuid.UUID(value))
-        logger.debug("Converted UUID to canonical: %s", canonical)
-        return canonical
-    except (ValueError, AttributeError, TypeError):
-        logger.error("Invalid UUID value: %s", value)
-        raise ValueError(f"Invalid UUID value: {value!r}")
+        return str(UUID(value))
+    except Exception:
+        raise ValueError(f"Invalid UUID value: {value}")
 
 
 def uuid_to_hex(value: str) -> str:
@@ -144,7 +163,7 @@ def uuid_to_hex(value: str) -> str:
         '7a1f6cf81d7e4d40b9a91c94ce6c3c0a'
     """
     try:
-        hex_value = uuid.UUID(value).hex
+        hex_value = UUID(value).hex
         logger.debug("Converted UUID to hex: %s", hex_value)
         return hex_value
     except (ValueError, AttributeError, TypeError):

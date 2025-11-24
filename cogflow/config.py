@@ -52,7 +52,7 @@ class CogFlowSettings(BaseSettings):
     VALIDATION_METRICS: str = "/validation/metrics"
     VALIDATION_ARTIFACTS: str = "/validation/artifacts"
     DATASET_REGISTER: str = "/dataset/register_by_api"
-    DATASET: str = "/datasets"
+    DATASETS: str = "/datasets"
     LINK_DATASET_MODEL: str = "/link_dataset_model"
     MODELS: str = "/models"
     PIPELINE: str = "/pipeline"

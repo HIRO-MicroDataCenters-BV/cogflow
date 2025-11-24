@@ -776,7 +776,7 @@ class ModelManager:
                 model_type = self.detect_model_type(model_details["model_uri"])
 
                 model_dict = {
-                    "model_id": common.uuid_to_canonical(model_id),
+                    "model_id": common.normalize_uuid(model_id),
                     "model_name": str(
                         model_details.get("model_name")
                         or active_run.data.tags.get("mlflow.runName", "UnnamedModel")
@@ -1040,15 +1040,6 @@ class ModelManager:
                 "model_version": model_version,
                 "model_id": model_id,
             }
-
-        except self.mlflowexception as e:
-            CogflowErrorHandler.handle_exception(
-                e,
-                context=f"Resolve model URI for {model_name or model_id}",
-                raise_as=CogflowModelError,
-                re_raise=True,
-            )
-
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1903,7 +1894,9 @@ class ModelManager:
             raise
 
 
-# Create a singleton instance for the public interface
+# ---------------------------------------------------------------------
+#  Create a singleton instance for the public interface
+# ---------------------------------------------------------------------
 _models = ModelManager()
 
 # Exposed SDK-level methods (single source of truth)

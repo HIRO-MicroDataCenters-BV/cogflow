@@ -1,5 +1,4 @@
-"""Unit tests for cogflow.core.models.ModelManager.
-"""
+"""Unit tests for cogflow.core.models.ModelManager."""
 
 from dataclasses import dataclass
 from unittest.mock import MagicMock
@@ -92,7 +91,7 @@ def manager(monkeypatch):
     mm._healthy = True
 
     monkeypatch.setattr(models_mod.common, "uuid_to_hex", lambda x: x)
-    monkeypatch.setattr(models_mod.common, "uuid_to_canonical", lambda x: x)
+    monkeypatch.setattr(models_mod.common, "normalize_uuid", lambda x: x)
 
     return mm
 

@@ -93,6 +93,14 @@ class CogflowValidationError(CogflowError):
     """Raised for invalid parameters, configurations, or schema mismatches."""
 
 
+class CogflowDatasetError(CogflowError):
+    """Raised when dataset retrieval or dataset-related operations fail."""
+
+
+class CogflowServingError(CogflowError):
+    """Raised for model serving and Kubernetes InferenceService lifecycle errors."""
+
+
 # -----------------------------------------------------------------------------
 # 🧩 CogFlow Error Handler Utility
 # -----------------------------------------------------------------------------

@@ -9,12 +9,17 @@ and advanced functionality via submodules like `cogflow.models`, `cogflow.datase
 import sys
 from ._lazy import _LazyLoader
 
-__version__ = "2.0.0"
+__version__ = "2.0.0beta1"
 
 # Submodules that should be lazily imported when accessed
 _LAZY_SUBMODULES = [
     "models",  # resolves to cogflow.core.models
     "api",  # resolves to cogflow.api
+    "datasets",  # resolves to cogflow.core.datasets
+    "serving",  # resolves to cogflow.core.serving
+    "common",  # resolves to cogflow.utils.common
+    "network",  # resolves to cogflow.utils.network
+    "config",  # resolves to cogflow.config
 ]
 
 # Create lazy module and copy current attributes

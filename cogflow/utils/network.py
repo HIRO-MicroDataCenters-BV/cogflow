@@ -5,10 +5,7 @@ Provides standardized helpers for making HTTP/HTTPS API requests,
 validating URIs, handling UUID conversions, and serializing datetime objects.
 """
 
-import re
-import uuid
-from typing import Any, List, Optional, Union
-from datetime import datetime
+from typing import List, Optional, Union
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -213,64 +210,3 @@ def make_health_check_request(
     except requests.RequestException as exp:
         logger.exception("Health check request to %s failed: %s", url, exp)
         return False
-
-
-def custom_serializer(obj: Any) -> str:
-    """Serialize objects like datetime to ISO format."""
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    raise TypeError(f"Type {type(obj)} not serializable")
-
-
-def serialize_artifacts(artifacts):
-    """
-    Converts the artifacts dictionary into a JSON serializable format.
-    Each artifact object is converted to its URI string representation.
-
-    Args:
-        artifacts (dict): The original artifacts' dictionary.
-
-    Returns:
-        dict: A dictionary with JSON serializable artifact data.
-    """
-    serialized_artifacts = {}
-
-    for key, artifact in artifacts.items():
-        # Convert artifact objects (like ImageEvaluationArtifact) to their URI string representation
-        if hasattr(artifact, "uri"):
-            serialized_artifacts[key] = artifact.uri
-        else:
-            serialized_artifacts[key] = str(artifact)
-
-    return {"validation_artifacts": serialized_artifacts}
-
-
-def is_valid_s3_uri(uri: str) -> bool:
-    """Check if the provided string is a valid S3 URI."""
-    s3_uri_regex = re.compile(r"^s3://([a-z0-9.-]+)/(.*)$")
-    match = s3_uri_regex.match(uri)
-    valid = bool(match and match.group(1) and match.group(2))
-    logger.debug("Validating S3 URI '%s': %s", uri, valid)
-    return valid
-
-
-def uuid_to_canonical(value: str) -> str:
-    """Convert UUID string to canonical (hyphenated) format."""
-    try:
-        canonical = str(uuid.UUID(value))
-        logger.debug("Converted UUID to canonical: %s", canonical)
-        return canonical
-    except (ValueError, AttributeError, TypeError):
-        logger.error("Invalid UUID value: %r", value)
-        raise ValueError(f"Invalid UUID value: {value!r}")
-
-
-def uuid_to_hex(value: str) -> str:
-    """Convert UUID to non-hyphenated (hex) format."""
-    try:
-        hex_value = uuid.UUID(value).hex
-        logger.debug("Converted UUID to hex: %s", hex_value)
-        return hex_value
-    except (ValueError, AttributeError, TypeError):
-        logger.error("Invalid UUID value: %r", value)
-        raise ValueError(f"Invalid UUID value: {value!r}")
