@@ -340,7 +340,14 @@ def evaluate(
     PluginManager().load_config()
     time_out = plugin_config.TIME_OUT
     # Construct URLs
-    run_id = model_uri.split("/")[4]
+    if model_uri.startswith("runs:/"):
+        run_id = model_uri.split("/")[1]
+    elif model_uri.startswith("s3://"):
+        run_id = model_uri.split("/")[4]
+    else:
+        raise ValueError(
+            f"Unsupported model_uri format. Expected 'runs:/' or 's3://', got: {model_uri}"
+        )
     model_id = uuid_to_canonical(run_id)
     url_metrics = (
         os.getenv(plugin_config.API_BASEPATH)
