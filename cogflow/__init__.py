@@ -20,6 +20,7 @@ _LAZY_SUBMODULES = [
     "common",  # resolves to cogflow.utils.common
     "network",  # resolves to cogflow.utils.network
     "config",  # resolves to cogflow.config
+    "pipelines",  # resolves to cogflow.pipelines
 ]
 
 # Create lazy module and copy current attributes

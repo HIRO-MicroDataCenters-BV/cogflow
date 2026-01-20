@@ -12,16 +12,24 @@ class _LazyLoader(ModuleType):
         self._lazy_submodules = set(lazy_submodules)
 
     def __getattr__(self, name):
+
+        # Only lazy-load allowed names
         if name in self._lazy_submodules:
-            # 1st: Try core path (e.g., cogflow.core.models)
+
+            # Try cogflow.core.<name>
             try:
                 module = import_module(f"cogflow.core.{name}")
-            except ModuleNotFoundError:
-                # 2nd: Try root path (e.g., cogflow.api)
-                module = import_module(f"cogflow.{name}")
+            except ModuleNotFoundError as e:
+                # Only fallback if module truly doesn't exist,
+                # not if import inside module failed
+                if e.name == f"cogflow.core.{name}":
+                    module = import_module(f"cogflow.{name}")
+                else:
+                    raise
 
-            # Cache result in module attribute
+            # Cache result to avoid repeated imports
             setattr(self, name, module)
             return module
 
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+        # correct module name in error message
+        raise AttributeError(f"module '{self.__name__}' has no attribute '{name}'")

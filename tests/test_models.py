@@ -8,7 +8,6 @@ import pytest
 from cogflow.core import models as models_mod
 from cogflow.utils import exceptions as exc_mod
 
-
 # ---------- Helpers / Fixtures ----------
 
 

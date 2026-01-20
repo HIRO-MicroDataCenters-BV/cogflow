@@ -29,7 +29,7 @@ repos:
         types: [python]
         args:
           - --rcfile=.pylintrc
-        exclude: ^(\.venv311|\.venv|venv|pvenv|wrapper|examples)/
+        exclude: ^(\.venv311|\.venv|venv|pvenv|wrapper|examples|tests)/
 
   -   repo: local
       hooks:

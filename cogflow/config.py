@@ -42,10 +42,7 @@ class CogFlowSettings(BaseSettings):
 
     AWS_ACCESS_KEY_ID: Optional[str] = None
     AWS_SECRET_ACCESS_KEY: Optional[str] = None
-
-    MINIO_ENDPOINT_URL: str = "http://mlflow-minio.kubeflow:9000"
-    MINIO_ACCESS_KEY: Optional[str] = None
-    MINIO_SECRET_ACCESS_KEY: Optional[str] = None
+    MINIO_SECURE: Optional[bool] = False
 
     # ---------- API Paths ----------
     MODELS_URI: str = "/models/uri"
@@ -82,9 +79,10 @@ class CogFlowSettings(BaseSettings):
     GRPC_PORT: int = 5557
 
     # ---------- Docker Images ----------
-    BASE_IMAGE: str = "hiroregistry/cogflow:latest"
+    COMP_BASE_IMAGE: str = "hiroregistry/cogflow:latest"
     FL_COGFLOW_BASE_IMAGE: str = "hiroregistry/flcogflow:latest"
     TRANSFORMER_BASE_IMAGE: str = "hiroregistry/k8-transformer:latest"
+    FL_LINKS_BASE_IMAGE: str = "hiroregistry/cogflow_lite:latest"
 
     # ---------- Message Broker ----------
     MESSAGE_BROKER_DATASETS_URL: str = "/datasets"
@@ -98,6 +96,9 @@ class CogFlowSettings(BaseSettings):
     RETRY_ATTEMPTS: int = 3
     RETRY_BACKOFF_MIN: int = 2
     RETRY_BACKOFF_MAX: int = 10
+
+    # ---------- Component Storage ----------
+    COMPONENTS_BUCKET_NAME = "components"
 
     # ---------- Config behavior ----------
     class Config:

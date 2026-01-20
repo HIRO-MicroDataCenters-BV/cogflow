@@ -12,7 +12,6 @@ All external dependencies are mocked:
 import pytest
 from cogflow.utils import common
 
-
 # ---------------------------------------------------------------------
 # FIXTURES
 # ---------------------------------------------------------------------

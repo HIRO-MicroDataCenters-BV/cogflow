@@ -540,7 +540,15 @@ class ModelManager:
             # )
             #
             # # Prepare API URLs for CogFlow
-            # run_id = model_uri.split("/")[4]
+            # Construct URLs
+            #     if model_uri.startswith("runs:/"):
+            #         run_id = model_uri.split("/")[1]
+            #     elif model_uri.startswith("s3://"):
+            #         run_id = model_uri.split("/")[4]
+            #     else:
+            #         raise ValueError(
+            #             f"Unsupported model_uri format. Expected 'runs:/' or 's3://', got: {model_uri}"
+            #         )
             # base_url = config.API_PATH
             # model_id = network.uuid_to_canonical(run_id)
             # url_metrics = f"{base_url}/models/{model_id}{config.VALIDATION_METRICS}"

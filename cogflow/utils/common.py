@@ -14,6 +14,7 @@ These utilities are intentionally lightweight and free of heavy dependencies
 to remain import-safe across all submodules.
 """
 
+import os
 import re
 from datetime import datetime
 from typing import Any, Dict
@@ -120,6 +121,11 @@ def normalize_uuid(value) -> str:
 
     Raises:
         ValueError: if not a valid UUID
+    Example:
+        >>> normalize_uuid("7a1f6cf81d7e4d40b9a91c94ce6c3c0a")
+        '7a1f6cf8-1d7e-4d40-b9a9-1c94ce6c3c0a'
+        >>> normalize_uuid("7a1f6cf8-1d7e-4d40-b9a9-1c94ce6c3c0a")
+        '7a1f6cf8-1d7e-4d40-b9a9-1c94ce6c3c0a'
     """
 
     if isinstance(value, UUID):
@@ -189,7 +195,7 @@ def get_namespace() -> str:
 
     Example:
         >>> get_namespace()
-        'admin'
+        'abc-namespace'
     """
     try:
         # 1️⃣ Ensure Kubernetes configuration is loaded
@@ -228,6 +234,8 @@ def load_k8s_config() -> None:
 
     Raises:
         ConfigException: If configuration could not be loaded.
+    Example:
+        >>> load_k8s_config()
     """
     try:
         config.load_incluster_config()
@@ -251,7 +259,11 @@ def get_current_user() -> str:
 
     Raises:
         RuntimeError: If the owner annotation is not found.
+    Example:
+        >>> get_current_user()
+        'user@email.com'
     """
+
     try:
         namespace_name = get_namespace()
 
@@ -272,3 +284,74 @@ def get_current_user() -> str:
     except Exception as e:
         logger.error("Failed to fetch user from namespace: %s", e)
         raise RuntimeError("Unable to resolve current user ID") from e
+
+
+def file_exists(path: str) -> bool:
+    """
+    Check whether a file exists and is a regular file.
+
+    Args:
+        path (str): File path
+
+    Returns:
+        bool: True if file exists and is a file, else False
+    """
+    if not path:
+        return False
+
+    return os.path.isfile(path)
+
+
+def get_filename(path: str) -> str:
+    """
+    Extract filename from a file path.
+
+    Args:
+        path (str): File path
+
+    Returns:
+        str: Filename
+    """
+    if not path:
+        return ""
+
+    return os.path.basename(path)
+
+
+def cwd() -> str:
+    """
+    Return the current working directory.
+
+    Returns:
+        str: Absolute path of current working directory.
+    """
+    return os.getcwd()
+
+
+def is_dir(path: str) -> bool:
+    """
+    Check whether a path exists and is a directory.
+
+    Args:
+        path (str): Path to check
+
+    Returns:
+        bool: True if path is a directory, else False
+    """
+    if not path:
+        return False
+
+    return os.path.isdir(path)
+
+
+def join_path(*parts: Any) -> str:
+    """
+    Join path components safely.
+
+    Args:
+        *parts: Path components
+
+    Returns:
+        str: Joined path
+    """
+    return os.path.join(*(str(p) for p in parts if p is not None))
