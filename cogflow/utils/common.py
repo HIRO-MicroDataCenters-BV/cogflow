@@ -14,11 +14,12 @@ These utilities are intentionally lightweight and free of heavy dependencies
 to remain import-safe across all submodules.
 """
 
+import os
 import re
-import uuid
 from datetime import datetime
 from typing import Any, Dict
 
+from uuid import UUID
 from kubernetes import client, config
 
 from .logging import get_logger
@@ -100,30 +101,54 @@ def is_valid_s3_uri(uri: str) -> bool:
 # -------------------------------------------------------------------------
 # 🔹 UUID Utilities
 # -------------------------------------------------------------------------
-def uuid_to_canonical(value: str) -> str:
-    """
-    Convert a UUID to canonical (hyphenated) format.
+UUID_COMPACT_RE = re.compile(r"^[0-9a-fA-F]{32}$")
+UUID_HYPHEN_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
 
-    Args:
-        value (str): UUID string or hex.
+
+def normalize_uuid(value) -> str:
+    """
+    Normalize UUID to canonical hyphenated form.
+
+    Accepts:
+        - UUID object
+        - hyphenated UUID string
+        - 32-char compact hex UUID string
 
     Returns:
-        str: Canonical (hyphenated) UUID string.
+        str: canonical hyphenated UUID string
 
     Raises:
-        ValueError: If the input is invalid.
-
+        ValueError: if not a valid UUID
     Example:
-        >>> uuid_to_canonical("7a1f6cf81d7e4d40b9a91c94ce6c3c0a")
+        >>> normalize_uuid("7a1f6cf81d7e4d40b9a91c94ce6c3c0a")
+        '7a1f6cf8-1d7e-4d40-b9a9-1c94ce6c3c0a'
+        >>> normalize_uuid("7a1f6cf8-1d7e-4d40-b9a9-1c94ce6c3c0a")
         '7a1f6cf8-1d7e-4d40-b9a9-1c94ce6c3c0a'
     """
+
+    if isinstance(value, UUID):
+        return str(value)
+
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid UUID type: {type(value)}")
+
+    value = value.strip()
+
+    # Case 1 — 32-char compact UUID → parse & return canonical
+    if UUID_COMPACT_RE.match(value):
+        return str(UUID(hex=value))
+
+    # Case 2 — hyphenated UUID
+    if UUID_HYPHEN_RE.match(value):
+        return str(UUID(value))
+
+    # Final fallback — try parsing anyway
     try:
-        canonical = str(uuid.UUID(value))
-        logger.debug("Converted UUID to canonical: %s", canonical)
-        return canonical
-    except (ValueError, AttributeError, TypeError):
-        logger.error("Invalid UUID value: %s", value)
-        raise ValueError(f"Invalid UUID value: {value!r}")
+        return str(UUID(value))
+    except Exception:
+        raise ValueError(f"Invalid UUID value: {value}")
 
 
 def uuid_to_hex(value: str) -> str:
@@ -144,7 +169,7 @@ def uuid_to_hex(value: str) -> str:
         '7a1f6cf81d7e4d40b9a91c94ce6c3c0a'
     """
     try:
-        hex_value = uuid.UUID(value).hex
+        hex_value = UUID(value).hex
         logger.debug("Converted UUID to hex: %s", hex_value)
         return hex_value
     except (ValueError, AttributeError, TypeError):
@@ -170,7 +195,7 @@ def get_namespace() -> str:
 
     Example:
         >>> get_namespace()
-        'admin'
+        'abc-namespace'
     """
     try:
         # 1️⃣ Ensure Kubernetes configuration is loaded
@@ -209,6 +234,8 @@ def load_k8s_config() -> None:
 
     Raises:
         ConfigException: If configuration could not be loaded.
+    Example:
+        >>> load_k8s_config()
     """
     try:
         config.load_incluster_config()
@@ -232,7 +259,11 @@ def get_current_user() -> str:
 
     Raises:
         RuntimeError: If the owner annotation is not found.
+    Example:
+        >>> get_current_user()
+        'user@email.com'
     """
+
     try:
         namespace_name = get_namespace()
 
@@ -253,3 +284,74 @@ def get_current_user() -> str:
     except Exception as e:
         logger.error("Failed to fetch user from namespace: %s", e)
         raise RuntimeError("Unable to resolve current user ID") from e
+
+
+def file_exists(path: str) -> bool:
+    """
+    Check whether a file exists and is a regular file.
+
+    Args:
+        path (str): File path
+
+    Returns:
+        bool: True if file exists and is a file, else False
+    """
+    if not path:
+        return False
+
+    return os.path.isfile(path)
+
+
+def get_filename(path: str) -> str:
+    """
+    Extract filename from a file path.
+
+    Args:
+        path (str): File path
+
+    Returns:
+        str: Filename
+    """
+    if not path:
+        return ""
+
+    return os.path.basename(path)
+
+
+def cwd() -> str:
+    """
+    Return the current working directory.
+
+    Returns:
+        str: Absolute path of current working directory.
+    """
+    return os.getcwd()
+
+
+def is_dir(path: str) -> bool:
+    """
+    Check whether a path exists and is a directory.
+
+    Args:
+        path (str): Path to check
+
+    Returns:
+        bool: True if path is a directory, else False
+    """
+    if not path:
+        return False
+
+    return os.path.isdir(path)
+
+
+def join_path(*parts: Any) -> str:
+    """
+    Join path components safely.
+
+    Args:
+        *parts: Path components
+
+    Returns:
+        str: Joined path
+    """
+    return os.path.join(*(str(p) for p in parts if p is not None))

@@ -1,0 +1,1125 @@
+"""
+CogFlow - Serving Manager (Kubernetes-native)
+---------------------------------------------
+
+This module handles deployment and lifecycle management of model-serving
+InferenceService (ISVC) CRDs in Kubernetes.
+
+It depends on:
+    - models.py       (lazy import inside methods)
+    - datasets.py     (lazy import inside methods)
+
+No circular imports occur because we load them lazily.
+"""
+
+from __future__ import annotations
+
+import time
+from datetime import datetime
+from typing import Optional, Dict, Any, List
+
+from kubernetes import client
+from kubernetes.client.exceptions import ApiException
+
+from ..utils import common
+from ..config import config as cog_config
+from ..utils.exceptions import (
+    CogflowErrorHandler,
+    CogflowValidationError,
+    CogflowModelError,
+    CogflowDatasetError,
+    CogflowConnectionError,
+    CogflowServingError,
+)
+from ..utils.logging import get_logger
+
+logger = get_logger(__name__)
+
+# ---------------------------------------------------------------------
+# Global cache: Ensure K8s config is only loaded once
+# ---------------------------------------------------------------------
+_K8S_CONFIG_LOADED = False
+
+
+def _ensure_k8s_config_loaded():
+    """Load Kubernetes config only once across all ServingManager instances."""
+    if getattr(common, "_k8s_loaded_flag", False):
+        return
+
+    common.load_k8s_config()
+
+    # mark flag on common module (internal, invisible)
+    common._k8s_loaded_flag = True
+
+
+# =====================================================================
+#   Serving Manager (Kubernetes-native)
+# =====================================================================
+
+
+class ServingManager:
+    """Manages model-serving InferenceService (ISVC) CRDs in Kubernetes."""
+
+    GROUP = "serving.kserve.io"
+    VERSION = "v1beta1"
+    PLURAL = "inferenceservices"
+
+    def __init__(self):
+        """Initialize Kubernetes client"""
+        _ensure_k8s_config_loaded()
+        self.api = client.CustomObjectsApi()
+
+    # -----------------------------------------------------------------
+    # Lazy-load helpers (NO circular imports)
+    # -----------------------------------------------------------------
+    @staticmethod
+    def _get_model_helpers():
+        """Lazy import to avoid circular dependencies."""
+        from cogflow import models
+
+        return (
+            models.detect_model_format,
+            models.get_full_model_uri_from_run_or_registry,
+        )
+
+    @staticmethod
+    def _get_dataset_manager():
+        """Lazy import to avoid circular dependencies."""
+        from cogflow.datasets import DatasetManager
+
+        logger.debug("Lazy-loaded DatasetManager in ServingManager.")
+        return DatasetManager()
+
+    # -----------------------------------------------------------------
+    # Internal helpers
+    # -----------------------------------------------------------------
+
+    def _get_transformer_env(
+        self,
+        dataset_id: Optional[str],
+        transformer_image: Optional[str],
+        transformer_parameters: Optional[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Resolve transformer parameters:
+
+        - If transformer_parameters explicitly provided -> return as-is.
+        - If dataset_id is a Prometheus dataset -> derive PROMETHEUS_* params.
+        """
+        # Explicit transformer parameters → just return them
+        if transformer_parameters:
+            logger.debug(
+                "Transformer parameters explicitly provided: %s",
+                transformer_parameters,
+            )
+            return transformer_parameters
+
+        if not dataset_id:
+            return {}
+
+        try:
+            dataset_mgr = self._get_dataset_manager()
+            dataset_id_norm = common.normalize_uuid(dataset_id)
+
+            logger.info(
+                "Resolving transformer parameters from dataset_id=%s (normalized=%s).",
+                dataset_id,
+                dataset_id_norm,
+            )
+
+            dataset = dataset_mgr.get_dataset(dataset_id_norm)
+
+            # Prometheus dataset logic (data_source_type == 20)
+            if dataset.get("data_source_type") == 20:
+                if not transformer_image:
+                    CogflowErrorHandler.log_and_raise(
+                        (
+                            "Dataset is Prometheus type but no transformer_image was "
+                            "provided."
+                        ),
+                        raise_as=CogflowValidationError,
+                    )
+
+                prom = dataset_mgr.get_prometheus_dataset(dataset_id_norm)
+
+                params = {
+                    "PROMETHEUS_URL": prom.get("connection_type", {}).get(
+                        "prometheus_url"
+                    ),
+                    "PROMETHEUS_METRICS": prom.get("metric_list", {}).get(
+                        "METRIC_FEATURES"
+                    ),
+                }
+                logger.info(
+                    "Prometheus transformer parameters resolved for dataset_id=%s: %s",
+                    dataset_id_norm,
+                    params,
+                )
+                return params
+
+            logger.debug(
+                "Dataset_id=%s is not Prometheus type; no transformer parameters needed.",
+                dataset_id_norm,
+            )
+            return {}
+
+        except CogflowValidationError:
+            raise
+        except CogflowDatasetError:
+            raise
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context="Resolve transformer parameters from dataset",
+                raise_as=CogflowDatasetError,
+                re_raise=True,
+            )
+
+    @staticmethod
+    def _validate_canary(isvc: dict, isvc_name: str, pct: int):
+        """
+        Validate canary_traffic_percent based on current ISVC state.
+
+        Rules:
+            - If canary DOES NOT exist (first rollout):
+                  allowed = 1–100 (but not 0)
+            - If canary EXISTS (promotion/update):
+                  allowed = 0–100
+        """
+        if pct is None:
+            return
+
+        predictor = isvc.get("spec", {}).get("predictor", {})
+        existing_canary_pct = predictor.get("canaryTrafficPercent")
+
+        canary_exists = existing_canary_pct is not None
+
+        if canary_exists:
+            # Promotion or disable
+            if not 0 <= pct <= 100:
+                CogflowErrorHandler.log_and_raise(
+                    (
+                        f"Invalid canary_traffic_percent={pct}. "
+                        f"For an existing canary in '{isvc_name}', "
+                        "value must be between 0 and 100."
+                    ),
+                    raise_as=CogflowValidationError,
+                )
+            return
+
+        # First-time rollout rules
+        if not 1 <= pct <= 100:
+            CogflowErrorHandler.log_and_raise(
+                (
+                    f"Invalid canary_traffic_percent={pct}. "
+                    f"Initial rollout for '{isvc_name}' must be between 1 and 99."
+                ),
+                raise_as=CogflowValidationError,
+            )
+        return
+
+    # -----------------------------------------------------------------
+    # CRUD Operations
+    # -----------------------------------------------------------------
+
+    def get_isvc(self, name: str, namespace: Optional[str] = None) -> dict:
+        """
+        Retrieve an InferenceService CRD by name and namespace.
+        Args:
+            name: InferenceService name.
+            namespace: Namespace where the InferenceService is deployed.
+
+        Returns:
+            dict: InferenceService details.
+        Raises:
+            CogflowConnectionError: If there is a connection issue with Kubernetes API.
+        Examples:
+            >>> from cogflow import serving
+            >>> isvc = serving.get_isvc("my-inferenceservice", "default")
+            >>> print(isvc)
+
+        """
+        namespace = namespace or common.get_namespace()
+        logger.info("Fetching InferenceService name=%s namespace=%s", name, namespace)
+        try:
+            return self.api.get_namespaced_custom_object(
+                group=self.GROUP,
+                version=self.VERSION,
+                namespace=namespace,
+                plural=self.PLURAL,
+                name=name,
+            )
+        except ApiException as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Get InferenceService '{name}' in namespace '{namespace}'",
+                raise_as=CogflowConnectionError,
+                re_raise=True,
+            )
+
+    def delete_isvc(self, name: str, namespace: Optional[str] = None) -> bool:
+        """
+        Delete an InferenceService CRD by name and namespace.
+        Args:
+            name: InferenceService name.
+            namespace: Namespace where the InferenceService is deployed.
+        Returns:
+            bool: True if deleted successfully, False if not found.
+        Raises:
+            CogflowConnectionError: If there is a connection issue with Kubernetes API.
+        Examples:
+            >>> from cogflow import serving
+            >>> success = serving.delete_isvc("my-inferenceservice", "default")
+            >>> print(success)
+        """
+        namespace = namespace or common.get_namespace()
+        logger.info("Deleting InferenceService name=%s namespace=%s", name, namespace)
+        try:
+            self.api.delete_namespaced_custom_object(
+                group=self.GROUP,
+                version=self.VERSION,
+                namespace=namespace,
+                plural=self.PLURAL,
+                name=name,
+            )
+            logger.info(
+                "InferenceService '%s' deleted successfully from namespace '%s'.",
+                name,
+                namespace,
+            )
+            return True
+        except ApiException as e:
+            if e.status == 404:
+                logger.warning(
+                    "InferenceService '%s' not found in namespace '%s' during delete.",
+                    name,
+                    namespace,
+                )
+                return False
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Delete InferenceService '{name}' in namespace '{namespace}'",
+                raise_as=CogflowConnectionError,
+                re_raise=True,
+            )
+
+    def update_isvc(
+        self,
+        name: str,
+        patch_body: dict,
+        namespace: Optional[str] = None,
+    ) -> dict:
+        """
+        Patch an existing InferenceService CRD.
+        Args:
+            name: InferenceService name.
+            patch_body: Dictionary representing the patch to apply.
+            namespace: Namespace where the InferenceService is deployed.
+        Returns:
+            dict: Updated InferenceService details.
+        Raises:
+            CogflowConnectionError: If there is a connection issue with Kubernetes API.
+        Examples:
+            >>> from cogflow import serving
+            >>> patch = {"spec": {"predictor": {"minReplicas": 2}}}
+            >>> updated_isvc = serving.update_isvc("my-inferenceservice", patch, "default")
+            >>> print(updated_isvc)
+        """
+        namespace = namespace or common.get_namespace()
+        logger.info(
+            "Patching InferenceService name=%s namespace=%s keys=%s",
+            name,
+            namespace,
+            list(patch_body.keys()),
+        )
+        try:
+            return self.api.patch_namespaced_custom_object(
+                group=self.GROUP,
+                version=self.VERSION,
+                namespace=namespace,
+                plural=self.PLURAL,
+                name=name,
+                body=patch_body,
+            )
+        except ApiException as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Patch InferenceService '{name}' in namespace '{namespace}'",
+                raise_as=CogflowConnectionError,
+                re_raise=True,
+            )
+
+    def restart_isvc(self, name: str, namespace: Optional[str] = None) -> bool:
+        """
+        Restart ISVC by scaling minReplicas to 0 then back to 1.
+        Args:
+            name: InferenceService name.
+            namespace: Namespace where the InferenceService is deployed.
+        Returns:
+            bool: True if restart initiated successfully.
+        Raises:
+            CogflowServingError: If restart fails.
+        Examples:
+            >>> from cogflow import serving
+            >>> success = serving.restart_isvc("my-inferenceservice", "default")
+            >>> print(success)
+        """
+        namespace = namespace or common.get_namespace()
+        logger.info(
+            "Restarting InferenceService name=%s namespace=%s via scale down/up.",
+            name,
+            namespace,
+        )
+        try:
+            # Scale to 0
+            self.update_isvc(
+                name, {"spec": {"predictor": {"minReplicas": 0}}}, namespace
+            )
+            time.sleep(1)
+            # Scale back up
+            self.update_isvc(
+                name, {"spec": {"predictor": {"minReplicas": 1}}}, namespace
+            )
+            logger.info(
+                "InferenceService '%s' restart patches applied successfully.",
+                name,
+            )
+            return True
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Restart InferenceService '{name}' in namespace '{namespace}'",
+                raise_as=CogflowServingError,
+                re_raise=True,
+            )
+
+    # -----------------------------------------------------------------
+    # CREATE SERVICE
+    # -----------------------------------------------------------------
+
+    def create_isvc(
+        self,
+        name: str,
+        model_uri: str,
+        namespace: Optional[str] = None,
+        model_format: str = None,
+        protocol_version: str = None,
+        annot: dict = None,
+        transformer_image: str = cog_config.TRANSFORMER_BASE_IMAGE,
+        transformer_env: dict = None,
+    ) -> dict:
+        """
+        Create an InferenceService CRD.
+
+        Keys with None are not sent in the spec to avoid invalid patches.
+        Args:
+            name: InferenceService name.
+            model_uri: URI where the model artifacts are stored.
+            namespace: Namespace where the InferenceService will be deployed.
+            model_format: Model format (e.g., "tensorflow", "pytorch").
+            protocol_version: Protocol version for the model server.
+            annot: Annotations to attach to the InferenceService metadata.
+            transformer_image: Container image for the transformer.
+            transformer_env: Environment variables for the transformer container.
+        Returns:
+            dict: Created InferenceService details.
+        Raises:
+            CogflowConnectionError: If there is a connection issue with Kubernetes API.
+        Examples:
+            >>> from cogflow import serving
+            >>> isvc = serving.create_isvc(
+            ...     name="my-inferenceservice",
+            ...     model_uri="s3://my-bucket/model/",
+            ...     namespace="default",
+            ...     model_format="tensorflow",
+            ... )
+            >>> print(isvc)
+        """
+        namespace = namespace or common.get_namespace()
+        logger.info(
+            "Creating InferenceService name=%s namespace=%s model_uri=%s",
+            name,
+            namespace,
+            model_uri,
+        )
+        try:
+            metadata = client.V1ObjectMeta(
+                name=name,
+                namespace=namespace,
+                annotations=annot or {},
+            )
+
+            model_spec: Dict[str, Any] = {"storageUri": model_uri}
+            if model_format:
+                model_spec["modelFormat"] = {"name": model_format}
+            if protocol_version:
+                model_spec["protocolVersion"] = protocol_version
+
+            predictor_spec = {
+                "serviceAccountName": "kserve-controller-s3",
+                "minReplicas": 1,
+                "model": model_spec,
+            }
+
+            spec: Dict[str, Any] = {"predictor": predictor_spec}
+
+            # Transformer
+            if transformer_env:
+                env_list = [
+                    {"name": k, "value": str(v)} for k, v in transformer_env.items()
+                ]
+                spec["transformer"] = {
+                    "containers": [
+                        {
+                            "name": f"{name}-transformer",
+                            "image": transformer_image,
+                            "env": env_list,
+                        }
+                    ]
+                }
+
+            body = {
+                "apiVersion": f"{self.GROUP}/{self.VERSION}",
+                "kind": "InferenceService",
+                "metadata": metadata.to_dict(),
+                "spec": spec,
+            }
+
+            created = self.api.create_namespaced_custom_object(
+                group=self.GROUP,
+                version=self.VERSION,
+                namespace=namespace,
+                plural=self.PLURAL,
+                body=body,
+            )
+            logger.info(
+                "InferenceService '%s' created successfully in namespace '%s'.",
+                name,
+                namespace,
+            )
+            return created
+        except ApiException as e:
+            if e.status == 409:
+                CogflowErrorHandler.handle_exception(
+                    e,
+                    context=f"InferenceService '{name}' not found in namespace '{namespace}'.",
+                    raise_as=CogflowValidationError,
+                    re_raise=True,
+                )
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Create InferenceService '{name}' in namespace '{namespace}'",
+                raise_as=CogflowConnectionError,
+                re_raise=True,
+            )
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Create InferenceService '{name}' in namespace '{namespace}'",
+                raise_as=CogflowServingError,
+                re_raise=True,
+            )
+
+    @staticmethod
+    def _process_isvc(isvc: dict) -> Dict[str, Any]:
+        """
+        Process a KServe InferenceService object and extract detailed
+        model rollout and canary traffic information.
+
+        Args:
+            isvc (dict): Raw InferenceService object from Kubernetes API.
+
+        Returns:
+            dict: Processed information with rollout awareness.
+        """
+        metadata = isvc.get("metadata", {}) or {}
+        annotations = metadata.get("annotations", {}) or {}
+        status_dict = isvc.get("status", {}) or {}
+        spec_dict = isvc.get("spec", {}) or {}
+
+        # --- Identifiers ---
+        isvc_name = metadata.get("name", "Unknown")
+        model_name = annotations.get("model_name")
+        model_id = annotations.get("model_id")
+        model_version = annotations.get("model_version")
+        dataset_id = annotations.get("dataset_id")
+        creation_timestamp = metadata.get("creationTimestamp")
+
+        # --- Base URLs ---
+        served_model_url = (
+            status_dict.get("url")
+            or status_dict.get("address", {}).get("url")
+            or status_dict.get("components", {}).get("predictor", {}).get("url")
+            or status_dict.get("components", {}).get("transformer", {}).get("url")
+        )
+
+        # --- Status ---
+        status = "not_ready"
+        for cond in status_dict.get("conditions", []):
+            if cond.get("type") == "Ready":
+                if cond.get("status") == "True":
+                    status = "ready"
+                break
+
+        # --- Components (predictor + transformer) ---
+        components = status_dict.get("components", {}) or {}
+        predictor = components.get("predictor", {}) or {}
+        transformer = components.get("transformer", {}) or {}
+
+        predictor_traffic = predictor.get("traffic", []) or []
+
+        # --- Canary detection ---
+        canary_spec = spec_dict.get("predictor", {}).get("canary")
+        canary_traffic_percent = spec_dict.get("predictor", {}).get(
+            "canaryTrafficPercent"
+        )
+        has_canary = canary_spec is not None or canary_traffic_percent is not None
+
+        # --- Traffic computation ---
+        traffic_entries = []
+
+        def _extract_traffic_entries(source_traffic, component_name):
+            entries = []
+            for item in source_traffic or []:
+                entries.append(
+                    {
+                        "revision": item.get("revisionName"),
+                        "percent": item.get("percent", 0),
+                        "tag": item.get("tag"),
+                        "component": component_name,
+                    }
+                )
+            return entries
+
+        traffic_entries.extend(_extract_traffic_entries(predictor_traffic, "predictor"))
+        total_traffic = sum(t["percent"] for t in traffic_entries if t["percent"])
+
+        # --- Determine stable vs canary ---
+        stable_revision = None
+        canary_revision = None
+        stable_traffic = None
+        canary_traffic = None
+
+        if has_canary:
+            for t in traffic_entries:
+                if t["percent"] and t["percent"] < 100:
+                    if not stable_revision:
+                        stable_revision = t["revision"]
+                        stable_traffic = t["percent"]
+                if t["percent"] and t["percent"] < 100 and t["tag"] == "canary":
+                    canary_revision = t["revision"]
+                    canary_traffic = t["percent"]
+
+            # Fallback if only predictor used
+            if not canary_revision and len(traffic_entries) == 2:
+                canary_revision = traffic_entries[1]["revision"]
+                canary_traffic = traffic_entries[1]["percent"]
+                stable_revision = traffic_entries[0]["revision"]
+                stable_traffic = traffic_entries[0]["percent"]
+        else:
+            # Single model – no canary
+            if traffic_entries:
+                stable_revision = traffic_entries[0].get("revision")
+                stable_traffic = traffic_entries[0].get("percent", 100)
+
+        # --- Age calculation ---
+        if creation_timestamp:
+            try:
+                creation_time = datetime.strptime(
+                    creation_timestamp, "%Y-%m-%dT%H:%M:%SZ"
+                )
+                age = str(datetime.utcnow() - creation_time).split(".", 1)[0]
+            except Exception:
+                age = "Unknown"
+        else:
+            age = "Unknown"
+
+        # --- Compose final object ---
+        model_info: Dict[str, Any] = {
+            "isvc_name": isvc_name,
+            "served_model_url": served_model_url,
+            "status": status,
+            "model_id": model_id or None,
+            "model_name": model_name or None,
+            "model_version": model_version or None,
+            "dataset_id": dataset_id or None,
+            "creation_timestamp": creation_timestamp,
+            "age": age,
+            "latest_ready_revision": predictor.get("latestReadyRevision")
+            or transformer.get("latestReadyRevision"),
+            "traffic_percentage": total_traffic or stable_traffic or 100,
+            "has_canary": bool(has_canary),
+            # NOTE: these two mirror your original logic
+            "stable_revision": canary_revision,
+            "canary_revision": stable_revision,
+            "stable_traffic_percent": canary_traffic,
+            "canary_traffic_percent": stable_traffic,
+        }
+
+        return model_info
+
+    # -----------------------------------------------------------------
+    # UPDATE SERVED MODEL (high-level)
+    # -----------------------------------------------------------------
+
+    def update_model(
+        self,
+        isvc_name: str,
+        model_id: Optional[str] = None,
+        artifact_path: Optional[str] = None,
+        model_name: Optional[str] = None,
+        model_version: Optional[str] = None,
+        dataset_id: Optional[str] = None,
+        transformer_image: Optional[str] = cog_config.TRANSFORMER_BASE_IMAGE,
+        transformer_parameters: Optional[dict] = None,
+        protocol_version: Optional[str] = None,
+        namespace: Optional[str] = None,
+        model_format: Optional[str] = None,
+        canary_traffic_percent: Optional[int] = None,
+    ) -> str:
+        """
+        High-level update for an existing InferenceService.
+
+        - If only canary_traffic_percent is provided (no new model):
+            -> traffic-only update (promotion/disable).
+        - Otherwise:
+            -> full model rollout / canary rollout.
+        Args:
+            isvc_name: InferenceService name.
+            model_id: Model identifier.
+            artifact_path: Path to model artifacts.
+            model_name: Model name.
+            model_version: Model version.
+            dataset_id: Dataset identifier for transformer parameters.
+            transformer_image: Container image for the transformer.
+            transformer_parameters: Environment variables for the transformer container.
+            protocol_version: Protocol version for the model server.
+            namespace: Namespace where the InferenceService is deployed.
+            model_format: Model format (e.g., "tensorflow", "pytorch").
+            canary_traffic_percent: Traffic percentage to route to canary model.
+        Returns:
+            str: Status message.
+        Raises:
+            CogflowServingError: If update fails.
+        Examples:
+            >>> from cogflow import serving
+            >>> msg = serving.update_model(
+            ...     isvc_name="my-inferenceservice",
+            ...     model_id="123e4567-e89b-12d3-a456-426614174000",
+            ...     canary_traffic_percent=20,
+            ...     namespace="default",
+            ... )
+            >>> print(msg)
+        """
+        namespace = namespace or common.get_namespace()
+        logger.info(
+            "update_served_model called isvc_name=%s namespace=%s model_id=%s model_name=%s "
+            "model_version=%s canary_traffic_percent=%s",
+            isvc_name,
+            namespace,
+            model_id,
+            model_name,
+            model_version,
+            canary_traffic_percent,
+        )
+
+        try:
+            # Fetch existing ISVC
+            try:
+                isvc = self.get_isvc(isvc_name, namespace)
+                logger.debug(
+                    "Fetched existing InferenceService '%s' spec: %s",
+                    isvc_name,
+                    list(isvc.keys()),
+                )
+            except CogflowConnectionError as err:
+                # Already wrapped
+                raise err
+            except ApiException as e:
+                if e.status == 404:
+                    CogflowErrorHandler.log_and_raise(
+                        f"InferenceService '{isvc_name}' not found in namespace '{namespace}'.",
+                        raise_as=CogflowServingError,
+                    )
+                raise
+
+            # Case 1: Traffic-only update (promotion/disable)
+            if canary_traffic_percent is not None and not (
+                model_id or model_name or model_version or artifact_path
+            ):
+                logger.info(
+                    "Applying traffic-only update for InferenceService '%s' to %s%%.",
+                    isvc_name,
+                    canary_traffic_percent,
+                )
+
+                # Validate canary before applying changes
+                self._validate_canary(isvc, isvc_name, canary_traffic_percent)
+
+                patch_body = {
+                    "spec": {
+                        "predictor": {"canaryTrafficPercent": canary_traffic_percent}
+                    }
+                }
+                self.update_isvc(isvc_name, patch_body, namespace)
+                msg = f"Updated traffic to {canary_traffic_percent}% for InferenceService '{isvc_name}'."
+                logger.info("%s", msg)
+                return msg
+
+            # Case 2: Full model rollout/update
+            detect_model_format, get_model_details = self._get_model_helpers()
+            model_details = get_model_details(
+                model_id=model_id,
+                artifact_path=artifact_path,
+                model_name=model_name,
+                model_version=model_version,
+            )
+
+            transformer_env = self._get_transformer_env(
+                dataset_id, transformer_image, transformer_parameters
+            )
+
+            model_uri = model_details["model_uri"]
+            logger.info(
+                "Resolved new model_uri=%s for InferenceService '%s'.",
+                model_uri,
+                isvc_name,
+            )
+
+            model_format = model_format or detect_model_format(model_uri=model_uri)
+
+            # Build annotations
+            annot = {
+                "model_id": model_details["model_id"],
+                "model_name": model_details["model_name"],
+                "model_version": model_details["model_version"],
+            }
+            if dataset_id:
+                annot["dataset_id"] = common.normalize_uuid(dataset_id)
+
+            # --- Model patch ---
+            model_patch: Dict[str, Any] = {}
+            if model_uri:
+                model_patch["storageUri"] = model_uri
+            if model_format:
+                model_patch["modelFormat"] = {"name": model_format}
+            if protocol_version:
+                model_patch["protocolVersion"] = protocol_version
+
+            predictor_patch: Dict[str, Any] = {"model": model_patch}
+
+            # Canary rollout
+            if canary_traffic_percent is not None:
+                if not 0 <= canary_traffic_percent <= 100:
+                    CogflowErrorHandler.log_and_raise(
+                        f"Invalid canary_traffic_percent={canary_traffic_percent}. Must be between 0 and 100.",
+                        raise_as=CogflowValidationError,
+                    )
+                predictor_patch["canary"] = {"model": model_patch}
+                predictor_patch["canaryTrafficPercent"] = canary_traffic_percent
+
+            patch_body: Dict[str, Any] = {
+                "metadata": {"annotations": annot},
+                "spec": {"predictor": predictor_patch},
+            }
+
+            # Transformer
+            if transformer_env:
+                env_list = [
+                    {"name": k, "value": str(v)} for k, v in transformer_env.items()
+                ]
+                patch_body["spec"]["transformer"] = {
+                    "containers": [
+                        {
+                            "name": f"{isvc_name}-transformer",
+                            "image": transformer_image,
+                            "env": env_list,
+                        }
+                    ]
+                }
+
+            logger.info(
+                "Patching InferenceService '%s' with new model spec and annotations.",
+                isvc_name,
+            )
+            self.update_isvc(isvc_name, patch_body, namespace)
+
+            msg = f"InferenceService '{isvc_name}' updated successfully."
+            logger.info("%s", msg)
+            return msg
+
+        except (CogflowValidationError, CogflowModelError, CogflowDatasetError):
+            # Already wrapped correctly
+            raise
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context="Update served model via ServingManager",
+                raise_as=CogflowServingError,
+                re_raise=True,
+            )
+
+    # -----------------------------------------------------------------
+    # SERVE MODEL (high-level)
+    # -----------------------------------------------------------------
+
+    def deploy_model(
+        self,
+        model_id: str = None,
+        isvc_name: Optional[str] = None,
+        artifact_path: str = None,
+        model_name: str = None,
+        model_version: str = None,
+        dataset_id: str = None,
+        transformer_image: str = cog_config.TRANSFORMER_BASE_IMAGE,
+        transformer_parameters: Dict[str, Any] = None,
+        protocol_version: str = None,
+        model_format: str = None,
+        namespace: Optional[str] = None,
+    ):
+        """
+        High-level entrypoint to serve a model:
+
+        - Resolve model URI / metadata.
+        - Resolve dataset-based transformer parameters (Prometheus).
+        - Detect model format (if not provided).
+        - Create the InferenceService.
+        Args:
+            model_id: Model identifier.
+            isvc_name: InferenceService name.
+            artifact_path: Path to model artifacts.
+            model_name: Model name.
+            model_version: Model version.
+            dataset_id: Dataset identifier for transformer parameters.
+            transformer_image: Container image for the transformer.
+            transformer_parameters: Environment variables for the transformer container.
+            protocol_version: Protocol version for the model server.
+            model_format: Model format (e.g., "tensorflow", "pytorch").
+            namespace: Namespace where the InferenceService will be deployed.
+        Returns:
+            dict: Created InferenceService details.
+        Raises:
+            CogflowServingError: If serving fails.
+        Examples:
+            >>> from cogflow import serving
+            >>> isvc = serving.deploy_model(
+            ...     model_id="123e4567-e89b-12d3-a456-426614174000",
+            ...     isvc_name="my-inferenceservice",
+            ...     namespace="default",
+            ... )
+            >>> print(isvc)
+        """
+        namespace = namespace or common.get_namespace()
+        logger.info(
+            "serve_model called model_id=%s model_name=%s model_version=%s isvc_name=%s namespace=%s",
+            model_id,
+            model_name,
+            model_version,
+            isvc_name,
+            namespace,
+        )
+
+        try:
+            detect_model_format, get_model_details = self._get_model_helpers()
+            model_details = get_model_details(
+                model_id=model_id,
+                artifact_path=artifact_path,
+                model_name=model_name,
+                model_version=model_version,
+            )
+            model_uri = model_details["model_uri"]
+
+            transformer_env = self._get_transformer_env(
+                dataset_id, transformer_image, transformer_parameters
+            )
+
+            model_format = model_format or detect_model_format(model_uri=model_uri)
+
+            # Default ISVC name: model-<canonical-uuid>
+            if not isvc_name:
+                isvc_name = f"model-{common.normalize_uuid(model_details['model_id'])}"
+
+            annot = {
+                "model_id": model_details["model_id"],
+                "model_name": model_details["model_name"],
+                "model_version": model_details["model_version"],
+            }
+            if dataset_id:
+                annot["dataset_id"] = common.normalize_uuid(dataset_id)
+
+            logger.info(
+                "Creating InferenceService '%s' for model_uri=%s in namespace=%s.",
+                isvc_name,
+                model_uri,
+                namespace,
+            )
+
+            return self.create_isvc(
+                name=isvc_name,
+                model_uri=model_uri,
+                model_format=model_format,
+                protocol_version=protocol_version,
+                transformer_image=transformer_image,
+                transformer_env=transformer_env,
+                annot=annot,
+                namespace=namespace,
+            )
+        except (CogflowValidationError, CogflowModelError, CogflowDatasetError):
+            raise
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context="Serve model via ServingManager",
+                raise_as=CogflowServingError,
+                re_raise=True,
+            )
+
+    # -----------------------------------------------------------------
+    # LIST / INSPECT SERVED MODELS
+    # -----------------------------------------------------------------
+
+    def list_models(
+        self,
+        namespace: Optional[str] = None,
+        isvc_name: Optional[str] = None,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """
+        Get served model(s) information from InferenceService CRDs.
+
+        Args:
+            namespace: Kubernetes namespace where the InferenceServices are deployed.
+                       Defaults to the current namespace (common.get_namespace()).
+            isvc_name: Optional name of a single InferenceService. If provided,
+                       returns a list with a single model (or None if not found).
+                       If omitted, returns all InferenceServices in the namespace.
+
+        Returns:
+            list[dict] or None:
+                - If isvc_name is provided:
+                     * list with a single model_info dict, or
+                     * None if the service does not exist.
+                - If isvc_name is None:
+                     * list of model_info dicts (possibly empty).
+                Each dict contains:
+                    isvc_name, served_model_url, status, model_id, model_name,
+                    model_version, dataset_id, creation_timestamp, age,
+                    latest_ready_revision, traffic_percentage,
+                    has_canary, stable_revision, canary_revision,
+                    stable_traffic_percent, canary_traffic_percent
+        Raises:
+            CogflowConnectionError: If there is a connection issue with Kubernetes API.
+            CogflowServingError: For other serving-related errors.
+        Examples:
+            >>> from cogflow import serving
+            >>> # List all served models in the default namespace
+            >>> models = serving.list_models()
+            >>> for model in models:
+            ...     print(model)
+            ...
+            >>> # Get a specific served model by InferenceService name
+            >>> model = serving.list_models(isvc_name="my-inferenceservice")
+            >>> print(model)
+        """
+        ns = namespace or common.get_namespace()
+        logger.info(
+            "Fetching served models in namespace=%s (isvc_name=%s)", ns, isvc_name
+        )
+
+        def _get_single_isvc_info(isvc_obj: dict) -> Optional[List[Dict[str, Any]]]:
+            if not isvc_obj:
+                return None
+            info = self._process_isvc(isvc_obj)
+            return [info] if info else None
+
+        def _get_all_isvc_info(resp: dict) -> List[Dict[str, Any]]:
+            if isinstance(resp, dict) and "items" in resp:
+                isvc_list = resp["items"]
+            else:
+                isvc_list = []
+
+            served_models: List[Dict[str, Any]] = []
+            for isvc in isvc_list:
+                if isinstance(isvc, dict):
+                    info = self._process_isvc(isvc)
+                    if info:
+                        served_models.append(info)
+
+            served_models.sort(
+                key=lambda x: x.get("creation_timestamp") or "", reverse=True
+            )
+            return served_models
+
+        try:
+            # Single service
+            if isvc_name:
+                try:
+                    isvc = self.get_isvc(name=isvc_name, namespace=ns)
+                except ApiException as e:
+                    if getattr(e, "status", None) == 404:
+                        logger.info(
+                            "InferenceService '%s' not found in namespace '%s'.",
+                            isvc_name,
+                            ns,
+                        )
+                        return None
+                    # Wrap any other API error
+                    CogflowErrorHandler.handle_exception(
+                        e,
+                        context=(
+                            f"Get InferenceService '{isvc_name}' "
+                            f"in namespace '{ns}' for get_served_models"
+                        ),
+                        raise_as=CogflowConnectionError,
+                        re_raise=True,
+                    )
+                return _get_single_isvc_info(isvc)
+
+            # All services
+            logger.debug(
+                "Listing all InferenceServices in namespace=%s for get_served_models",
+                ns,
+            )
+            resp = self.api.list_namespaced_custom_object(
+                group=self.GROUP,
+                version=self.VERSION,
+                namespace=ns,
+                plural=self.PLURAL,
+            )
+            return _get_all_isvc_info(resp)
+
+        except ApiException as e:
+            if getattr(e, "status", None) == 404:
+                logger.info(
+                    "No InferenceServices found in namespace '%s' (404 returned).", ns
+                )
+                return None
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"List InferenceServices in namespace '{ns}'",
+                raise_as=CogflowConnectionError,
+                re_raise=True,
+            )
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context="get_served_models via ServingManager",
+                raise_as=CogflowServingError,
+                re_raise=True,
+            )
+
+
+# Create a singleton instance for the public interface
+_serving = ServingManager()
+
+# Exposed SDK-level methods (single source of truth)
+for attr_name in dir(ServingManager):
+    # Skip private methods and dunder methods
+    if attr_name.startswith("_"):
+        continue
+
+    attr = getattr(ServingManager, attr_name)
+
+    # Only export methods (callables) that belong to ModelManager
+    if callable(attr):
+        # Bind the method to the singleton instance
+        globals()[attr_name] = getattr(_serving, attr_name)

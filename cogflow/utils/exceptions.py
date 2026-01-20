@@ -93,6 +93,34 @@ class CogflowValidationError(CogflowError):
     """Raised for invalid parameters, configurations, or schema mismatches."""
 
 
+class CogflowDatasetError(CogflowError):
+    """Raised when dataset retrieval or dataset-related operations fail."""
+
+
+class CogflowServingError(CogflowError):
+    """Raised for model serving and Kubernetes InferenceService lifecycle errors."""
+
+
+class CogflowComponentError(CogflowError):
+    """Base error for component registry / pipeline components."""
+
+
+class CogflowComponentValidationError(CogflowComponentError):
+    """Invalid input / YAML / configuration for component."""
+
+
+class CogflowComponentRegistryError(CogflowComponentError):
+    """Errors talking to component registry API (HTTP errors, bad payload, etc.)."""
+
+
+class CogflowComponentStorageError(CogflowComponentError):
+    """Errors interacting with MinIO / S3 for component YAML."""
+
+
+class CogflowPipelineError(CogflowError):
+    """Errors in Kubeflow pipeline construction, compilation, or submission."""
+
+
 # -----------------------------------------------------------------------------
 # 🧩 CogFlow Error Handler Utility
 # -----------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-""""
+""" "
 Utility module for CogFlow logging.
 Provides a standardized logger configuration for all CogFlow modules.
 """
