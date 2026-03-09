@@ -547,9 +547,9 @@ class ServingManager:
 
         # --- Base URLs ---
         served_model_url = (
-            status_dict.get("url")
-            or status_dict.get("address", {}).get("url")
+            status_dict.get("address", {}).get("url")
             or status_dict.get("components", {}).get("predictor", {}).get("url")
+            or status_dict.get("url")
             or status_dict.get("components", {}).get("transformer", {}).get("url")
         )
 
