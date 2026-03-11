@@ -4,8 +4,11 @@ This module provides functionality related to Dataset upload via plugin.
 
 import io
 import os
+import uuid
 from typing import Union
 from urllib.parse import urlparse
+from uuid import UUID
+
 import numpy as np
 import pandas as pd
 import requests
@@ -357,12 +360,13 @@ class DatasetPlugin:
         return result
 
     @staticmethod
-    def get_dataset(dataset_id: int, endpoint: str):
+    def get_dataset(dataset_id: UUID, endpoint: str, user_id: str = None):
         """
         Generic method to call dataset API endpoints like /datasets/prometheus/{id}.
 
         :param dataset_id: Dataset ID to fetch
         :param endpoint: API endpoint path (e.g., "/datasets/prometheus")
+        :param user_id: Optional user ID to include in the request header.
         :return: API JSON response
         """
         PluginManager().load_config()
@@ -370,7 +374,7 @@ class DatasetPlugin:
         url = f"{os.getenv(plugin_config.API_BASEPATH)}{endpoint}"
 
         headers = {
-            "kubeflow-userid": KubeflowPlugin().get_current_user_from_namespace()
+            "kubeflow-userid": user_id if user_id else KubeflowPlugin().get_current_user_from_namespace()
         }
 
         resp = make_get_request(
@@ -416,7 +420,7 @@ class DatasetPlugin:
             raise Exception(f"Failed to download file from S3 location: {str(e)}")
 
     @staticmethod
-    def download_dataset(dataset_id: int, output_file_path: str = None):
+    def download_dataset(dataset_id: UUID, output_file_path: str = None):
         """
         Download a dataset by its ID and save it to a specified output file.
 

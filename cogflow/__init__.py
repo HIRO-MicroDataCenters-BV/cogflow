@@ -75,11 +75,12 @@ register_dataset: Register a dataset.
 
 import inspect
 import json
+import mimetypes
 import os
 from collections import defaultdict
 from datetime import datetime
 from types import FunctionType
-from typing import Callable, Union, Any, List, Optional, Dict, Mapping
+from typing import Callable, Union, Any, List, Optional, Dict, Mapping, get_type_hints
 import time
 from uuid import UUID
 
@@ -109,7 +110,7 @@ from .plugin_config import (
     MINIO_ENDPOINT_URL,
     MINIO_ACCESS_KEY,
     MINIO_SECRET_ACCESS_KEY,
-    API_BASEPATH,
+    API_BASEPATH, DEFAULT_LINEAGE_BUCKET, DEFAULT_LINEAGE_PREFIX,
 )
 from .pluginmanager import PluginManager, ConfigException
 from .plugins.component_plugin import ComponentPlugin
@@ -243,18 +244,19 @@ def register_dataset(
     )
 
 
-def get_dataset(dataset_id: int, endpoint: str = plugin_config.DATASETS):
+def get_dataset(dataset_id: UUID, endpoint: str = plugin_config.DATASETS, user_id: Optional[str] = None):
     """
     Generic method to call dataset API endpoints like /datasets/prometheus/{id}.
 
     :param dataset_id: Dataset ID to fetch
     :param endpoint: API endpoint path (e.g., "/datasets/prometheus")
+    :param user_id: Optional user ID for authentication/authorization (if required by the API)
     :return: API JSON response
     """
-    return DatasetPlugin().get_dataset(dataset_id=dataset_id, endpoint=endpoint)
+    return DatasetPlugin().get_dataset(dataset_id=dataset_id, endpoint=endpoint, user_id=user_id)
 
 
-def download_dataset(dataset_id: int, output_file_path: str = None):
+def download_dataset(dataset_id: UUID, output_file_path: str = None):
     """
     Downloads a dataset by its ID.
 
@@ -266,9 +268,38 @@ def download_dataset(dataset_id: int, output_file_path: str = None):
     Returns:
         str: The path to the downloaded dataset file.
     """
-    return DatasetPlugin().download_dataset(
-        dataset_id=dataset_id, output_file_path=output_file_path
+    # 1) Always do the download (existing behavior)
+    local_path = DatasetPlugin().download_dataset(
+        dataset_id=dataset_id,
+        output_file_path=output_file_path
     )
+
+    # 2) Only attempt lineage if pipeline env is present
+    #    (no errors if missing)
+    try:
+        import os
+
+        pipeline_run_id = os.getenv("PIPELINE_RUN_ID")
+        print(pipeline_run_id)
+        if not pipeline_run_id:
+            return local_path  # Not running in pipeline context; skip lineage
+
+        # 3) Register RAW lineage (best-effort, never fail download)
+        #    Expect your register_lineage() to handle uploads + metadata.
+        #    If you strictly require parquet in lineage storage but local_path is CSV,
+        #    you can convert later; for now just register metadata and/or file if supported.
+        register_lineage(
+            stage="raw",
+            local_files={"snapshot": local_path},
+            # register_lineage can map raw->snapshot.parquet (or accept non-parquet early)
+            metadata={"dataset_id": str(dataset_id)},
+        )
+
+    except Exception as e:
+        # Do not break user workloads because lineage is auxiliary
+        print(f"[cogflow] lineage registration skipped/failed in download_dataset: {e}")
+
+    return local_path
 
 
 def delete_registered_model(model_name):
@@ -755,6 +786,7 @@ def log_metrics(metrics: Dict[str, float], step: Optional[int] = None) -> None:
 def log_model(
     model,
     artifact_path,
+        artifacts: dict = None,
     model_type: str = None,
     registered_model_name=None,
     conda_env=None,
@@ -831,6 +863,7 @@ def log_model(
         # Log using pyfunc flavor
         result = custom_log_model(
             artifact_path=artifact_path,
+            artifacts=artifacts,
             python_model=model,
             code_path=code_paths,
             conda_env=conda_env,
@@ -880,8 +913,91 @@ def log_model(
             raise RuntimeError("No active MLflow run found")
         model_id = active_run.info.run_id
 
+        # -----------------------------
+        # ✅ TRAINING LINEAGE (best-effort)
+        # -----------------------------
+        try:
+            pipeline_run_id = os.getenv("PIPELINE_RUN_ID")
+
+            if pipeline_run_id:
+                # --------------------------------------------------
+                # 1️⃣ Add MLflow tags for easy traceability
+                # --------------------------------------------------
+                try:
+                    mlflow.set_tag("cogflow.pipeline_run_id", pipeline_run_id)
+                    mlflow.set_tag("cogflow.pipeline_run_name", os.getenv("PIPELINE_RUN_NAME", ""))
+                    mlflow.set_tag("cogflow.pipeline_namespace", os.getenv("PIPELINE_NAMESPACE", ""))
+                except Exception:
+                    pass
+
+                # --------------------------------------------------
+                # 2️⃣ Try to read training input context file
+                # --------------------------------------------------
+                ctx_path = os.getenv(
+                    "COGFLOW_TRAINING_CTX_PATH",
+                    "/tmp/cogflow_training_inputs.json"
+                )
+
+                local_files = None
+                training_inputs = {}
+
+                if os.path.exists(ctx_path):
+                    try:
+                        import json
+
+                        with open(ctx_path, "r") as f:
+                            training_inputs = json.load(f)
+
+                        # Prefer train-like keys if present
+                        preferred_keys = [
+                            "train_data_path",
+                            "train_data",
+                            "train",
+                            "dataset",
+                            "data",
+                        ]
+
+                        snapshot_path = None
+
+                        for key in preferred_keys:
+                            if key in training_inputs:
+                                snapshot_path = training_inputs[key]
+                                break
+
+                        # fallback: first available file
+                        if not snapshot_path and training_inputs:
+                            snapshot_path = next(iter(training_inputs.values()))
+
+                        if snapshot_path and os.path.exists(snapshot_path):
+                            local_files = {"snapshot": snapshot_path}
+
+                    except Exception as e:
+                        print(f"[cogflow] failed reading training ctx (ignored): {e}")
+
+                # --------------------------------------------------
+                # 3️⃣ Register training lineage
+                # --------------------------------------------------
+                comp_name = os.getenv("COGFLOW_COMPONENT_NAME")
+                comp_cat = os.getenv("COGFLOW_COMPONENT_CATEGORY")
+
+                register_lineage(
+                    stage="training",
+                    mlflow_run_id=model_id,
+                    local_files=local_files,  # None if no dataset detected
+                    metadata={
+                        "model_id": uuid_to_canonical(model_id),
+                        "artifact_path": artifact_path,
+                        "registered_model_name": registered_model_name,
+                        "component_name": comp_name,
+                        "component_category": comp_cat,
+                        "training_inputs_detected": list(training_inputs.keys()) if training_inputs else None,
+                    },
+                )
+
+        except Exception as e:
+            print(f"[cogflow] training lineage skipped/failed in log_model (ignored): {e}")
         model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
-            model_id=model_id,
+            model_id=model_id, artifact_path= artifact_path or None
         )
         model_type = MlflowPlugin().detect_model_type(model_details["model_uri"])
 
@@ -1285,6 +1401,38 @@ def delete_pipeline(
 
     NotebookPlugin.delete_pipeline_details_from_db(pipeline_id)
 
+def _is_output_path_annotation(ann) -> bool:
+    # Works across common KFP v1 annotation forms like OutputPath('...') / OutputPath(str) / etc.
+    return ann is not None and "OutputPath" in str(ann)
+
+def _is_input_path_annotation(ann) -> bool:
+    return ann is not None and "InputPath" in str(ann)
+
+def _write_training_ctx(func, args, kwargs):
+    # only if pipeline context exists
+    if not os.getenv("PIPELINE_RUN_ID"):
+        return
+
+    ctx_path = os.getenv("COGFLOW_TRAINING_CTX_PATH", "/tmp/cogflow_training_inputs.json")
+
+    sig = inspect.signature(func)
+    bound = sig.bind_partial(*args, **kwargs)
+    hints = get_type_hints(func)
+
+    inputs = {}
+    for name, val in bound.arguments.items():
+        ann = hints.get(name)
+        if _is_input_path_annotation(ann) and isinstance(val, str) and os.path.exists(val):
+            # store all dataset-like inputs
+            if val.endswith((".parquet", ".pq", ".csv")):
+                inputs[name] = val
+
+    if inputs:
+        try:
+            with open(ctx_path, "w") as f:
+                json.dump(inputs, f)
+        except Exception as e:
+            print(f"[cogflow] failed to write training ctx (ignored): {e}")
 
 def cogcomponent(
     output_component_file: Optional[str] = None,
@@ -1311,9 +1459,48 @@ def cogcomponent(
     """
 
     def decorator(func: Callable):
+        def wrapped_func(*args, **kwargs):
+            result = func(*args, **kwargs)
+
+            if category == "preprocess":
+                try:
+                    import os
+                    from inspect import signature
+
+                    if not os.getenv("PIPELINE_RUN_ID"):
+                        return result
+
+                    sig = signature(func)
+                    bound = sig.bind_partial(*args, **kwargs)
+
+                    # ✅ Identify ONLY OutputPath args
+                    type_hints = get_type_hints(func)
+
+                    local_files = {}
+                    for param_name, param_value in bound.arguments.items():
+                        ann = type_hints.get(param_name)
+
+                        if _is_output_path_annotation(ann):
+                            if isinstance(param_value, str) and os.path.exists(param_value):
+                                # Optional: keep only dataset-like outputs
+                                # (so you don't upload JSON configs, etc.)
+                                if param_value.endswith((".parquet", ".pq", ".csv")):
+                                    local_files[param_name] = param_value
+
+                    if local_files:
+                        register_lineage(
+                            stage="preprocess",
+                            local_files=local_files,
+                            metadata={"component_name": func.__name__},
+                        )
+
+                except Exception as e:
+                    print(f"[cogflow] preprocess lineage failed (ignored): {e}")
+
+            return result
         # Step 1: Build the component spec
         component_op = create_component_from_func(
-            func=func,
+            func=wrapped_func,
             output_component_file=output_component_file,
             base_image=base_image,
             packages_to_install=packages_to_install,
@@ -2786,6 +2973,7 @@ def serve_model(
     protocol_version: str = None,
     model_format: str = None,
     namespace: str = None,
+        user_id: str = None,
 ):
     """
     Resolve a model and create a KServe InferenceService.
@@ -2804,6 +2992,7 @@ def serve_model(
         protocol_version (str, optional): Protocol version for the model server (e.g., "v1", "v2").
         model_format (str, optional): Model format (e.g., "mlflow", "sklearn").
         namespace (str, optional): Kubernetes namespace to deploy the InferenceService.
+            user_id (str, optional): User ID for authentication when fetching dataset details.
 
     Examples:
         # Serve using run ID (with optional artifact path)
@@ -2824,7 +3013,8 @@ def serve_model(
         ...         "PROMETHEUS_METRICS": "metric1,metric2"
         ...     },
         ...     protocol_version="v2",
-        ...     model_format="mlflow"
+        ...     model_format="mlflow",
+        ...     user_id="xyz@abc.com"
         ... )
 
     Raises:
@@ -2849,7 +3039,7 @@ def serve_model(
 
         if dataset_id is not None and not transformer_parameters:
             dataset = get_dataset(
-                dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset")
+                dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset"), user_id=user_id
             )
             if dataset.get("data_source_type") == 20:
                 if not transformer_image:
@@ -2857,10 +3047,7 @@ def serve_model(
                         "Dataset is of Prometheus type. You must provide a 'transformer_image' "
                         "to handle preprocessing for the transformer."
                     )
-                dataset_response = get_dataset(
-                    dataset_id=dataset_id,
-                    endpoint=PluginManager().load_path("prometheus_dataset"),
-                )
+                dataset_response = get_prometheus_dataset(dataset_id=dataset_id, user_id=user_id)
                 transformer_parameters = {
                     "PROMETHEUS_URL": dataset_response.get("connection_type", {}).get(
                         "prometheus_url"
@@ -2881,8 +3068,8 @@ def serve_model(
             model_uri=model_details["model_uri"],
             isvc_name=isvc_name,
             model_id=uuid_to_canonical(model_details["model_id"]),
-            model_name=model_details["model_name"],
-            model_version=model_details["model_version"],
+            model_name=model_name if model_name else model_details["model_name"],
+            model_version=model_version if model_version else model_details["model_version"],
             dataset_id=dataset_id,
             transformer_image=transformer_image,
             transformer_parameters=transformer_parameters,
@@ -2895,6 +3082,31 @@ def serve_model(
         print(f"[ERROR] Failed to serve model: {e}")
         raise
 
+
+
+def get_prometheus_dataset(dataset_id: UUID, user_id: str = None):
+    """
+    Generic method to call dataset API endpoints like /datasets/{id}/prometheus.
+
+    :param dataset_id: Dataset ID to fetch
+    :param user_id: Optional user ID for authentication. If not provided, it will be
+        fetched from the current namespace.
+    :return: API JSON response
+    """
+    PluginManager().load_config()
+
+    url = f"{os.getenv(plugin_config.API_BASEPATH)}/datasets/{dataset_id}/prometheus"
+
+    headers = {
+        "kubeflow-userid": user_id if user_id else KubeflowPlugin().get_current_user_from_namespace()
+    }
+
+    resp = make_get_request(
+        url=url,
+        headers=headers,
+    )
+
+    return resp.get("data")
 
 def connect(source_dataset, model_isvc, destination_dataset):
     """
@@ -3033,6 +3245,7 @@ def update_served_model(
     model_format: Optional[str] = None,
     canary_traffic_percent: Optional[int] = None,
     enable_tag_routing: Optional[bool] = False,
+        user_id: Optional[str] = None,
 ) -> str:
     """
     Update or roll out a model on an existing KServe InferenceService.
@@ -3058,6 +3271,8 @@ def update_served_model(
         model_format (str, optional): Model format (e.g., "mlflow", "sklearn").
         canary_traffic_percent (int, optional): % of traffic routed to canary model.
         enable_tag_routing (bool, optional): Explicitly enable tag routing (no auto).
+        user_id (str, optional): User ID for dataset access. If not provided,
+        it will be fetched from the current namespace.
 
     Returns:
         str: Success message.
@@ -3077,7 +3292,7 @@ def update_served_model(
         ):
             # Validate the traffic value based on current ISVC state
             KubeflowPlugin().validate_canary_traffic_percent(
-                isvc_name=isvc_name, canary_traffic_percent=canary_traffic_percent
+                isvc_name=isvc_name, canary_traffic_percent=canary_traffic_percent, namespace= namespace
             )
             return KubeflowPlugin().update_served_model(
                 isvc_name=isvc_name,
@@ -3107,7 +3322,7 @@ def update_served_model(
         # Handle Prometheus dataset preprocessor config
         if dataset_id is not None and not transformer_parameters:
             dataset = get_dataset(
-                dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset")
+                dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset"), user_id=user_id
             )
             if dataset.get("data_source_type") == 20:
                 if not transformer_image:
@@ -3115,10 +3330,7 @@ def update_served_model(
                         "Dataset is of Prometheus type. You must provide a 'transformer_image' "
                         "to handle preprocessing for the transformer."
                     )
-                dataset_response = get_dataset(
-                    dataset_id=dataset_id,
-                    endpoint=PluginManager().load_path("prometheus_dataset"),
-                )
+                dataset_response = get_prometheus_dataset(dataset_id=dataset_id, user_id=user_id)
                 transformer_parameters = {
                     "PROMETHEUS_URL": dataset_response.get("connection_type", {}).get(
                         "prometheus_url"
@@ -3137,7 +3349,7 @@ def update_served_model(
         # Validate canary range if requested
         if canary_traffic_percent is not None:
             KubeflowPlugin().validate_canary_traffic_percent(
-                isvc_name=isvc_name, canary_traffic_percent=canary_traffic_percent
+                isvc_name=isvc_name, canary_traffic_percent=canary_traffic_percent, namespace= namespace
             )
 
         # ---------------------------------------------------------------------
@@ -3145,8 +3357,8 @@ def update_served_model(
         # ---------------------------------------------------------------------
         return KubeflowPlugin().update_served_model(
             isvc_name=isvc_name,
-            model_name=model_details["model_name"],
-            model_version=model_details["model_version"],
+            model_name= model_name if model_name else model_details["model_name"],
+            model_version=model_version if model_version else model_details["model_version"],
             model_uri=model_details["model_uri"],
             model_id=uuid_to_canonical(model_details["model_id"]),
             dataset_id=dataset_id,
@@ -3663,6 +3875,154 @@ def list_artifacts_grouped(run_id: str):
     _walk()
     return dict(grouped)
 
+
+def _now_iso():
+    return datetime.utcnow().isoformat() + "Z"
+
+
+def _get_pipeline_env():
+    return {
+        "PIPELINE_RUN_ID": os.getenv("PIPELINE_RUN_ID"),
+        "PIPELINE_RUN_NAME": os.getenv("PIPELINE_RUN_NAME"),
+        "PIPELINE_NAMESPACE": os.getenv("PIPELINE_NAMESPACE"),
+        "PIPELINE_POD_NAME": os.getenv("PIPELINE_POD_NAME"),
+    }
+
+
+def _put_json(minio_client, bucket: str, object_name: str, data: dict):
+    payload = json.dumps(data, indent=2).encode("utf-8")
+    # MinIO put_object needs a stream + length
+    import io
+    minio_client.put_object(
+        bucket_name=bucket,
+        object_name=object_name,
+        data=io.BytesIO(payload),
+        length=len(payload),
+        content_type="application/json",
+    )
+
+
+def _put_file(minio_client, bucket: str, object_name: str, file_path: str):
+    ctype, _ = mimetypes.guess_type(file_path)
+    ctype = ctype or "application/octet-stream"
+    print("put file operation", bucket, object_name, file_path, ctype)
+    minio_client.fput_object(
+        bucket_name=bucket,
+        object_name=object_name,
+        file_path=file_path,
+        content_type=ctype,
+    )
+
+
+def register_lineage(
+    *,
+    stage: str,
+    local_files: Optional[Dict[str, str]] = None,
+    metadata: Optional[dict] = None,
+    mlflow_run_id: Optional[str] = None,
+    bucket: str = DEFAULT_LINEAGE_BUCKET,
+    prefix: str = DEFAULT_LINEAGE_PREFIX,
+):
+    """
+    Best-effort lineage writer.
+
+    - Never raises exceptions (lineage must not break pipelines).
+    - If PIPELINE_RUN_ID is not set, does a silent no-op and returns None.
+    - If invalid inputs or upload fails, logs and returns None.
+
+    Layout produced:
+      {prefix}/{pipeline_run_id}/{stage}/...  (or .../training/{mlflow_run_id}/...)
+    """
+    print("registering the lineage", stage, local_files, metadata, mlflow_run_id)
+    try:
+        stage_norm = (stage or "").strip().lower()
+        if stage_norm not in ("raw", "preprocess", "training"):
+            print(f"[cogflow] register_lineage skipped: invalid stage={stage!r}")
+            return None
+        print("normalized stage", stage_norm)
+
+        env = _get_pipeline_env()
+        pipeline_run_id = env.get("PIPELINE_RUN_ID")
+        if not pipeline_run_id:
+            # Outside KFP runtime; silently skip
+            return None
+
+        if stage_norm == "training" and not mlflow_run_id:
+            print("[cogflow] register_lineage skipped: mlflow_run_id required for training stage")
+            return None
+
+        # Build base object prefix
+        if stage_norm == "training":
+            base = f"{prefix}/{pipeline_run_id}/training/{mlflow_run_id}"
+        else:
+            base = f"{prefix}/{pipeline_run_id}/{stage_norm}"
+            print("base prefix for lineage", base)
+
+        # Create client (may fail if env/creds missing)
+        try:
+            minio_client = create_minio_client()
+            print("minio client created successfully", minio_client)
+        except Exception as e:
+            print(f"[cogflow] register_lineage skipped: failed to create minio client: {e}")
+            return None
+
+        # 1) Upload files (best-effort per-file)
+        local_files = local_files or {}
+        uploaded_files = {}
+
+        for logical_name, file_path in local_files.items():
+            if not file_path:
+                continue
+
+            try:
+                # Object naming rules per your spec
+                if stage_norm == "raw":
+                    obj_name = f"{base}/snapshot.parquet"
+                elif stage_norm == "preprocess":
+                    obj_name = f"{base}/{logical_name}.parquet"
+                else:  # training
+                    obj_name = f"{base}/snapshot.parquet"
+
+                print(obj_name)
+                _put_file(minio_client, bucket, obj_name, file_path)
+                uploaded_files[logical_name] = f"s3://{bucket}/{obj_name}"
+            except Exception as e:
+                print(f"[cogflow] register_lineage file upload failed: stage={stage_norm}, "
+                      f"name={logical_name}, path={file_path}, err={e}")
+
+        # 2) Upload metadata.json (best-effort)
+        md = {}
+        try:
+            md.update(env or {})
+            md.update({
+                "stage": stage_norm,
+                "bucket": bucket,
+                "base_prefix": base,
+                "created_at": _now_iso(),
+            })
+            if stage_norm == "training":
+                md["mlflow_run_id"] = mlflow_run_id
+            if metadata:
+                md.update(metadata)
+
+            _put_json(minio_client, bucket, f"{base}/metadata.json", md)
+            metadata_uri = f"s3://{bucket}/{base}/metadata.json"
+        except Exception as e:
+            print(f"[cogflow] register_lineage metadata upload failed: stage={stage_norm}, err={e}")
+            metadata_uri = None
+
+        # Return something useful for debugging, but still safe if partial
+        return {
+            "base_uri": f"s3://{bucket}/{base}/",
+            "metadata_uri": metadata_uri,
+            "files": uploaded_files,
+            "skipped": False,
+        }
+
+    except Exception as e:
+        # Final safety net: never raise
+        print(f"[cogflow] register_lineage failed (ignored): {e}")
+        return None
 
 __all__ = [
     # Methods from MlflowPlugin class

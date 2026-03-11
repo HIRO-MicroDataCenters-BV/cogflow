@@ -77,6 +77,11 @@ class CogContainer(kfp.dsl._container_op.Container):
             if value:
                 self.add_env_variable(V1EnvVar(name=key, value=value))
 
+        self.add_env_variable(V1EnvVar(name="PIPELINE_RUN_ID", value="{{workflow.uid}}"))
+        self.add_env_variable(V1EnvVar(name="PIPELINE_RUN_NAME", value="{{workflow.name}}"))
+        self.add_env_variable(V1EnvVar(name="PIPELINE_NAMESPACE", value="{{workflow.namespace}}"))
+        self.add_env_variable(V1EnvVar(name="PIPELINE_POD_NAME", value="{{pod.name}}"))
+
         return self
 
 
@@ -530,6 +535,9 @@ class KubeflowPlugin:
         model_version = annotations.get("model_version")
         dataset_id = annotations.get("dataset_id")
         creation_timestamp = metadata.get("creationTimestamp")
+        # Add canary model metadata
+        canary_model_id = annotations.get("canary_model_id")
+        canary_model_version = annotations.get("canary_model_version")
 
         # --- Base URLs ---
         served_model_url = (
@@ -588,15 +596,15 @@ class KubeflowPlugin:
         stable_traffic = None
         canary_traffic = None
 
-        if has_canary:
+        if has_canary and len(traffic_entries) == 2:
+            # Find which entry is canary and which is stable based on percent/tag
             for t in traffic_entries:
-                if t["percent"] and t["percent"] < 100:
-                    if not stable_revision:
-                        stable_revision = t["revision"]
-                        stable_traffic = t["percent"]
-                if t["percent"] and t["percent"] < 100 and t["tag"] == "canary":
+                if t.get("tag") == "canary" or (canary_traffic_percent and t["percent"] == canary_traffic_percent):
                     canary_revision = t["revision"]
                     canary_traffic = t["percent"]
+                else:
+                    stable_revision = t["revision"]
+                    stable_traffic = t["percent"]
 
             # fallback if only predictor used
             if not canary_revision and len(traffic_entries) == 2:
@@ -637,10 +645,12 @@ class KubeflowPlugin:
             or transformer.get("latestReadyRevision"),
             "traffic_percentage": total_traffic or stable_traffic or 100,
             "has_canary": bool(has_canary),
-            "stable_revision": canary_revision,
-            "canary_revision": stable_revision,
-            "stable_traffic_percent": canary_traffic,
-            "canary_traffic_percent": stable_traffic,
+            "stable_revision": stable_revision,
+            "canary_revision": canary_revision,
+            "stable_traffic_percent": stable_traffic,
+            "canary_traffic_percent": canary_traffic,
+            "canary_model_id": canary_model_id,
+            "canary_model_version": canary_model_version,
         }
 
         return model_info
@@ -1551,7 +1561,27 @@ class KubeflowPlugin:
                     isvc_name, canary_traffic_percent
                 )
 
+                annotations_patch = {}
+                if canary_traffic_percent == 100:
+                    # Full rollout: only canary model details
+                    annotations_patch = {
+                        "sidecar.istio.io/inject": "false",
+                        "model_name": model_name,
+                        "model_version": model_version,
+                        "model_id": model_id,
+                        "canary_model_id": None,
+                        "canary_model_version": None,
+                    }
+                elif canary_traffic_percent is not None:
+                    # Partial rollout: include both stable and canary details
+                    annotations_patch = {
+                        "sidecar.istio.io/inject": "false",
+                        "canary_model_id": model_id,
+                        "canary_model_version": model_version,
+                    }
+
                 patch_body = {
+                    "metadata": {"annotations": annotations_patch},
                     "spec": {
                         "predictor": {"canaryTrafficPercent": canary_traffic_percent}
                     }
@@ -1579,17 +1609,38 @@ class KubeflowPlugin:
             # Validate canary range if provided
             if canary_traffic_percent is not None:
                 KubeflowPlugin().validate_canary_traffic_percent(
-                    isvc_name, canary_traffic_percent
+                    isvc_name = isvc_name, canary_traffic_percent = canary_traffic_percent, namespace=namespace
                 )
 
             # --- Annotations patch ---
-            annotations_patch = {
-                "model_id": model_id,
-                "model_name": model_name,
-                "model_version": model_version,
-                "dataset_id": str(dataset_id) if dataset_id else None,
-                "enable_tag_routing": str(enable_tag_routing).lower(),
-            }
+            if canary_traffic_percent == 100:
+                # Full rollout: only canary model details
+                annotations_patch = {
+                    "sidecar.istio.io/inject": "false",
+                    "model_name": model_name,
+                    "model_version": model_version,
+                    "model_id": model_id,
+                    "canary_model_id": None,
+                    "canary_model_version": None,
+                }
+            elif canary_traffic_percent is not None:
+                # Partial rollout: include both stable and canary details
+                annotations_patch = {
+                    "sidecar.istio.io/inject": "false",
+                    "canary_model_id": model_id,
+                    "canary_model_version": model_version,
+                }
+            else:
+                # No canary: only stable model details
+                annotations_patch = {
+                    "sidecar.istio.io/inject": "false",
+                    "model_name": model_name,
+                    "model_version": model_version,
+                    "model_id": model_id,
+                }
+
+            if dataset_id:
+                annotations_patch["dataset_id"] = dataset_id
 
             # --- Transformer patch ---
             transformer_patch = {}
@@ -1620,6 +1671,8 @@ class KubeflowPlugin:
                 model_patch["modelFormat"] = {"name": model_format}
 
             predictor_patch = {"model": model_patch}
+            if enable_tag_routing:
+                predictor_patch["enableTagRouting"] = enable_tag_routing
 
             # --- Canary rollout logic ---
             if canary_traffic_percent is not None:
@@ -1657,7 +1710,7 @@ class KubeflowPlugin:
 
     @staticmethod
     def validate_canary_traffic_percent(
-        isvc_name: str, canary_traffic_percent: int
+        isvc_name: str, canary_traffic_percent: int, namespace: Optional[str] = None
     ) -> bool:
         """
         Validate the provided canary_traffic_percent value based on whether a canary
@@ -1670,6 +1723,7 @@ class KubeflowPlugin:
         Args:
             isvc_name (str): Name of the KServe InferenceService.
             canary_traffic_percent (int, optional): Desired canary traffic percentage.
+            namespace (str, optional): Namespace of the InferenceService. Defaults to the plugin's default namespace.
 
         Returns:
             bool: True if valid, otherwise raises ValueError.
@@ -1679,7 +1733,7 @@ class KubeflowPlugin:
         """
 
         isvc_obj = KServeClient().get(
-            namespace=KubeflowPlugin().get_default_namespace(), name=isvc_name
+            namespace= namespace if namespace else KubeflowPlugin().get_default_namespace(), name=isvc_name
         )
         # Check if canary already exists in the current ISVC
         canary_spec_exists = (
