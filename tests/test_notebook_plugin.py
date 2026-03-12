@@ -15,7 +15,7 @@ class TestNotebookPlugin(unittest.TestCase):
     @patch("os.getenv")
     def test_delete_pipeline_details_from_db(self, mock_env):
         """Test deleting pipeline details from DB."""
-        with patch("requests.delete") as mock_requests_delete:
+        with patch("httpx.delete") as mock_requests_delete:
             mock_env.side_effect = lambda x: {
                 "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
                 "AWS_ACCESS_KEY_ID": "minio",
@@ -43,7 +43,7 @@ class TestNotebookPlugin(unittest.TestCase):
     @patch("os.getenv")
     def test_delete_run_details_from_db(self, mock_env):
         """Test deleting run details from DB."""
-        with patch("requests.delete") as mock_requests_delete:
+        with patch("httpx.delete") as mock_requests_delete:
             mock_env.side_effect = lambda x: {
                 "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
                 "AWS_ACCESS_KEY_ID": "minio",
@@ -71,7 +71,7 @@ class TestNotebookPlugin(unittest.TestCase):
     @patch("os.getenv")
     def test_list_runs_by_pipeline_id(self, mock_env):
         """Test listing runs by pipeline ID."""
-        with patch("requests.get") as mock_requests_get:
+        with patch("httpx.get") as mock_requests_get:
             mock_env.side_effect = lambda x: {
                 "MLFLOW_S3_ENDPOINT_URL": "localhost:9000",
                 "AWS_ACCESS_KEY_ID": "minio",

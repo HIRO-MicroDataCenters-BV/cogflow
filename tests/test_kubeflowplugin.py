@@ -170,8 +170,8 @@ class TestKubeflowPlugin(unittest.TestCase):
     #         get_model_url(model_name)
     #     mock_plugin_activation.assert_called_once()
 
-    @patch("requests.delete")
-    @patch("requests.get")
+    @patch("httpx.delete")
+    @patch("httpx.get")
     @patch("os.getenv")
     @patch("cogflow.cogflow.plugins.kubeflowplugin.KubeflowPlugin.client")
     def test_delete_pipeline(

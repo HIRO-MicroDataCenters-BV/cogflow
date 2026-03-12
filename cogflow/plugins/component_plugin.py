@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 import yaml
-import requests
+import httpx
 from minio import S3Error
 from .. import plugin_config
 
@@ -201,10 +201,10 @@ class ComponentPlugin:
         # --- Step 1: Check if component exists ---
         check_url = f"{base_endpoint}?name={component_name}"
         try:
-            check_resp = requests.get(check_url, timeout=10)
+            check_resp = httpx.get(check_url, timeout=10)
             check_resp.raise_for_status()
             existing = check_resp.json().get("data", [])
-        except requests.HTTPError as ex:
+        except httpx.HTTPStatusError as ex:
             if (
                 hasattr(ex, "response")
                 and ex.response is not None
@@ -227,7 +227,7 @@ class ComponentPlugin:
 
             # 🔁 PATCH (update)
             update_url = f"{base_endpoint}?creator={creator}"
-            patch_resp = requests.patch(
+            patch_resp = httpx.patch(
                 update_url, json=payload, headers=headers, timeout=10
             )
             patch_resp.raise_for_status()
@@ -240,7 +240,7 @@ class ComponentPlugin:
             if creator:  # 👈 append creator only in POST case
                 post_url += f"?creator={creator}"
             # 🆕 POST (create)
-            post_resp = requests.post(
+            post_resp = httpx.post(
                 post_url, json=payload, headers=headers, timeout=10
             )
             post_resp.raise_for_status()

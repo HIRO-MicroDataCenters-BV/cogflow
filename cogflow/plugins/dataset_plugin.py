@@ -11,13 +11,13 @@ from uuid import UUID
 
 import numpy as np
 import pandas as pd
-import requests
+import httpx
 from minio import Minio
 from mlflow.models.signature import ModelSignature
 from scipy.sparse import csr_matrix, csc_matrix
 from .. import plugin_config
 from ..pluginmanager import PluginManager
-from ..util import make_post_request, make_get_request
+from ..util import make_post_request, make_get_request, async_make_get_request
 from .notebook_plugin import NotebookPlugin
 from .mlflowplugin import MlflowPlugin
 from .kubeflowplugin import KubeflowPlugin
@@ -118,13 +118,13 @@ class DatasetPlugin:
         # Verify plugin activation
         PluginManager().verify_activation(self.section)
         try:
-            response = requests.get(url, timeout=10)
+            response = httpx.get(url, timeout=10)
             if response.status_code == 200:
                 self.save_to_minio(response.content, output_file, bucket_name)
                 return True
             print(f"Request failed with status code {response.status_code}")
             raise Exception("Request could not be successful due to error")
-        except requests.exceptions.RequestException as exp:
+        except httpx.HTTPError as exp:
             print(f"An error occurred: {exp}")
             raise Exception("Exception occurred during the requested operation")
 

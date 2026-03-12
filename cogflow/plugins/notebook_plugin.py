@@ -46,7 +46,7 @@ class NotebookPlugin:
             Response: The response object from the API call.
 
         Raises:
-            requests.exceptions.RequestException: An error occurred when making the POST request.
+            httpx.HTTPError: An error occurred when making the POST request.
         """
         # Verify plugin activation
         PluginManager().verify_activation(NotebookPlugin().section)

@@ -90,7 +90,7 @@ from botocore.exceptions import NoCredentialsError, ClientError
 import psutil
 import numpy as np
 import pandas as pd
-import requests
+import httpx
 from kfp_server_api import ApiException
 from mlflow.models import ModelSignature, ModelInputExample
 from scipy.sparse import csr_matrix, csc_matrix
@@ -125,6 +125,10 @@ from .util import (
     uuid_to_hex,
     uuid_to_canonical,
     make_get_request,
+    async_make_post_request,
+    async_make_get_request,
+    async_make_delete_request,
+    async_download_file,
 )
 
 pyfunc = MlflowPlugin().pyfunc
@@ -406,7 +410,7 @@ def evaluate(
             }
         )
 
-        requests.post(url=url_metrics, json=metrics, headers=headers, timeout=time_out)
+        httpx.post(url=url_metrics, json=metrics, headers=headers, timeout=time_out)
 
     except Exception as exp:
         print(f"Failed to post metrics: {exp}")
@@ -414,7 +418,7 @@ def evaluate(
     serialized_artifacts = NotebookPlugin().serialize_artifacts(result.artifacts)
     # Now you can use serialized_artifacts in your HTTP request
     try:
-        requests.post(
+        httpx.post(
             url=url_artifacts,
             json=serialized_artifacts,
             headers=headers,
@@ -1744,7 +1748,7 @@ def get_pipeline_and_experiment_details(
             )
             query_params = {"uri": model_uri}
             # Make the GET request
-            response = requests.get(url, params=query_params, timeout=100)
+            response = httpx.get(url, params=query_params, timeout=100)
 
             # Check if the request was successful
             if response.status_code == 200:
@@ -2918,7 +2922,7 @@ def register_component(
 
     Raises:
         ValueError: If neither yaml_path nor yaml_data is provided.
-        requests.HTTPError: If the registry API returns an error.
+        httpx.HTTPStatusError: If the registry API returns an error.
     """
     return ComponentPlugin().register_component(
         name=name,
@@ -3027,6 +3031,9 @@ def serve_model(
                 "Must provide either model_id or (model_name and model_version)."
             )
 
+        # Fall back to config default if transformer_image is None
+        transformer_image = transformer_image or plugin_config.TRANSFORMER_BASE_IMAGE
+
         # Resolve model details
         model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
             model_id=uuid_to_hex(model_id),
@@ -3042,11 +3049,6 @@ def serve_model(
                 dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset"), user_id=user_id
             )
             if dataset.get("data_source_type") == 20:
-                if not transformer_image:
-                    raise ValueError(
-                        "Dataset is of Prometheus type. You must provide a 'transformer_image' "
-                        "to handle preprocessing for the transformer."
-                    )
                 dataset_response = get_prometheus_dataset(dataset_id=dataset_id, user_id=user_id)
                 transformer_parameters = {
                     "PROMETHEUS_URL": dataset_response.get("connection_type", {}).get(
@@ -3284,6 +3286,9 @@ def update_served_model(
         Exception: For any errors during model resolution or patching.
     """
     try:
+        # Fall back to config default if transformer_image is None
+        transformer_image = transformer_image or plugin_config.TRANSFORMER_BASE_IMAGE
+
         # ---------------------------------------------------------------------
         # 🧩 CASE 1: Only promote or adjust traffic (no new model involved)
         # ---------------------------------------------------------------------
@@ -3325,11 +3330,6 @@ def update_served_model(
                 dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset"), user_id=user_id
             )
             if dataset.get("data_source_type") == 20:
-                if not transformer_image:
-                    raise ValueError(
-                        "Dataset is of Prometheus type. You must provide a 'transformer_image' "
-                        "to handle preprocessing for the transformer."
-                    )
                 dataset_response = get_prometheus_dataset(dataset_id=dataset_id, user_id=user_id)
                 transformer_parameters = {
                     "PROMETHEUS_URL": dataset_response.get("connection_type", {}).get(
@@ -3358,6 +3358,249 @@ def update_served_model(
         return KubeflowPlugin().update_served_model(
             isvc_name=isvc_name,
             model_name= model_name if model_name else model_details["model_name"],
+            model_version=model_version if model_version else model_details["model_version"],
+            model_uri=model_details["model_uri"],
+            model_id=uuid_to_canonical(model_details["model_id"]),
+            dataset_id=dataset_id,
+            transformer_image=transformer_image,
+            transformer_parameters=transformer_parameters,
+            protocol_version=protocol_version,
+            namespace=namespace,
+            model_format=model_format,
+            canary_traffic_percent=canary_traffic_percent,
+            enable_tag_routing=enable_tag_routing,
+        )
+
+    except Exception as e:
+        print(f"[ERROR] Failed to update served model: {e}")
+        raise
+
+
+# --- Async versions of dataset/serving methods ---
+
+
+async def async_get_dataset(dataset_id: UUID, endpoint: str = plugin_config.DATASETS, user_id: Optional[str] = None):
+    """
+    Async version of get_dataset. Calls dataset API endpoints asynchronously.
+
+    :param dataset_id: Dataset ID to fetch
+    :param endpoint: API endpoint path (e.g., "/datasets/prometheus")
+    :param user_id: Optional user ID for authentication/authorization
+    :return: API JSON response
+    """
+    return await DatasetPlugin().async_get_dataset(dataset_id=dataset_id, endpoint=endpoint, user_id=user_id)
+
+
+async def async_get_prometheus_dataset(dataset_id: UUID, user_id: str = None):
+    """
+    Async version of get_prometheus_dataset.
+
+    :param dataset_id: Dataset ID to fetch
+    :param user_id: Optional user ID for authentication.
+    :return: API JSON response
+    """
+    PluginManager().load_config()
+
+    url = f"{os.getenv(plugin_config.API_BASEPATH)}/datasets/{dataset_id}/prometheus"
+
+    headers = {
+        "kubeflow-userid": user_id if user_id else KubeflowPlugin().get_current_user_from_namespace()
+    }
+
+    resp = await async_make_get_request(
+        url=url,
+        headers=headers,
+    )
+
+    return resp.get("data")
+
+
+async def async_serve_model(
+    model_id: str = None,
+    isvc_name: str = None,
+    artifact_path: str = None,
+    model_name: str = None,
+    model_version: str = None,
+    dataset_id: str = None,
+    transformer_image: str = plugin_config.TRANSFORMER_BASE_IMAGE,
+    transformer_parameters: dict = None,
+    protocol_version: str = None,
+    model_format: str = None,
+    namespace: str = None,
+    user_id: str = None,
+):
+    """
+    Async version of serve_model. Resolves a model and creates a KServe InferenceService.
+    Uses async HTTP calls for dataset fetching.
+
+    Args:
+        model_id (str, optional): Unique identifier for the model/run.
+        isvc_name (str, optional): Name of the KServe InferenceService.
+        model_name (str, optional): Registered model name (alternative to model_id).
+        model_version (str, optional): Registered model version.
+        artifact_path (str, optional): Specific artifact path (e.g., "model").
+        dataset_id (str, optional): Dataset linked to the model.
+        transformer_image (str): Image of the transformer.
+        transformer_parameters (dict, optional): Parameters for the transformer.
+        protocol_version (str, optional): Protocol version for the model server.
+        model_format (str, optional): Model format (e.g., "mlflow", "sklearn").
+        namespace (str, optional): Kubernetes namespace to deploy the InferenceService.
+        user_id (str, optional): User ID for authentication when fetching dataset details.
+    """
+    try:
+        if not model_id and not (model_name and model_version):
+            raise ValueError(
+                "Must provide either model_id or (model_name and model_version)."
+            )
+
+        # Fall back to config default if transformer_image is None
+        transformer_image = transformer_image or plugin_config.TRANSFORMER_BASE_IMAGE
+
+        model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
+            model_id=uuid_to_hex(model_id),
+            artifact_path=artifact_path,
+            model_name=model_name,
+            model_version=model_version,
+        )
+
+        transformer_parameters = transformer_parameters or {}
+
+        if dataset_id is not None and not transformer_parameters:
+            dataset = await async_get_dataset(
+                dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset"), user_id=user_id
+            )
+            if dataset.get("data_source_type") == 20:
+                dataset_response = await async_get_prometheus_dataset(dataset_id=dataset_id, user_id=user_id)
+                transformer_parameters = {
+                    "PROMETHEUS_URL": dataset_response.get("connection_type", {}).get(
+                        "prometheus_url"
+                    ),
+                    "PROMETHEUS_METRICS": dataset_response.get("metric_list", {}).get(
+                        "METRIC_FEATURES"
+                    ),
+                }
+
+        if model_format is None:
+            model_format = MlflowPlugin().detect_model_format(
+                model_details["model_uri"]
+            )
+
+        KubeflowPlugin().serve_model(
+            model_uri=model_details["model_uri"],
+            isvc_name=isvc_name,
+            model_id=uuid_to_canonical(model_details["model_id"]),
+            model_name=model_name if model_name else model_details["model_name"],
+            model_version=model_version if model_version else model_details["model_version"],
+            dataset_id=dataset_id,
+            transformer_image=transformer_image,
+            transformer_parameters=transformer_parameters,
+            protocol_version=protocol_version,
+            model_format=model_format,
+            namespace=namespace,
+        )
+
+    except Exception as e:
+        print(f"[ERROR] Failed to serve model: {e}")
+        raise
+
+
+async def async_update_served_model(
+    isvc_name: str,
+    model_id: Optional[str] = None,
+    artifact_path: Optional[str] = None,
+    model_name: Optional[str] = None,
+    model_version: Optional[str] = None,
+    dataset_id: Optional[str] = None,
+    transformer_image: Optional[str] = plugin_config.TRANSFORMER_BASE_IMAGE,
+    transformer_parameters: Optional[dict] = None,
+    protocol_version: Optional[str] = None,
+    namespace: Optional[str] = None,
+    model_format: Optional[str] = None,
+    canary_traffic_percent: Optional[int] = None,
+    enable_tag_routing: Optional[bool] = False,
+    user_id: Optional[str] = None,
+) -> str:
+    """
+    Async version of update_served_model. Uses async HTTP calls for dataset fetching.
+
+    Args:
+        isvc_name (str): Name of the KServe InferenceService to update.
+        model_id (str, optional): Unique identifier for the model/run.
+        model_name (str, optional): Registered model name.
+        model_version (str, optional): Registered model version.
+        artifact_path (str, optional): Specific artifact path.
+        dataset_id (str, optional): Dataset linked to the model.
+        transformer_image (str, optional): Image of the transformer.
+        transformer_parameters (dict, optional): Parameters for the transformer.
+        protocol_version (str, optional): Protocol version for the model server.
+        namespace (str, optional): Kubernetes namespace.
+        model_format (str, optional): Model format.
+        canary_traffic_percent (int, optional): % of traffic routed to canary model.
+        enable_tag_routing (bool, optional): Enable tag routing.
+        user_id (str, optional): User ID for dataset access.
+
+    Returns:
+        str: Success message.
+    """
+    try:
+        # Fall back to config default if transformer_image is None
+        transformer_image = transformer_image or plugin_config.TRANSFORMER_BASE_IMAGE
+
+        if canary_traffic_percent is not None and not (
+            model_id or model_name or model_version
+        ):
+            KubeflowPlugin().validate_canary_traffic_percent(
+                isvc_name=isvc_name, canary_traffic_percent=canary_traffic_percent, namespace=namespace
+            )
+            return KubeflowPlugin().update_served_model(
+                isvc_name=isvc_name,
+                namespace=namespace,
+                canary_traffic_percent=canary_traffic_percent,
+            )
+
+        if not model_id and not (model_name and model_version):
+            raise ValueError(
+                "Must provide either model_id or (model_name and model_version) "
+                "when performing a model update or canary rollout."
+            )
+
+        model_details = MlflowPlugin().get_full_model_uri_from_run_or_registry(
+            model_id=uuid_to_hex(model_id),
+            artifact_path=artifact_path,
+            model_name=model_name,
+            model_version=model_version,
+        )
+
+        transformer_parameters = transformer_parameters or {}
+
+        if dataset_id is not None and not transformer_parameters:
+            dataset = await async_get_dataset(
+                dataset_id=dataset_id, endpoint=PluginManager().load_path("dataset"), user_id=user_id
+            )
+            if dataset.get("data_source_type") == 20:
+                dataset_response = await async_get_prometheus_dataset(dataset_id=dataset_id, user_id=user_id)
+                transformer_parameters = {
+                    "PROMETHEUS_URL": dataset_response.get("connection_type", {}).get(
+                        "prometheus_url"
+                    ),
+                    "PROMETHEUS_METRICS": dataset_response.get("metric_list", {}).get(
+                        "METRIC_FEATURES"
+                    ),
+                }
+
+        if model_format is None:
+            model_format = MlflowPlugin().detect_model_format(
+                model_details["model_uri"]
+            )
+
+        if canary_traffic_percent is not None:
+            KubeflowPlugin().validate_canary_traffic_percent(
+                isvc_name=isvc_name, canary_traffic_percent=canary_traffic_percent, namespace=namespace
+            )
+
+        return KubeflowPlugin().update_served_model(
+            isvc_name=isvc_name,
+            model_name=model_name if model_name else model_details["model_name"],
             model_version=model_version if model_version else model_details["model_version"],
             model_uri=model_details["model_uri"],
             model_id=uuid_to_canonical(model_details["model_id"]),
@@ -3822,10 +4065,10 @@ def register_prometheus_dataset(
     }
 
     try:
-        response = requests.post(api_url, json=payload, headers=headers, timeout=30)
+        response = httpx.post(api_url, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()
-    except requests.HTTPError as http_err:
+    except httpx.HTTPStatusError as http_err:
         raise RuntimeError(f"HTTP error: {http_err}")
     except Exception as exp:
         raise RuntimeError(f"Error while registering Prometheus dataset: {exp}")
@@ -4042,4 +4285,14 @@ __all__ = [
     "add_model_access",
     "kfp",
     "v2",
+    # Async utility functions
+    "async_make_post_request",
+    "async_make_get_request",
+    "async_make_delete_request",
+    "async_download_file",
+    # Async dataset/serving functions
+    "async_get_dataset",
+    "async_get_prometheus_dataset",
+    "async_serve_model",
+    "async_update_served_model",
 ]

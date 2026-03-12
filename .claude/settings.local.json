@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install httpx)",
+      "Bash(python -m pytest tests/ -v)",
+      "Bash(python -m pytest tests/test_notebook_plugin.py -v --timeout=30)",
+      "Bash(python -m pytest tests/test_notebook_plugin.py tests/test_mlflowplugin.py -v --timeout=60)",
+      "Bash(python -c \"import httpx; print\\(''httpx version:'', httpx.__version__\\); from cogflow.util import make_get_request, make_post_request, make_delete_request, download_file, async_make_get_request, async_make_post_request, async_make_delete_request, async_download_file; print\\(''All util imports OK''\\)\")",
+      "Bash(python -c \":*)"
+    ]
+  }
+}

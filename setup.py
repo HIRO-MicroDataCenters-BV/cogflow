@@ -30,7 +30,7 @@ with open("LICENSE.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="cogflow",
-    version="1.13.5",
+    version="1.13.7",
     author="Sai_kireeti",
     author_email="sai.kireeti@hiro-microdatacenters.nl",
     description="COG modules",
@@ -55,6 +55,7 @@ setup(
         "ray==2.9.3",
         "kafka-python==2.0.2",
         "pyyaml",
+        "httpx",
     ],
     classifiers=[
         "Programming Language :: Python :: 3",

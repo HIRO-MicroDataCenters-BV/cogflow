@@ -8,7 +8,7 @@ from typing import Union, Any, List, Optional, Dict
 import mlflow as ml
 import numpy as np
 import pandas as pd
-import requests
+import httpx
 from mlflow.entities import ViewType, Run
 from mlflow.exceptions import MlflowException
 from mlflow.models.signature import ModelSignature
@@ -53,7 +53,7 @@ class MlflowPlugin:
         PluginManager().verify_activation(MlflowPlugin().section)
 
         try:
-            response = requests.get(os.getenv(plugin_config.TRACKING_URI), timeout=300)
+            response = httpx.get(os.getenv(plugin_config.TRACKING_URI), timeout=300)
 
             if response.status_code == 200:
                 pass
@@ -710,7 +710,7 @@ class MlflowPlugin:
         if not model_id:
             if not (model_name and model_version):
                 raise ValueError(
-                    "Either `run_id` or both `model_name` and `model_version` must be provided."
+                    "Either `model_id` or both `model_name` and `model_version` must be provided."
                 )
 
             try:

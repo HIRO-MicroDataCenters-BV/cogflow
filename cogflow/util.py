@@ -5,7 +5,7 @@
 import re
 import uuid
 from datetime import datetime
-import requests
+import httpx
 from . import plugin_config
 
 DEFAULT_TIMEOUT = plugin_config.TIMER_IN_SEC  # Set a default timeout in seconds
@@ -27,7 +27,7 @@ def make_post_request(
     try:
         if files:
             # 'files' should be a dict: {'param_name': (filename, file_obj)}
-            response = requests.post(
+            response = httpx.post(
                 url,
                 data=data,
                 files=files,
@@ -36,11 +36,11 @@ def make_post_request(
                 timeout=timeout,
             )
         elif data:
-            response = requests.post(
+            response = httpx.post(
                 url, json=data, params=params, headers=headers, timeout=timeout
             )
         else:
-            response = requests.post(
+            response = httpx.post(
                 url, params=params, headers=headers, timeout=timeout
             )
 
@@ -49,7 +49,7 @@ def make_post_request(
         # If not the success response
         print(f"POST request failed with status code {response.status_code}")
         raise Exception(response.json())
-    except requests.exceptions.RequestException as exp:
+    except httpx.HTTPError as exp:
         print(f"Error making POST request: {exp}")
         raise Exception(f"Error making POST request: {exp}")
 
@@ -101,17 +101,17 @@ def make_delete_request(
     """
     try:
         if query_params:
-            response = requests.delete(url, params=query_params, timeout=timeout)
+            response = httpx.delete(url, params=query_params, timeout=timeout)
         else:
             # Make the DELETE request with path params
-            response = requests.delete(url + "/" + path_params, timeout=timeout)
+            response = httpx.delete(url + "/" + path_params, timeout=timeout)
         if response.status_code == 200:
             print("DELETE request successful")
             return response.json()
         # If not the success response
         print(f"DELETE request failed with status code {response.status_code}")
         raise Exception("Request failed")
-    except requests.exceptions.RequestException as exp:
+    except httpx.HTTPError as exp:
         print(f"Error making DELETE request: {exp}")
         raise Exception(f"Error making DELETE request: {exp}")
 
@@ -142,7 +142,7 @@ def make_get_request(
         )
 
         if not paginate:
-            response = requests.get(
+            response = httpx.get(
                 full_url, params=query_params, headers=headers, timeout=timeout
             )
 
@@ -161,7 +161,7 @@ def make_get_request(
             page_params["page"] = page
             page_params["limit"] = limit
 
-            response = requests.get(
+            response = httpx.get(
                 full_url, params=page_params, headers=headers, timeout=timeout
             )
             if response.status_code != 200:
@@ -182,7 +182,7 @@ def make_get_request(
 
         return all_data
 
-    except requests.exceptions.RequestException as exp:
+    except httpx.HTTPError as exp:
         print(f"Error making GET request: {exp}")
         raise Exception(f"Error making GET request: {exp}")
 
@@ -236,10 +236,174 @@ def download_file(url: str, output_path: str, chunk_size: int = 8192) -> None:
         output_path (str): The local path where the file will be saved.
         chunk_size (int): Size of chunks to read at a time (default: 8192 bytes).
     """
-    with requests.get(url, stream=True, timeout=DEFAULT_TIMEOUT) as response:
+    with httpx.stream("GET", url, timeout=DEFAULT_TIMEOUT) as response:
         response.raise_for_status()  # Raise error for bad status codes
         with open(output_path, "wb") as file:
-            for chunk in response.iter_content(chunk_size=chunk_size):
+            for chunk in response.iter_bytes(chunk_size=chunk_size):
                 if chunk:  # filter out keep-alive chunks
                     file.write(chunk)
+    print(f"✅ Downloaded: {output_path}")
+
+
+# --- Async versions ---
+
+
+async def async_make_post_request(
+    url, data=None, params=None, files=None, headers=None, timeout=DEFAULT_TIMEOUT
+):
+    """
+    Async utility function to make POST requests.
+    :param url: URL of the API endpoint
+    :param data: JSON payload (dict)
+    :param params: Request params (dict)
+    :param files: File path (str) to upload
+    :param headers: Request headers (dict)
+    :param timeout: Timeout for the request
+    :return: Response for the POST request in JSON format
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if files:
+                response = await client.post(
+                    url,
+                    data=data,
+                    files=files,
+                    headers=headers,
+                    params=params,
+                )
+            elif data:
+                response = await client.post(
+                    url, json=data, params=params, headers=headers
+                )
+            else:
+                response = await client.post(
+                    url, params=params, headers=headers
+                )
+
+        if response.status_code == 201:
+            return response.json()
+        print(f"POST request failed with status code {response.status_code}")
+        raise Exception(response.json())
+    except httpx.HTTPError as exp:
+        print(f"Error making POST request: {exp}")
+        raise Exception(f"Error making POST request: {exp}")
+
+
+async def async_make_delete_request(
+    url, path_params=None, query_params=None, timeout=DEFAULT_TIMEOUT
+):
+    """
+    Async utility function to make DELETE requests.
+    :param url: URL of the API endpoint
+    :param path_params: Path params
+    :param query_params: Query params
+    :param timeout: Timeout for the request
+    :return: Response for the DELETE request in JSON format
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if query_params:
+                response = await client.delete(url, params=query_params)
+            else:
+                response = await client.delete(url + "/" + path_params)
+
+        if response.status_code == 200:
+            print("DELETE request successful")
+            return response.json()
+        print(f"DELETE request failed with status code {response.status_code}")
+        raise Exception("Request failed")
+    except httpx.HTTPError as exp:
+        print(f"Error making DELETE request: {exp}")
+        raise Exception(f"Error making DELETE request: {exp}")
+
+
+async def async_make_get_request(
+    url,
+    path_params=None,
+    query_params=None,
+    headers=None,
+    timeout=DEFAULT_TIMEOUT,
+    paginate=False,
+):
+    """
+    Async utility function to make GET requests (with optional pagination).
+
+    :param url: Base API URL (e.g., https://api.example.com/resource)
+    :param path_params: Additional path (e.g., "123/details")
+    :param query_params: Dictionary of query parameters
+    :param headers: Request headers (dict)
+    :param timeout: Timeout in seconds
+    :param paginate: If True, handles paginated responses
+    :return: List (if paginate) or dict (JSON response)
+    """
+    try:
+        full_url = (
+            f"{url.rstrip('/')}/{str(path_params).lstrip('/')}" if path_params else url
+        )
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if not paginate:
+                response = await client.get(
+                    full_url, params=query_params, headers=headers
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+                print(f"GET request failed with status code {response.status_code}")
+                raise Exception("Request failed")
+
+            # Pagination mode
+            all_data = []
+            page = 1
+            limit = query_params.get("limit", 10) if query_params else 10
+
+            while True:
+                page_params = query_params.copy() if query_params else {}
+                page_params["page"] = page
+                page_params["limit"] = limit
+
+                response = await client.get(
+                    full_url, params=page_params, headers=headers
+                )
+                if response.status_code != 200:
+                    print(f"GET request failed with status code {response.status_code}")
+                    break
+
+                json_data = response.json()
+                data = json_data.get("data", [])
+                all_data.extend(data)
+
+                pagination = json_data.get("pagination", {})
+                total_items = pagination.get("total_items", len(data))
+
+                if len(all_data) >= total_items:
+                    break
+
+                page += 1
+
+            return all_data
+
+    except httpx.HTTPError as exp:
+        print(f"Error making GET request: {exp}")
+        raise Exception(f"Error making GET request: {exp}")
+
+
+async def async_download_file(
+    url: str, output_path: str, chunk_size: int = 8192
+) -> None:
+    """
+    Async download a file from a URL and save it to the specified path.
+
+    Args:
+        url (str): The URL of the file to download.
+        output_path (str): The local path where the file will be saved.
+        chunk_size (int): Size of chunks to read at a time (default: 8192 bytes).
+    """
+    async with httpx.AsyncClient(timeout=DEFAULT_TIMEOUT) as client:
+        async with client.stream("GET", url) as response:
+            response.raise_for_status()
+            with open(output_path, "wb") as file:
+                async for chunk in response.aiter_bytes(chunk_size=chunk_size):
+                    if chunk:
+                        file.write(chunk)
     print(f"✅ Downloaded: {output_path}")

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 
 import minio
-import requests
+import httpx
 
 from ..cogflow.plugins.dataset_plugin import DatasetPlugin
 from ..cogflow import (
@@ -22,7 +22,7 @@ class TestDatasetPlugin(unittest.TestCase):
     querying endpoints, saving to and deleting from Minio, and dataset registration.
     """
 
-    @patch("requests.get")
+    @patch("httpx.get")
     @patch("cogflow.cogflow.plugins.dataset_plugin.DatasetPlugin.save_to_minio")
     @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
     def test_query_endpoint_and_download_file_success(
@@ -54,7 +54,7 @@ class TestDatasetPlugin(unittest.TestCase):
         mock_save_to_minio.assert_called_once()
         mock_plugin_activation.assert_called_once()
 
-    @patch("requests.get")
+    @patch("httpx.get")
     @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
     def test_query_endpoint_and_download_file_failure(
         self, mock_plugin_activation, mock_requests_get
@@ -78,7 +78,7 @@ class TestDatasetPlugin(unittest.TestCase):
             )
         mock_plugin_activation.assert_called_once()
 
-    @patch("requests.get")
+    @patch("httpx.get")
     @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
     def test_request_exception_query_endpoint(
         self, mock_plugin_activation, mock_requests_get
@@ -94,7 +94,7 @@ class TestDatasetPlugin(unittest.TestCase):
         # mock_response = MagicMock()
         # mock_response.status_code = 404
         # mock_requests_get.return_value = mock_response
-        mock_requests_get.side_effect = requests.exceptions.RequestException(
+        mock_requests_get.side_effect = httpx.HTTPError(
             "Request failed"
         )
         with self.assertRaises(Exception):
@@ -348,7 +348,7 @@ class TestDatasetPlugin(unittest.TestCase):
     #         ) as mock_model_version:
     #             with patch("mlflow.active_run") as mock_active_run:
     #                 with patch("os.getenv") as mock_env:
-    #                     with patch("requests.post") as mock_requests_post:
+    #                     with patch("httpx.post") as mock_requests_post:
     #                         # Create a mock run object
     #                         mock_run = MagicMock()
     #                         mock_run.info.run_id = "12345"
@@ -402,7 +402,7 @@ class TestDatasetPlugin(unittest.TestCase):
     #                         )
     #                         mock_log_model.assert_called_once()
     #
-    # @patch("requests.post")
+    # @patch("httpx.post")
     # @patch("os.getenv")
     # def test_register_dataset(self, mock_env, mock_requests_post):
     #     """

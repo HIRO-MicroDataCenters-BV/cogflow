@@ -95,7 +95,7 @@ class TestMlflowPlugin(unittest.TestCase):
         :return:
         """
         # Mock the requests.get function to simulate response
-        with patch("requests.get") as mock_get:
+        with patch("httpx.get") as mock_get:
             mock_response = MagicMock()
             mock_response.status_code = 200  # Assuming Mlflow UI is accessible
             mock_response.text = "OK"  # Mock response message
@@ -116,7 +116,7 @@ class TestMlflowPlugin(unittest.TestCase):
         :return:
         """
         # Mock the requests.get function to simulate response
-        with patch("requests.get") as mock_get:
+        with patch("httpx.get") as mock_get:
             mock_response = MagicMock()
             mock_response.status_code = 404  # Assuming Mlflow UI is not-accessible
             mock_response.text = "NOT-FOUND"  # Mock response message
@@ -137,7 +137,7 @@ class TestMlflowPlugin(unittest.TestCase):
         :return:
         """
         # Mock the requests.get function to simulate response
-        with patch("requests.get") as mock_get:
+        with patch("httpx.get") as mock_get:
             mock_get.side_effect = Exception("An error occurred .")
 
             mlflow_plugin = MlflowPlugin()  # Create an instance of MlflowPlugin
@@ -361,7 +361,7 @@ class TestMlflowPlugin(unittest.TestCase):
         mock_log_metric.assert_called_once()
         mock_plugin_activation.assert_called_once()
 
-    @patch("requests.post")
+    @patch("httpx.post")
     @patch("os.getenv")
     @patch("mlflow.sklearn.log_model")
     @patch("cogflow.cogflow.pluginmanager.PluginManager.verify_activation")
