@@ -11,6 +11,7 @@ from uuid import UUID
 # Only import submodules — NOT functions
 from . import components
 from . import orchestration
+from . import inspection
 
 # ===========================================================
 # Public API (manually exposed)
@@ -27,6 +28,27 @@ create_fl_pipeline = orchestration.create_fl_pipeline
 create_fl_pipeline_dataspace = orchestration.create_fl_pipeline_dataspace
 create_run_from_pipeline_func = orchestration.create_run_from_pipeline_func
 kfp = orchestration.kfp
+
+# Pipeline inspection (sync)
+list_all_kfp_runs = inspection.list_all_kfp_runs
+list_pipelines_by_name = inspection.list_pipelines_by_name
+get_pipeline_task_sequence = inspection.get_pipeline_task_sequence
+get_pipeline_task_sequence_by_run_id = inspection.get_pipeline_task_sequence_by_run_id
+get_pipeline_task_sequence_by_run_name = inspection.get_pipeline_task_sequence_by_run_name
+get_pipeline_task_sequence_by_pipeline_id = inspection.get_pipeline_task_sequence_by_pipeline_id
+get_task_structure_by_task_id = inspection.get_task_structure_by_task_id
+
+# Pod/K8s inspection (sync)
+get_pod_definition = inspection.get_pod_definition
+get_pod_events = inspection.get_pod_events
+get_pod_logs = inspection.get_pod_logs
+get_inference_service_logs = inspection.get_inference_service_logs
+
+# Pod/K8s inspection (async)
+async_get_pod_definition = inspection.async_get_pod_definition
+async_get_pod_events = inspection.async_get_pod_events
+async_get_pod_logs = inspection.async_get_pod_logs
+async_get_inference_service_logs = inspection.async_get_inference_service_logs
 
 
 # ===========================================================

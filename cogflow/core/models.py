@@ -1359,6 +1359,111 @@ class ModelManager:
                 re_raise=True,
             )
 
+    def get_run(self, run_id: str):
+        """
+        Fetch an MLflow run by its ID.
+
+        Args:
+            run_id (str): The run identifier (UUID, with or without hyphens).
+
+        Returns:
+            mlflow.entities.Run: The MLflow Run object containing info, data
+            (params, metrics, tags), and artifact URI.
+
+        Raises:
+            CogflowRunError: If the run cannot be found or retrieval fails.
+
+        Example:
+            >>> from cogflow import models
+            >>> run = models.get_run("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+            >>> print(run.info.artifact_uri)
+            >>> print(run.data.params)
+        """
+        self._warn_if_unhealthy("fetching run")
+
+        try:
+            run_id = common.uuid_to_hex(run_id)
+            run = self.mlflow.get_run(run_id)
+            logger.debug("Fetched run %s", run_id)
+            return run
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Get run {run_id}",
+                raise_as=CogflowRunError,
+                re_raise=True,
+            )
+
+    def get_run_artifact_uri(self, run_id: str) -> str:
+        """
+        Get the S3 artifact URI for a specific run.
+
+        Args:
+            run_id (str): The run identifier (UUID, with or without hyphens).
+
+        Returns:
+            str: The artifact URI (e.g., "s3://mlflow/0/abc123/artifacts").
+
+        Raises:
+            CogflowRunError: If the run cannot be found or retrieval fails.
+
+        Example:
+            >>> from cogflow import models
+            >>> uri = models.get_run_artifact_uri("a1b2c3d4e5f67890abcdef1234567890")
+            >>> print(uri)
+            s3://mlflow/0/a1b2c3d4e5f67890abcdef1234567890/artifacts
+        """
+        run = self.get_run(run_id)
+        return run.info.artifact_uri
+
+    def list_artifacts_grouped(self, run_id: str) -> Dict[str, List[str]]:
+        """
+        List artifacts for a run, grouped by directory.
+
+        Args:
+            run_id (str): The run identifier (UUID, with or without hyphens).
+
+        Returns:
+            Dict[str, List[str]]: A dictionary mapping directory names to lists
+            of filenames. Root-level files use "" as the key.
+
+        Raises:
+            CogflowRunError: If the run cannot be found or retrieval fails.
+
+        Example:
+            >>> from cogflow import models
+            >>> artifacts = models.list_artifacts_grouped("a1b2c3d4e5")
+            >>> print(artifacts)
+            {"": ["README.md"], "model": ["model.pkl", "config.json"]}
+        """
+        self._warn_if_unhealthy("listing artifacts")
+
+        try:
+            run_id = common.uuid_to_hex(run_id)
+            artifacts = self.client.list_artifacts(run_id)
+            grouped: Dict[str, List[str]] = {}
+
+            for artifact in artifacts:
+                if artifact.is_dir:
+                    # List files inside the directory
+                    sub_artifacts = self.client.list_artifacts(run_id, artifact.path)
+                    grouped[artifact.path] = [
+                        a.path.split("/")[-1]
+                        for a in sub_artifacts
+                        if not a.is_dir
+                    ]
+                else:
+                    grouped.setdefault("", []).append(artifact.path)
+
+            return grouped
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"List artifacts for run {run_id}",
+                raise_as=CogflowRunError,
+                re_raise=True,
+            )
+
     def search_runs(
         self,
         experiment_ids: List[str],

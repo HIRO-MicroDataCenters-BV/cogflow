@@ -543,6 +543,7 @@ class ServingManager:
         model_id = annotations.get("model_id")
         model_version = annotations.get("model_version")
         dataset_id = annotations.get("dataset_id")
+        model_type = annotations.get("model_type")
         creation_timestamp = metadata.get("creationTimestamp")
 
         # --- Base URLs ---
@@ -643,6 +644,7 @@ class ServingManager:
             "model_name": model_name or None,
             "model_version": model_version or None,
             "dataset_id": dataset_id or None,
+            "model_type": model_type or None,
             "creation_timestamp": creation_timestamp,
             "age": age,
             "latest_ready_revision": predictor.get("latestReadyRevision")
@@ -676,6 +678,7 @@ class ServingManager:
         namespace: Optional[str] = None,
         model_format: Optional[str] = None,
         canary_traffic_percent: Optional[int] = None,
+        model_type: Optional[str] = None,
     ) -> str:
         """
         High-level update for an existing InferenceService.
@@ -796,6 +799,8 @@ class ServingManager:
             }
             if dataset_id:
                 annot["dataset_id"] = common.normalize_uuid(dataset_id)
+            if model_type:
+                annot["model_type"] = model_type
 
             # --- Model patch ---
             model_patch: Dict[str, Any] = {}
@@ -876,6 +881,7 @@ class ServingManager:
         protocol_version: str = None,
         model_format: str = None,
         namespace: Optional[str] = None,
+        model_type: Optional[str] = None,
     ):
         """
         High-level entrypoint to serve a model:
@@ -946,6 +952,8 @@ class ServingManager:
             }
             if dataset_id:
                 annot["dataset_id"] = common.normalize_uuid(dataset_id)
+            if model_type:
+                annot["model_type"] = model_type
 
             logger.info(
                 "Creating InferenceService '%s' for model_uri=%s in namespace=%s.",
@@ -1111,7 +1119,7 @@ class ServingManager:
 # Create a singleton instance for the public interface
 _serving = ServingManager()
 
-# Exposed SDK-level methods (single source of truth)
+# Exposed SDK-level methods (single source of truth) — sync
 for attr_name in dir(ServingManager):
     # Skip private methods and dunder methods
     if attr_name.startswith("_"):
@@ -1119,7 +1127,19 @@ for attr_name in dir(ServingManager):
 
     attr = getattr(ServingManager, attr_name)
 
-    # Only export methods (callables) that belong to ModelManager
+    # Only export methods (callables) that belong to ServingManager
     if callable(attr):
         # Bind the method to the singleton instance
         globals()[attr_name] = getattr(_serving, attr_name)
+
+# Expose async methods from AsyncServingManager
+from .async_serving import (  # noqa: E402
+    async_deploy_model,
+    async_update_model,
+    async_delete_isvc,
+    async_list_models,
+    async_get_isvc,
+    async_update_isvc,
+    async_restart_isvc,
+    async_create_isvc,
+)

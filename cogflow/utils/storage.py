@@ -3,6 +3,7 @@ Utility functions for MinIO storage interactions.
 """
 
 from urllib.parse import urlparse
+
 from minio import Minio
 
 from ..config import config
