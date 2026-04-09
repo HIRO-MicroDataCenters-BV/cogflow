@@ -700,6 +700,8 @@ class ServingManager:
             namespace: Namespace where the InferenceService is deployed.
             model_format: Model format (e.g., "tensorflow", "pytorch").
             canary_traffic_percent: Traffic percentage to route to canary model.
+            model_type: Model type annotation (e.g., "llm", "lora"). Stored as
+                an ISVC annotation under the key ``model_type``.
         Returns:
             str: Status message.
         Raises:
@@ -902,6 +904,9 @@ class ServingManager:
             protocol_version: Protocol version for the model server.
             model_format: Model format (e.g., "tensorflow", "pytorch").
             namespace: Namespace where the InferenceService will be deployed.
+            model_type: Model type annotation (e.g., "llm", "lora"). Stored as
+                an ISVC annotation under the key ``model_type`` and returned in
+                ``list_models()`` responses.
         Returns:
             dict: Created InferenceService details.
         Raises:

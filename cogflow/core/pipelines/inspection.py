@@ -93,10 +93,7 @@ def _parse_run(run) -> dict:
         "run_id": getattr(run, "id", getattr(run, "run_id", "Unknown")),
         "status": getattr(run, "status", "Unknown"),
         "duration": duration,
-        "experiment_id": getattr(
-            getattr(run, "resource_references", [None]),
-            "key", {},
-        ).get("id", "") if hasattr(run, "resource_references") else "",
+        "experiment_id": _extract_experiment_id(run),
         "start_time": start_time,
     }
 
@@ -284,8 +281,11 @@ def get_pipeline_task_sequence_by_pipeline_id(
     """
     kfp_client_instance = _kfp_client(api_url, skip_tls_verify, session_cookies, namespace)
 
-    # Get latest run for this pipeline
-    runs = kfp_client_instance.list_runs(page_size=1)
+    # Get latest run for this specific pipeline
+    filter_str = json.dumps({
+        "predicates": [{"key": "pipeline_id", "op": "EQUALS", "string_value": pipeline_id}]
+    })
+    runs = kfp_client_instance.list_runs(page_size=1, filter=filter_str)
     if not runs or not runs.runs:
         raise ValueError(f"No runs found for pipeline ID '{pipeline_id}'.")
 
@@ -476,7 +476,9 @@ def get_pod_logs(
         parsed = [line.strip() for line in raw_logs.split("\n") if line.strip()]
         return json.dumps(parsed, indent=4)
     except k8s_client.exceptions.ApiException as e:
-        raise Exception(f"Failed to fetch pod logs: {e}")
+        raise CogflowConnectionError(
+            f"Failed to fetch pod logs for pod '{pod_name}' in namespace '{namespace}': {e}"
+        ) from e
 
 
 def get_inference_service_logs(
@@ -640,6 +642,17 @@ async def async_get_inference_service_logs(
 # ================================================================
 
 
+def _extract_experiment_id(run) -> str:
+    """Extract experiment_id from a KFP run object."""
+    refs = getattr(run, "resource_references", None)
+    if refs:
+        for ref in refs:
+            key = getattr(ref, "key", None)
+            if key and getattr(key, "type", None) == "EXPERIMENT":
+                return getattr(key, "id", "")
+    return ""
+
+
 def _get_pipeline_id_by_name(kfp_client_instance, pipeline_name: str) -> str:
     """Find pipeline ID by name."""
     next_page_token = None
@@ -659,8 +672,11 @@ def _list_runs_by_pipeline_id(kfp_client_instance, pipeline_id: str) -> list:
     """List all runs for a given pipeline ID."""
     parsed_runs = []
     next_page_token = None
+    filter_str = json.dumps({
+        "predicates": [{"key": "pipeline_id", "op": "EQUALS", "string_value": pipeline_id}]
+    })
     while True:
-        runs = kfp_client_instance.list_runs(page_token=next_page_token)
+        runs = kfp_client_instance.list_runs(page_token=next_page_token, filter=filter_str)
         if runs and runs.runs:
             for run in runs.runs:
                 parsed_runs.append(_parse_run(run))

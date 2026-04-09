@@ -47,7 +47,7 @@ async def _ensure_async_k8s_config_loaded():
 
     try:
         async_config.load_incluster_config()
-    except async_config.ConfigException:
+    except async_config.config_exception.ConfigException:
         await async_config.load_kube_config()
 
     _ASYNC_K8S_CONFIG_LOADED = True
