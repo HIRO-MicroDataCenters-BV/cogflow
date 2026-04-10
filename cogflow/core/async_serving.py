@@ -29,9 +29,14 @@ from ..utils.exceptions import (
     CogflowServingError,
 )
 from ..utils.logging import get_logger
-from .serving import ServingManager
 
 logger = get_logger(__name__)
+
+
+def _get_serving_manager_class():
+    """Lazy import to avoid circular dependency with serving.py."""
+    from .serving import ServingManager
+    return ServingManager
 
 # ---------------------------------------------------------------------
 # Global cache: Ensure async K8s config is only loaded once
@@ -61,15 +66,25 @@ class AsyncServingManager:
     _validate_canary, etc.) but uses kubernetes_asyncio for all API calls.
     """
 
-    GROUP = ServingManager.GROUP
-    VERSION = ServingManager.VERSION
-    PLURAL = ServingManager.PLURAL
+    GROUP = "serving.kserve.io"
+    VERSION = "v1beta1"
+    PLURAL = "inferenceservices"
 
-    # Reuse static methods from sync version
-    _validate_canary = ServingManager._validate_canary
-    _process_isvc = ServingManager._process_isvc
-    _get_model_helpers = ServingManager._get_model_helpers
-    _get_dataset_manager = ServingManager._get_dataset_manager
+    @staticmethod
+    def _validate_canary(*args, **kwargs):
+        return _get_serving_manager_class()._validate_canary(*args, **kwargs)
+
+    @staticmethod
+    def _process_isvc(*args, **kwargs):
+        return _get_serving_manager_class()._process_isvc(*args, **kwargs)
+
+    @staticmethod
+    def _get_model_helpers():
+        return _get_serving_manager_class()._get_model_helpers()
+
+    @staticmethod
+    def _get_dataset_manager():
+        return _get_serving_manager_class()._get_dataset_manager()
 
     def __init__(self):
         """Initialize async Kubernetes client."""

@@ -148,6 +148,10 @@ def test_init_loads_k8s_config_once(monkeypatch):
     monkeypatch.setattr(common, "load_k8s_config", mock_load, raising=True)
     monkeypatch.setattr(common, "get_namespace", lambda: "ns", raising=True)
 
+    # Reset the loaded flag set by previous serving module imports
+    if hasattr(common, "_k8s_loaded_flag"):
+        monkeypatch.delattr(common, "_k8s_loaded_flag", raising=False)
+
     # Import serving module after patching
     import cogflow.core.serving as serving_module
 
@@ -291,6 +295,73 @@ def test_deploy_model_resolves_model_and_calls_create_isvc(
     transformer = body["spec"]["transformer"]
     env_list = transformer["containers"][0]["env"]
     assert {"name": "A", "value": "1"} in env_list
+
+
+def test_deploy_model_with_model_type(monkeypatch, serving, serving_module):
+    """
+    deploy_model should set model_type as an ISVC annotation when provided.
+    """
+    _, fake_api, _ = serving_module
+
+    def fake_get_model_details(**_):
+        return {
+            "model_uri": "s3://bucket/model",
+            "model_name": "n1",
+            "model_version": "v1",
+            "model_id": "11111111-1111-1111-1111-111111111111",
+        }
+
+    monkeypatch.setattr(
+        serving,
+        "_get_model_helpers",
+        lambda: (lambda **_: "onnx", fake_get_model_details),
+        raising=True,
+    )
+    monkeypatch.setattr(
+        serving, "_get_transformer_env", lambda *args, **kwargs: {}, raising=True
+    )
+
+    serving.deploy_model(
+        model_id="11111111-1111-1111-1111-111111111111",
+        isvc_name="myisvc",
+        namespace="test-namespace",
+        model_type="llm",
+    )
+
+    create_calls = [c for c in fake_api.calls if c[0] == "create"]
+    annotations = create_calls[0][1]["body"]["metadata"]["annotations"]
+    assert annotations["model_type"] == "llm"
+
+
+def test_deploy_model_without_model_type(monkeypatch, serving, serving_module):
+    """
+    deploy_model should NOT set model_type annotation when not provided.
+    """
+    _, fake_api, _ = serving_module
+
+    def fake_get_model_details(**_):
+        return {
+            "model_uri": "s3://bucket/model",
+            "model_name": "n1",
+            "model_version": "v1",
+            "model_id": "11111111-1111-1111-1111-111111111111",
+        }
+
+    monkeypatch.setattr(
+        serving,
+        "_get_model_helpers",
+        lambda: (lambda **_: "onnx", fake_get_model_details),
+        raising=True,
+    )
+    monkeypatch.setattr(
+        serving, "_get_transformer_env", lambda *args, **kwargs: {}, raising=True
+    )
+
+    serving.deploy_model(model_id="11111111-1111-1111-1111-111111111111")
+
+    create_calls = [c for c in fake_api.calls if c[0] == "create"]
+    annotations = create_calls[0][1]["body"]["metadata"]["annotations"]
+    assert "model_type" not in annotations
 
 
 # ---------------------------------------------------------------------
