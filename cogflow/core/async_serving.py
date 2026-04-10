@@ -238,33 +238,40 @@ class AsyncServingManager:
         api = await self._get_api()
 
         # Build model spec
-        model_spec = {"storageUri": model_uri}
+        model_spec: Dict[str, Any] = {"storageUri": model_uri}
         if model_format:
             model_spec["modelFormat"] = {"name": model_format}
         if protocol_version:
             model_spec["protocolVersion"] = protocol_version
 
-        predictor = {"model": model_spec}
+        predictor_spec = {
+            "serviceAccountName": "kserve-controller-s3",
+            "minReplicas": 1,
+            "model": model_spec,
+        }
 
-        # Add transformer if image provided
-        if transformer_image:
-            transformer_container = {
-                "name": "transformer",
-                "image": transformer_image,
-            }
-            if transformer_env:
-                transformer_container["env"] = [
-                    {"name": k, "value": str(v)} for k, v in transformer_env.items()
+        spec: Dict[str, Any] = {"predictor": predictor_spec}
+
+        # Transformer (top-level spec field, only when env is provided)
+        if transformer_env:
+            env_list = [
+                {"name": k, "value": str(v)} for k, v in transformer_env.items()
+            ]
+            spec["transformer"] = {
+                "containers": [
+                    {
+                        "name": f"{name}-transformer",
+                        "image": transformer_image,
+                        "env": env_list,
+                    }
                 ]
-            predictor["transformer"] = {"containers": [transformer_container]}
+            }
 
         metadata = async_client.V1ObjectMeta(
             name=name,
             namespace=namespace,
             annotations=annot or {},
         )
-
-        spec = {"predictor": predictor}
 
         body = {
             "apiVersion": f"{self.GROUP}/{self.VERSION}",
@@ -391,18 +398,9 @@ class AsyncServingManager:
         namespace = namespace or common.get_namespace()
 
         try:
-            # Fetch existing ISVC
-            try:
-                isvc = await self.get_isvc(isvc_name, namespace)
-            except CogflowConnectionError:
-                raise
-            except ApiException as e:
-                if e.status == 404:
-                    CogflowErrorHandler.log_and_raise(
-                        f"InferenceService '{isvc_name}' not found in namespace '{namespace}'.",
-                        raise_as=CogflowServingError,
-                    )
-                raise
+            # Fetch existing ISVC. get_isvc() already wraps ApiException
+            # (including 404) into CogflowConnectionError, so we re-raise here.
+            isvc = await self.get_isvc(isvc_name, namespace)
 
             # Case 1: Traffic-only update
             if canary_traffic_percent is not None and not (
@@ -468,13 +466,15 @@ class AsyncServingManager:
                 "spec": {"predictor": predictor_patch},
             }
 
-            # Transformer update
+            # Transformer update (top-level spec field, aligned with sync impl)
             if transformer_env:
-                env_list = [{"name": k, "value": str(v)} for k, v in transformer_env.items()]
-                patch_body["spec"]["predictor"]["transformer"] = {
+                env_list = [
+                    {"name": k, "value": str(v)} for k, v in transformer_env.items()
+                ]
+                patch_body["spec"]["transformer"] = {
                     "containers": [
                         {
-                            "name": "transformer",
+                            "name": f"{isvc_name}-transformer",
                             "image": transformer_image or cog_config.TRANSFORMER_BASE_IMAGE,
                             "env": env_list,
                         }
@@ -486,7 +486,13 @@ class AsyncServingManager:
             logger.info("%s", msg)
             return msg
 
-        except (CogflowValidationError, CogflowModelError, CogflowDatasetError, CogflowServingError):
+        except (
+            CogflowValidationError,
+            CogflowModelError,
+            CogflowDatasetError,
+            CogflowServingError,
+            CogflowConnectionError,
+        ):
             raise
         except Exception as e:
             CogflowErrorHandler.handle_exception(

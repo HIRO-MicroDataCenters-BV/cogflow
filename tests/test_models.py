@@ -879,3 +879,130 @@ def test_create_experiment_failure(manager):
     manager.client.create_experiment.side_effect = RuntimeError("fail")
     with pytest.raises(RuntimeError):
         manager.create_experiment(name="bad")
+
+
+# ---------- get_run ----------
+
+
+def test_get_run_success(manager):
+    """Test get_run returns the MLflow Run object."""
+    fake_run = MagicMock()
+    fake_run.info.run_id = "abc123"
+    manager.mlflow.get_run.return_value = fake_run
+
+    result = manager.get_run("abc123")
+
+    manager.mlflow.get_run.assert_called_once_with("abc123")
+    assert result is fake_run
+
+
+def test_get_run_normalizes_uuid(manager, monkeypatch):
+    """Test that get_run passes run_id through uuid_to_hex."""
+    calls = {}
+
+    def fake_uuid_to_hex(value):
+        calls["got"] = value
+        return "normalized-id"
+
+    monkeypatch.setattr(models_mod.common, "uuid_to_hex", fake_uuid_to_hex)
+    manager.mlflow.get_run.return_value = MagicMock()
+
+    manager.get_run("abc-123-def")
+
+    assert calls["got"] == "abc-123-def"
+    manager.mlflow.get_run.assert_called_once_with("normalized-id")
+
+
+def test_get_run_failure_wraps_exception(manager):
+    """Test get_run wraps errors as CogflowRunError."""
+    manager.mlflow.get_run.side_effect = RuntimeError("boom")
+    with pytest.raises(models_mod.CogflowRunError):
+        manager.get_run("abc123")
+
+
+# ---------- get_run_artifact_uri ----------
+
+
+def test_get_run_artifact_uri_success(manager):
+    """Test get_run_artifact_uri returns the artifact_uri from the run info."""
+    fake_run = MagicMock()
+    fake_run.info.artifact_uri = "s3://mlflow/0/abc123/artifacts"
+    manager.mlflow.get_run.return_value = fake_run
+
+    uri = manager.get_run_artifact_uri("abc123")
+
+    assert uri == "s3://mlflow/0/abc123/artifacts"
+    manager.mlflow.get_run.assert_called_once_with("abc123")
+
+
+def test_get_run_artifact_uri_failure(manager):
+    """Test get_run_artifact_uri propagates errors as CogflowRunError."""
+    manager.mlflow.get_run.side_effect = RuntimeError("boom")
+    with pytest.raises(models_mod.CogflowRunError):
+        manager.get_run_artifact_uri("abc123")
+
+
+# ---------- list_artifacts_grouped ----------
+
+
+def test_list_artifacts_grouped_root_files_only(manager):
+    """Files at root level should be grouped under empty-string key."""
+    file1 = MagicMock()
+    file1.path = "README.md"
+    file1.is_dir = False
+    file2 = MagicMock()
+    file2.path = "config.json"
+    file2.is_dir = False
+
+    manager.client.list_artifacts.return_value = [file1, file2]
+
+    result = manager.list_artifacts_grouped("run-1")
+
+    assert "" in result
+    assert sorted(result[""]) == ["README.md", "config.json"]
+
+
+def test_list_artifacts_grouped_with_directories(manager):
+    """Files inside directories should be grouped by directory name."""
+    root_file = MagicMock()
+    root_file.path = "README.md"
+    root_file.is_dir = False
+
+    model_dir = MagicMock()
+    model_dir.path = "model"
+    model_dir.is_dir = True
+
+    sub_file1 = MagicMock()
+    sub_file1.path = "model/model.pkl"
+    sub_file1.is_dir = False
+    sub_file2 = MagicMock()
+    sub_file2.path = "model/config.yaml"
+    sub_file2.is_dir = False
+
+    def list_artifacts(run_id, path=None):
+        if path == "model":
+            return [sub_file1, sub_file2]
+        return [root_file, model_dir]
+
+    manager.client.list_artifacts.side_effect = list_artifacts
+
+    result = manager.list_artifacts_grouped("run-1")
+
+    assert result[""] == ["README.md"]
+    assert sorted(result["model"]) == ["config.yaml", "model.pkl"]
+
+
+def test_list_artifacts_grouped_empty_run(manager):
+    """Empty run should return empty dict."""
+    manager.client.list_artifacts.return_value = []
+
+    result = manager.list_artifacts_grouped("run-1")
+
+    assert result == {}
+
+
+def test_list_artifacts_grouped_failure(manager):
+    """Errors from MLflow client should be wrapped as CogflowRunError."""
+    manager.client.list_artifacts.side_effect = RuntimeError("boom")
+    with pytest.raises(models_mod.CogflowRunError):
+        manager.list_artifacts_grouped("run-1")

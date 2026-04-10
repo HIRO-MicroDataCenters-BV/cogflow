@@ -12,15 +12,11 @@ Offers both sync and async variants for K8s operations.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional, Any, List, Dict
 
 from ...utils.logging import get_logger
-from ...utils.exceptions import (
-    CogflowErrorHandler,
-    CogflowPipelineError,
-    CogflowConnectionError,
-)
+from ...utils.exceptions import CogflowConnectionError
 from ...utils import common
 
 logger = get_logger(__name__)
@@ -449,12 +445,12 @@ def get_pod_logs(
     pod_name: str,
     namespace: Optional[str] = None,
     container_name: Optional[str] = None,
-) -> str:
+) -> List[str]:
     """
-    Fetch pod logs as JSON array of lines.
+    Fetch pod logs as a list of log lines.
 
     Returns:
-        str: JSON-formatted log lines.
+        List[str]: Log lines (empty list if no logs available).
     """
     namespace = namespace or common.get_namespace()
     k8s_client = _load_k8s()
@@ -473,8 +469,7 @@ def get_pod_logs(
             kwargs["container"] = container_name
 
         raw_logs = v1.read_namespaced_pod_log(**kwargs)
-        parsed = [line.strip() for line in raw_logs.split("\n") if line.strip()]
-        return json.dumps(parsed, indent=4)
+        return [line.strip() for line in raw_logs.split("\n") if line.strip()]
     except k8s_client.exceptions.ApiException as e:
         raise CogflowConnectionError(
             f"Failed to fetch pod logs for pod '{pod_name}' in namespace '{namespace}': {e}"
@@ -485,12 +480,12 @@ def get_inference_service_logs(
     inference_service_name: str,
     namespace: Optional[str] = None,
     container_name: str = "kserve-container",
-) -> str:
+) -> List[Dict[str, Any]]:
     """
     Fetch logs for all pods matching an InferenceService name.
 
     Returns:
-        str: JSON-formatted log entries per pod.
+        List[Dict]: One entry per pod with pod_name, namespace, and logs (list of lines).
     """
     namespace = namespace or common.get_namespace()
     k8s_client = _load_k8s()
@@ -509,10 +504,10 @@ def get_inference_service_logs(
         log_entries.append({
             "pod_name": pod.metadata.name,
             "namespace": pod.metadata.namespace,
-            "logs": pod_logs if pod_logs else "No logs available.",
+            "logs": pod_logs,
         })
 
-    return json.dumps(log_entries, indent=4)
+    return log_entries
 
 
 # ================================================================
@@ -585,8 +580,8 @@ async def async_get_pod_logs(
     pod_name: str,
     namespace: Optional[str] = None,
     container_name: Optional[str] = None,
-) -> str:
-    """Fetch pod logs (async)."""
+) -> List[str]:
+    """Fetch pod logs as list of lines (async)."""
     namespace = namespace or common.get_namespace()
     await _ensure_async_k8s()
     from kubernetes_asyncio import client as async_client
@@ -603,16 +598,15 @@ async def async_get_pod_logs(
         kwargs["container"] = container_name
 
     raw_logs = await v1.read_namespaced_pod_log(**kwargs)
-    parsed = [line.strip() for line in raw_logs.split("\n") if line.strip()]
-    return json.dumps(parsed, indent=4)
+    return [line.strip() for line in raw_logs.split("\n") if line.strip()]
 
 
 async def async_get_inference_service_logs(
     inference_service_name: str,
     namespace: Optional[str] = None,
     container_name: str = "kserve-container",
-) -> str:
-    """Fetch ISVC logs (async)."""
+) -> List[Dict[str, Any]]:
+    """Fetch ISVC logs as structured list (async)."""
     namespace = namespace or common.get_namespace()
     await _ensure_async_k8s()
     from kubernetes_asyncio import client as async_client
@@ -631,10 +625,10 @@ async def async_get_inference_service_logs(
         log_entries.append({
             "pod_name": pod.metadata.name,
             "namespace": pod.metadata.namespace,
-            "logs": pod_logs if pod_logs else "No logs available.",
+            "logs": pod_logs,
         })
 
-    return json.dumps(log_entries, indent=4)
+    return log_entries
 
 
 # ================================================================
