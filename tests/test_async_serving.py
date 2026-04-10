@@ -80,7 +80,12 @@ def fake_async_api():
 @pytest.fixture
 def async_serving(monkeypatch, fake_async_api):
     """Returns a fresh AsyncServingManager instance with the api pre-injected."""
+    # Prevent real K8s config loading when the sync serving singleton
+    # is instantiated indirectly via _get_serving_manager_class().
+    monkeypatch.setattr(common, "load_k8s_config", lambda: None, raising=True)
     monkeypatch.setattr(common, "get_namespace", lambda: "test-ns", raising=True)
+    # Pre-mark the sync flag so the singleton doesn't try to load config
+    common._k8s_loaded_flag = True
     monkeypatch.setattr(
         async_serving_module, "_ASYNC_K8S_CONFIG_LOADED", True, raising=True
     )
