@@ -9,7 +9,7 @@ and advanced functionality via submodules like `cogflow.models`, `cogflow.datase
 import sys
 from ._lazy import _LazyLoader
 
-__version__ = "2.0.0beta1"
+__version__ = "2.0.1b1"
 
 # Submodules that should be lazily imported when accessed
 _LAZY_SUBMODULES = [
