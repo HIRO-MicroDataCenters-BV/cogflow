@@ -8,11 +8,15 @@ on:
       - 'v*'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-and-release:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+
 
     steps:
       - name: Checkout code
@@ -40,6 +44,11 @@ jobs:
         run: |
           VERSION=$(python -c "import cogflow; print(cogflow.__version__)")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *b* || "$VERSION" == *rc* || "$VERSION" == *a* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
           echo "Built version: $VERSION"
 
       - name: Upload build artifacts
@@ -48,10 +57,43 @@ jobs:
           name: cogflow-${{ steps.version.outputs.version }}
           path: dist/
 
+  publish-pypi:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/cogflow/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cogflow-${{ needs.build.outputs.version }}
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: [build, publish-pypi]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.publish-pypi.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: cogflow-${{ needs.build.outputs.version }}
+          path: dist/
+
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
           files: dist/*
-          prerelease: ${{ contains(steps.version.outputs.version, 'b') || contains(steps.version.outputs.version, 'rc') }}
+          prerelease: ${{ needs.build.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
