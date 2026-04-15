@@ -6,14 +6,20 @@ Centralized configuration for CogFlow — environment-driven via Pydantic.
 Environment variables always take precedence; defaults are used otherwise.
 
 Compatible with:
-  • Pydantic 1.x  ✅  (required by KFP 1.8.22)
-  • Python 3.11
+  • Pydantic 1.x and 2.x  ✅
+  • Python 3.10+
 """
 
 import logging
 from functools import lru_cache
 from typing import Optional
-from pydantic import BaseSettings, Field
+
+from pydantic import Field
+
+try:
+    from pydantic_settings import BaseSettings  # pydantic 2
+except ImportError:  # pydantic 1
+    from pydantic import BaseSettings  # type: ignore[no-redef,assignment]
 
 
 # ----------------------------------------------------------------------
@@ -98,7 +104,7 @@ class CogFlowSettings(BaseSettings):
     RETRY_BACKOFF_MAX: int = 10
 
     # ---------- Component Storage ----------
-    COMPONENTS_BUCKET_NAME = "components"
+    COMPONENTS_BUCKET_NAME: str = "components"
 
     # ---------- Config behavior ----------
     class Config:
