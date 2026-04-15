@@ -97,3 +97,97 @@ jobs:
           files: dist/*
           prerelease: ${{ needs.build.outputs.is_prerelease == 'true' }}
           generate_release_notes: true
+
+  docker-publish:
+    needs: [build, publish-pypi]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.publish-pypi.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Determine channel and image tags
+        id: tags
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          REGISTRY="hiroregistry/cogflow"
+          if [[ "$VERSION" == *b* ]]; then
+            CHANNEL="beta"
+          elif [[ "$VERSION" == *rc* ]]; then
+            CHANNEL="rc"
+          elif [[ "$VERSION" == *a* ]]; then
+            CHANNEL="alpha"
+          else
+            CHANNEL="stable"
+          fi
+          if [[ "$CHANNEL" == "stable" ]]; then
+            TAGS="$REGISTRY:$VERSION,$REGISTRY:latest"
+          else
+            TAGS="$REGISTRY:$VERSION,$REGISTRY:latest-$CHANNEL"
+          fi
+          {
+            echo "tags=$TAGS"
+            echo "channel=$CHANNEL"
+            echo "version_tag=$REGISTRY:$VERSION"
+          } >> "$GITHUB_OUTPUT"
+          echo "Channel: $CHANNEL"
+          echo "Tags: $TAGS"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Wait for PyPI propagation
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, time
+          from urllib.request import urlopen
+          from urllib.error import URLError
+
+          version = os.environ["VERSION"]
+          url = "https://pypi.org/pypi/cogflow/json"
+
+          for attempt in range(1, 6):
+              try:
+                  with urlopen(url, timeout=10) as resp:
+                      data = json.load(resp)
+                  if version in data.get("releases", {}):
+                      print(f"cogflow=={version} is available on PyPI")
+                      sys.exit(0)
+              except URLError as exc:
+                  print(f"PyPI request failed (attempt {attempt}/5): {exc}")
+              print(f"Waiting for PyPI propagation ({attempt}/5)...")
+              time.sleep(15)
+
+          print(f"::error::cogflow=={version} not found on PyPI after 75s")
+          sys.exit(1)
+          PY
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push cogflow:latest image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker_image_variants/latest
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            COGFLOW_VERSION=${{ needs.build.outputs.version }}
+
+      - name: Smoke test pushed image
+        run: |
+          docker pull "${{ steps.tags.outputs.version_tag }}"
+          docker run --rm "${{ steps.tags.outputs.version_tag }}" \
+            python3 -c "import cogflow, kfp; print('cogflow', cogflow.__version__, 'kfp', kfp.__version__)"
