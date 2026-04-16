@@ -65,9 +65,34 @@ class ServingManager:
     PLURAL = "inferenceservices"
 
     def __init__(self):
-        """Initialize Kubernetes client"""
-        _ensure_k8s_config_loaded()
-        self.api = client.CustomObjectsApi()
+        """Initialize Kubernetes client.
+
+        Tolerant of missing kube config so `import cogflow.serving` does not
+        fail in environments without a cluster (CI, local dev, build agents).
+        Methods that talk to the cluster will raise CogflowConnectionError
+        until config becomes available.
+        """
+        self.api = None
+        try:
+            _ensure_k8s_config_loaded()
+            self.api = client.CustomObjectsApi()
+        except Exception as exc:  # ConfigException, FileNotFoundError, etc.
+            logger.warning(
+                "Kubernetes config could not be loaded: %s. "
+                "ServingManager cluster operations will fail until config is available.",
+                exc,
+            )
+
+    def _require_api(self):
+        """Raise CogflowConnectionError if Kubernetes is not configured."""
+        if self.api is None:
+            try:
+                _ensure_k8s_config_loaded()
+                self.api = client.CustomObjectsApi()
+            except Exception as exc:
+                raise CogflowConnectionError(
+                    f"Kubernetes config is not loaded: {exc}"
+                ) from exc
 
     # -----------------------------------------------------------------
     # Lazy-load helpers (NO circular imports)
