@@ -20,6 +20,7 @@ from typing import Optional, Dict, Any, List
 
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
+from kubernetes.config.config_exception import ConfigException
 
 from ..utils import common
 from ..config import config as cog_config
@@ -65,34 +66,47 @@ class ServingManager:
     PLURAL = "inferenceservices"
 
     def __init__(self):
-        """Initialize Kubernetes client.
+        """Initialize the Kubernetes client if cluster config is available.
 
-        Tolerant of missing kube config so `import cogflow.serving` does not
+        This initialization is tolerant of missing kube config so importing the
+        serving interface (for example, ``from cogflow import serving``) does not
         fail in environments without a cluster (CI, local dev, build agents).
-        Methods that talk to the cluster will raise CogflowConnectionError
-        until config becomes available.
+
+        If config cannot be loaded, ``self._api`` remains ``None`` and the
+        ``self.api`` property will retry on first access, raising
+        ``CogflowConnectionError`` if k8s is still unavailable.
         """
-        self.api = None
+        self._api = None
         try:
             _ensure_k8s_config_loaded()
-            self.api = client.CustomObjectsApi()
-        except Exception as exc:  # ConfigException, FileNotFoundError, etc.
+            self._api = client.CustomObjectsApi()
+        except (ConfigException, FileNotFoundError, OSError) as exc:
             logger.warning(
                 "Kubernetes config could not be loaded: %s. "
                 "ServingManager cluster operations will fail until config is available.",
                 exc,
             )
 
-    def _require_api(self):
-        """Raise CogflowConnectionError if Kubernetes is not configured."""
-        if self.api is None:
-            try:
-                _ensure_k8s_config_loaded()
-                self.api = client.CustomObjectsApi()
-            except Exception as exc:
-                raise CogflowConnectionError(
-                    f"Kubernetes config is not loaded: {exc}"
-                ) from exc
+    @property
+    def api(self):
+        """Lazily-validated Kubernetes CustomObjectsApi.
+
+        Returns the cached client if already initialized; otherwise retries
+        config load and raises ``CogflowConnectionError`` if it still fails.
+        Routing every existing ``self.api.<call>`` site through this property
+        means cluster operations get a clear, typed error instead of an
+        ``AttributeError`` on ``None.<call>``.
+        """
+        if self._api is not None:
+            return self._api
+        try:
+            _ensure_k8s_config_loaded()
+            self._api = client.CustomObjectsApi()
+        except (ConfigException, FileNotFoundError, OSError) as exc:
+            raise CogflowConnectionError(
+                f"Kubernetes config is not loaded: {exc}"
+            ) from exc
+        return self._api
 
     # -----------------------------------------------------------------
     # Lazy-load helpers (NO circular imports)

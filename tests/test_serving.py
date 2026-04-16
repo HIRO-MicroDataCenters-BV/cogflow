@@ -427,3 +427,41 @@ def test_process_isvc(serving_module):
     assert result["status"] == "ready"
     assert result["traffic_percentage"] == 100
     assert result["latest_ready_revision"] == "r1"
+
+
+# ---------------------------------------------------------------------
+# Regression: missing kube config must not break import
+# ---------------------------------------------------------------------
+
+
+def test_servingmanager_init_tolerates_missing_kube_config(monkeypatch):
+    """Importing serving + constructing ServingManager must not raise when
+    kube config is unavailable. First cluster access must raise
+    CogflowConnectionError (not AttributeError)."""
+    import importlib
+
+    from kubernetes.config.config_exception import ConfigException
+
+    from cogflow.utils import common
+    from cogflow.utils.exceptions import CogflowConnectionError
+
+    if hasattr(common, "_k8s_loaded_flag"):
+        del common._k8s_loaded_flag
+
+    def raising_load():
+        raise ConfigException("Invalid kube-config file. No configuration found.")
+
+    monkeypatch.setattr(common, "load_k8s_config", raising_load, raising=True)
+
+    # Reload re-runs the module body, including `_serving = ServingManager()`.
+    # Pre-fix this raised; with the fix it must succeed.
+    import cogflow.core.serving as sm
+
+    importlib.reload(sm)
+
+    assert sm._serving is not None
+    assert sm._serving._api is None
+
+    # Accessing .api retries the load and surfaces the typed connection error.
+    with pytest.raises(CogflowConnectionError):
+        _ = sm._serving.api
