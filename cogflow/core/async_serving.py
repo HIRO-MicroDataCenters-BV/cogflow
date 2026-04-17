@@ -554,6 +554,116 @@ class AsyncServingManager:
             )
 
 
+    # -----------------------------------------------------------------
+    # LLM SERVING (async)
+    # -----------------------------------------------------------------
+
+    async def deploy_llm(
+        self,
+        *,
+        storage_uri: str,
+        isvc_name: str,
+        served_model_name: str,
+        namespace: Optional[str] = None,
+        max_model_len: Optional[int] = None,
+        dtype: Optional[str] = None,
+        tensor_parallel_size: Optional[int] = None,
+        trust_remote_code: bool = False,
+        gpu_memory_utilization: Optional[float] = None,
+        max_num_seqs: Optional[int] = None,
+        resources: Optional[Dict[str, Dict[str, str]]] = None,
+        tolerations: Optional[List[Dict[str, Any]]] = None,
+        node_selector: Optional[Dict[str, str]] = None,
+        min_replicas: int = 1,
+        max_replicas: int = 1,
+        hf_secret_name: Optional[str] = None,
+        annotations: Optional[Dict[str, str]] = None,
+    ) -> dict:
+        """Create a KServe HF-runtime InferenceService (async).
+
+        Spec-building is delegated to ``ServingManager._build_llm_predictor``
+        so there is a single source of truth for the ISVC shape; this method
+        adds the async CRD create and the async K8s client plumbing.
+        """
+        namespace = namespace or common.get_namespace()
+        api = await self._get_api()
+
+        sync_manager_cls = _get_serving_manager_class()
+        predictor_spec = sync_manager_cls._build_llm_predictor(
+            storage_uri=storage_uri,
+            served_model_name=served_model_name,
+            max_model_len=max_model_len,
+            dtype=dtype,
+            tensor_parallel_size=tensor_parallel_size,
+            trust_remote_code=trust_remote_code,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_num_seqs=max_num_seqs,
+            resources=resources,
+            tolerations=tolerations,
+            node_selector=node_selector,
+            min_replicas=min_replicas,
+            max_replicas=max_replicas,
+            hf_secret_name=hf_secret_name,
+        )
+
+        metadata = async_client.V1ObjectMeta(
+            name=isvc_name,
+            namespace=namespace,
+            annotations=annotations or {},
+        )
+        body = {
+            "apiVersion": f"{self.GROUP}/{self.VERSION}",
+            "kind": "InferenceService",
+            "metadata": metadata.to_dict(),
+            "spec": {"predictor": predictor_spec},
+        }
+
+        try:
+            created = await api.create_namespaced_custom_object(
+                group=self.GROUP,
+                version=self.VERSION,
+                namespace=namespace,
+                plural=self.PLURAL,
+                body=body,
+            )
+            logger.info(
+                "LLM InferenceService '%s' created in namespace '%s'.",
+                isvc_name,
+                namespace,
+            )
+            return created
+        except ApiException as e:
+            if e.status == 409:
+                CogflowErrorHandler.handle_exception(
+                    e,
+                    context=(
+                        f"LLM InferenceService '{isvc_name}' already exists in "
+                        f"namespace '{namespace}'."
+                    ),
+                    raise_as=CogflowValidationError,
+                    re_raise=True,
+                )
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=(
+                    f"Create LLM InferenceService '{isvc_name}' in namespace "
+                    f"'{namespace}'"
+                ),
+                raise_as=CogflowConnectionError,
+                re_raise=True,
+            )
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=(
+                    f"Create LLM InferenceService '{isvc_name}' in namespace "
+                    f"'{namespace}'"
+                ),
+                raise_as=CogflowServingError,
+                re_raise=True,
+            )
+
+
 # Create singleton and expose async methods at module level
 _async_serving = AsyncServingManager()
 
@@ -565,3 +675,4 @@ async_get_isvc = _async_serving.get_isvc
 async_update_isvc = _async_serving.update_isvc
 async_restart_isvc = _async_serving.restart_isvc
 async_create_isvc = _async_serving.create_isvc
+async_deploy_llm = _async_serving.deploy_llm

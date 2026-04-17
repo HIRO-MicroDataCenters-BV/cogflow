@@ -559,6 +559,236 @@ class ServingManager:
                 re_raise=True,
             )
 
+    # -----------------------------------------------------------------
+    # LLM SERVING (KServe 0.15+ huggingface ClusterServingRuntime)
+    # -----------------------------------------------------------------
+
+    # Defaults match a small-to-mid 7B model on a single GPU. Callers can
+    # override per-field via the `resources` arg.
+    _LLM_DEFAULT_RESOURCES: Dict[str, Dict[str, str]] = {
+        "requests": {"cpu": "4", "memory": "7Gi", "nvidia.com/gpu": "1"},
+        "limits": {"cpu": "8", "memory": "8Gi", "nvidia.com/gpu": "1"},
+    }
+
+    @staticmethod
+    def _merge_resources(
+        override: Optional[Dict[str, Dict[str, str]]],
+    ) -> Dict[str, Dict[str, str]]:
+        """Per-field merge of caller overrides onto the default block."""
+        merged = {
+            "requests": dict(ServingManager._LLM_DEFAULT_RESOURCES["requests"]),
+            "limits": dict(ServingManager._LLM_DEFAULT_RESOURCES["limits"]),
+        }
+        if override:
+            for section in ("requests", "limits"):
+                if override.get(section):
+                    merged[section].update(override[section])
+        return merged
+
+    @staticmethod
+    def _build_llm_args(
+        served_model_name: str,
+        *,
+        max_model_len: Optional[int],
+        dtype: Optional[str],
+        tensor_parallel_size: Optional[int],
+        trust_remote_code: bool,
+        gpu_memory_utilization: Optional[float],
+        max_num_seqs: Optional[int],
+    ) -> List[str]:
+        """Whitelisted vLLM-runtime args passed into the HF runtime container.
+
+        Order is stable so the emitted ISVC is diff-friendly across reruns.
+        """
+        args: List[str] = [f"--model_name={served_model_name}"]
+        if max_model_len is not None:
+            args.append(f"--max_model_len={max_model_len}")
+        if dtype is not None:
+            args.append(f"--dtype={dtype}")
+        if tensor_parallel_size is not None:
+            args.append(f"--tensor-parallel-size={tensor_parallel_size}")
+        if trust_remote_code:
+            args.append("--trust-remote-code")
+        if gpu_memory_utilization is not None:
+            args.append(f"--gpu-memory-utilization={gpu_memory_utilization}")
+        if max_num_seqs is not None:
+            args.append(f"--max-num-seqs={max_num_seqs}")
+        return args
+
+    @staticmethod
+    def _build_llm_predictor(
+        *,
+        storage_uri: str,
+        served_model_name: str,
+        max_model_len: Optional[int],
+        dtype: Optional[str],
+        tensor_parallel_size: Optional[int],
+        trust_remote_code: bool,
+        gpu_memory_utilization: Optional[float],
+        max_num_seqs: Optional[int],
+        resources: Optional[Dict[str, Dict[str, str]]],
+        tolerations: Optional[List[Dict[str, Any]]],
+        node_selector: Optional[Dict[str, str]],
+        min_replicas: int,
+        max_replicas: int,
+        hf_secret_name: Optional[str],
+    ) -> Dict[str, Any]:
+        model_block: Dict[str, Any] = {
+            "modelFormat": {"name": "huggingface"},
+            "storageUri": storage_uri,
+            "args": ServingManager._build_llm_args(
+                served_model_name,
+                max_model_len=max_model_len,
+                dtype=dtype,
+                tensor_parallel_size=tensor_parallel_size,
+                trust_remote_code=trust_remote_code,
+                gpu_memory_utilization=gpu_memory_utilization,
+                max_num_seqs=max_num_seqs,
+            ),
+            "resources": ServingManager._merge_resources(resources),
+        }
+
+        if hf_secret_name:
+            model_block["env"] = [
+                {
+                    "name": "HF_TOKEN",
+                    "valueFrom": {
+                        "secretKeyRef": {"name": hf_secret_name, "key": "HF_TOKEN"}
+                    },
+                }
+            ]
+
+        predictor: Dict[str, Any] = {
+            "minReplicas": min_replicas,
+            "maxReplicas": max_replicas,
+            "model": model_block,
+        }
+
+        # S3-backed artifacts need the cluster-provisioned S3 SA.
+        # HF Hub pulls do not — omitting the SA keeps the pod token-free.
+        if storage_uri.startswith("s3://"):
+            predictor["serviceAccountName"] = "kserve-controller-s3"
+
+        if tolerations:
+            predictor["tolerations"] = tolerations
+        if node_selector:
+            predictor["nodeSelector"] = node_selector
+
+        return predictor
+
+    def deploy_llm(
+        self,
+        *,
+        storage_uri: str,
+        isvc_name: str,
+        served_model_name: str,
+        namespace: Optional[str] = None,
+        # vLLM runtime args (whitelist)
+        max_model_len: Optional[int] = None,
+        dtype: Optional[str] = None,
+        tensor_parallel_size: Optional[int] = None,
+        trust_remote_code: bool = False,
+        gpu_memory_utilization: Optional[float] = None,
+        max_num_seqs: Optional[int] = None,
+        # scheduling / scaling
+        resources: Optional[Dict[str, Dict[str, str]]] = None,
+        tolerations: Optional[List[Dict[str, Any]]] = None,
+        node_selector: Optional[Dict[str, str]] = None,
+        min_replicas: int = 1,
+        max_replicas: int = 1,
+        # auth
+        hf_secret_name: Optional[str] = None,
+        annotations: Optional[Dict[str, str]] = None,
+    ) -> dict:
+        """Create a KServe InferenceService backed by the built-in
+        ``huggingface`` ClusterServingRuntime (KServe 0.15+).
+
+        The ``storage_uri`` is used verbatim — pass ``hf://<org>/<model>``
+        for a direct HF Hub pull or ``s3://mlflow/...`` for an MLflow-stored
+        HF-format checkpoint. Callers (e.g. Cog-Engine) are responsible for
+        resolving the source.
+        """
+        namespace = namespace or common.get_namespace()
+        logger.info(
+            "Creating LLM InferenceService name=%s namespace=%s storage_uri=%s",
+            isvc_name,
+            namespace,
+            storage_uri,
+        )
+        try:
+            predictor_spec = ServingManager._build_llm_predictor(
+                storage_uri=storage_uri,
+                served_model_name=served_model_name,
+                max_model_len=max_model_len,
+                dtype=dtype,
+                tensor_parallel_size=tensor_parallel_size,
+                trust_remote_code=trust_remote_code,
+                gpu_memory_utilization=gpu_memory_utilization,
+                max_num_seqs=max_num_seqs,
+                resources=resources,
+                tolerations=tolerations,
+                node_selector=node_selector,
+                min_replicas=min_replicas,
+                max_replicas=max_replicas,
+                hf_secret_name=hf_secret_name,
+            )
+
+            metadata = client.V1ObjectMeta(
+                name=isvc_name,
+                namespace=namespace,
+                annotations=annotations or {},
+            )
+            body = {
+                "apiVersion": f"{self.GROUP}/{self.VERSION}",
+                "kind": "InferenceService",
+                "metadata": metadata.to_dict(),
+                "spec": {"predictor": predictor_spec},
+            }
+
+            created = self.api.create_namespaced_custom_object(
+                group=self.GROUP,
+                version=self.VERSION,
+                namespace=namespace,
+                plural=self.PLURAL,
+                body=body,
+            )
+            logger.info(
+                "LLM InferenceService '%s' created successfully in namespace '%s'.",
+                isvc_name,
+                namespace,
+            )
+            return created
+        except ApiException as e:
+            if e.status == 409:
+                CogflowErrorHandler.handle_exception(
+                    e,
+                    context=(
+                        f"LLM InferenceService '{isvc_name}' already exists in "
+                        f"namespace '{namespace}'."
+                    ),
+                    raise_as=CogflowValidationError,
+                    re_raise=True,
+                )
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=(
+                    f"Create LLM InferenceService '{isvc_name}' in namespace "
+                    f"'{namespace}'"
+                ),
+                raise_as=CogflowConnectionError,
+                re_raise=True,
+            )
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=(
+                    f"Create LLM InferenceService '{isvc_name}' in namespace "
+                    f"'{namespace}'"
+                ),
+                raise_as=CogflowServingError,
+                re_raise=True,
+            )
+
     @staticmethod
     def _process_isvc(isvc: dict) -> Dict[str, Any]:
         """

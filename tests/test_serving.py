@@ -465,3 +465,164 @@ def test_servingmanager_init_tolerates_missing_kube_config(monkeypatch):
     # Accessing .api retries the load and surfaces the typed connection error.
     with pytest.raises(CogflowConnectionError):
         _ = sm._serving.api
+
+
+# ---------------------------------------------------------------------
+# LLM SERVING (deploy_llm)
+# ---------------------------------------------------------------------
+
+
+def _deploy_llm_create_call(fake_api):
+    """Helper: extract the body of the single create call from the fake API."""
+    creates = [c for c in fake_api.calls if c[0] == "create"]
+    assert len(creates) == 1, f"expected 1 create call, got {len(creates)}"
+    return creates[0][1]["body"]
+
+
+def test_deploy_llm_hf_uri_emits_expected_spec(serving, serving_module):
+    """hf:// URI → no serviceAccountName; modelFormat=huggingface; tolerations + args pass through."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        isvc_name="qwen25-coder",
+        served_model_name="qwen25-coder",
+        max_model_len=4096,
+        tolerations=[
+            {"key": "storage-type", "operator": "Equal",
+             "value": "local", "effect": "NoSchedule"}
+        ],
+        annotations={"model_type": "llm", "hf_model_id": "Qwen/Qwen2.5-Coder-7B-Instruct"},
+    )
+
+    body = _deploy_llm_create_call(fake_api)
+    predictor = body["spec"]["predictor"]
+    model = predictor["model"]
+
+    assert body["metadata"]["name"] == "qwen25-coder"
+    assert body["metadata"]["annotations"]["model_type"] == "llm"
+    assert "serviceAccountName" not in predictor  # HF pull — no S3 SA
+    assert model["modelFormat"] == {"name": "huggingface"}
+    assert model["storageUri"] == "hf://Qwen/Qwen2.5-Coder-7B-Instruct"
+    assert "--model_name=qwen25-coder" in model["args"]
+    assert "--max_model_len=4096" in model["args"]
+    assert predictor["tolerations"][0]["key"] == "storage-type"
+
+
+def test_deploy_llm_s3_uri_sets_service_account(serving, serving_module):
+    """s3:// URI → serviceAccountName=kserve-controller-s3."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="s3://mlflow/0/abc/artifacts/model",
+        isvc_name="mlf-llm",
+        served_model_name="mlf-llm",
+    )
+
+    predictor = _deploy_llm_create_call(fake_api)["spec"]["predictor"]
+    assert predictor["serviceAccountName"] == "kserve-controller-s3"
+
+
+def test_deploy_llm_default_resources(serving, serving_module):
+    """No resources override → defaults: 4/7Gi/1gpu requests, 8/8Gi/1gpu limits."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        isvc_name="q",
+        served_model_name="q",
+    )
+
+    res = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["resources"]
+    assert res["requests"] == {"cpu": "4", "memory": "7Gi", "nvidia.com/gpu": "1"}
+    assert res["limits"] == {"cpu": "8", "memory": "8Gi", "nvidia.com/gpu": "1"}
+
+
+def test_deploy_llm_resource_override_is_per_field_merge(serving, serving_module):
+    """Only the overridden keys change; other defaults survive."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        isvc_name="q",
+        served_model_name="q",
+        resources={
+            "requests": {"memory": "14Gi", "nvidia.com/gpu": "2"},
+            "limits": {"nvidia.com/gpu": "2"},
+        },
+    )
+
+    res = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["resources"]
+    assert res["requests"]["cpu"] == "4"              # default preserved
+    assert res["requests"]["memory"] == "14Gi"        # overridden
+    assert res["requests"]["nvidia.com/gpu"] == "2"   # overridden
+    assert res["limits"]["cpu"] == "8"                # default preserved
+    assert res["limits"]["memory"] == "8Gi"           # default preserved
+    assert res["limits"]["nvidia.com/gpu"] == "2"     # overridden
+
+
+def test_deploy_llm_node_selector_and_replicas(serving, serving_module):
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        isvc_name="q",
+        served_model_name="q",
+        node_selector={"gpu": "a100"},
+        min_replicas=2,
+        max_replicas=4,
+    )
+
+    predictor = _deploy_llm_create_call(fake_api)["spec"]["predictor"]
+    assert predictor["nodeSelector"] == {"gpu": "a100"}
+    assert predictor["minReplicas"] == 2
+    assert predictor["maxReplicas"] == 4
+
+
+def test_deploy_llm_with_hf_secret_adds_env(serving, serving_module):
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://meta-llama/Llama-3.1-8B-Instruct",
+        isvc_name="llama",
+        served_model_name="llama",
+        hf_secret_name="cog-llm-token-llama",
+    )
+
+    env = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["env"]
+    assert env == [
+        {
+            "name": "HF_TOKEN",
+            "valueFrom": {
+                "secretKeyRef": {"name": "cog-llm-token-llama", "key": "HF_TOKEN"}
+            },
+        }
+    ]
+
+
+def test_deploy_llm_whitelisted_args_order_and_flags(serving, serving_module):
+    """Args appear in stable order; trust_remote_code is a bare flag."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        isvc_name="q",
+        served_model_name="q",
+        max_model_len=4096,
+        dtype="bfloat16",
+        tensor_parallel_size=2,
+        trust_remote_code=True,
+        gpu_memory_utilization=0.9,
+        max_num_seqs=32,
+    )
+
+    args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
+    assert args == [
+        "--model_name=q",
+        "--max_model_len=4096",
+        "--dtype=bfloat16",
+        "--tensor-parallel-size=2",
+        "--trust-remote-code",
+        "--gpu-memory-utilization=0.9",
+        "--max-num-seqs=32",
+    ]
