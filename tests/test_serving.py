@@ -561,6 +561,47 @@ def test_deploy_llm_resource_override_is_per_field_merge(serving, serving_module
     assert res["limits"]["nvidia.com/gpu"] == "2"     # overridden
 
 
+def test_deploy_llm_rejects_inverted_replica_range(serving, serving_module):
+    """min_replicas > max_replicas should surface as CogflowValidationError
+    before hitting the K8s API (where it would produce an admission error
+    with less context).
+    """
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="min_replicas"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+            isvc_name="bad",
+            served_model_name="bad",
+            min_replicas=3,
+            max_replicas=1,
+        )
+
+
+def test_deploy_llm_rejects_negative_min_replicas(serving, serving_module):
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="min_replicas"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+            isvc_name="bad",
+            served_model_name="bad",
+            min_replicas=-1,
+        )
+
+
+def test_deploy_llm_rejects_zero_max_replicas(serving, serving_module):
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="max_replicas"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+            isvc_name="bad",
+            served_model_name="bad",
+            max_replicas=0,
+        )
+
+
 def test_deploy_llm_node_selector_and_replicas(serving, serving_module):
     _, fake_api, _ = serving_module
 
@@ -654,9 +695,20 @@ def test_serving_module_reexports_async_deploy_llm():
         "assert hasattr(cogflow_serving, 'async_deploy_llm'); "
         "assert callable(cogflow_serving.async_deploy_llm)"
     )
-    result = subprocess.run(
-        [sys.executable, "-c", script], capture_output=True, text=True, check=False
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired as exc:
+        pytest.fail(
+            "Timed out while verifying public API "
+            "`cogflow.serving.async_deploy_llm` in a subprocess.\n"
+            f"stdout:\n{exc.stdout or ''}\nstderr:\n{exc.stderr or ''}"
+        )
     assert result.returncode == 0, (
         f"Public API `cogflow.serving.async_deploy_llm` does not resolve.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"

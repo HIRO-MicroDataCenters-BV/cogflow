@@ -645,6 +645,26 @@ class ServingManager:
         max_replicas: int,
         hf_secret_name: Optional[str],
     ) -> Dict[str, Any]:
+        # Replica bounds must be internally consistent before we hand the
+        # ISVC to KServe — otherwise the CRD is rejected at admission (or
+        # silently misbehaves if admission is permissive). Validate here
+        # so both sync (deploy_llm) and async (async_deploy_llm) paths
+        # surface a clear CogflowValidationError instead of leaking a
+        # K8s API error upstream.
+        if min_replicas < 0:
+            raise CogflowValidationError(
+                f"min_replicas must be >= 0, got {min_replicas}"
+            )
+        if max_replicas < 1:
+            raise CogflowValidationError(
+                f"max_replicas must be >= 1, got {max_replicas}"
+            )
+        if min_replicas > max_replicas:
+            raise CogflowValidationError(
+                f"min_replicas ({min_replicas}) must be "
+                f"<= max_replicas ({max_replicas})"
+            )
+
         model_block: Dict[str, Any] = {
             "modelFormat": {"name": "huggingface"},
             "storageUri": storage_uri,
@@ -727,24 +747,27 @@ class ServingManager:
             namespace,
             storage_uri,
         )
-        try:
-            predictor_spec = ServingManager._build_llm_predictor(
-                storage_uri=storage_uri,
-                served_model_name=served_model_name,
-                max_model_len=max_model_len,
-                dtype=dtype,
-                tensor_parallel_size=tensor_parallel_size,
-                trust_remote_code=trust_remote_code,
-                gpu_memory_utilization=gpu_memory_utilization,
-                max_num_seqs=max_num_seqs,
-                resources=resources,
-                tolerations=tolerations,
-                node_selector=node_selector,
-                min_replicas=min_replicas,
-                max_replicas=max_replicas,
-                hf_secret_name=hf_secret_name,
-            )
+        # Replica / field validation happens before the try/except so a
+        # bad input surfaces the typed CogflowValidationError unchanged,
+        # not wrapped as a generic CogflowServingError.
+        predictor_spec = ServingManager._build_llm_predictor(
+            storage_uri=storage_uri,
+            served_model_name=served_model_name,
+            max_model_len=max_model_len,
+            dtype=dtype,
+            tensor_parallel_size=tensor_parallel_size,
+            trust_remote_code=trust_remote_code,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_num_seqs=max_num_seqs,
+            resources=resources,
+            tolerations=tolerations,
+            node_selector=node_selector,
+            min_replicas=min_replicas,
+            max_replicas=max_replicas,
+            hf_secret_name=hf_secret_name,
+        )
 
+        try:
             metadata = client.V1ObjectMeta(
                 name=isvc_name,
                 namespace=namespace,
