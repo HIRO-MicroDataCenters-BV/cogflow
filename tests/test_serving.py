@@ -617,23 +617,47 @@ def test_deploy_llm_whitelisted_args_order_and_flags(serving, serving_module):
     )
 
     args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
+    # Underscored flags (model_name, max_model_len, dtype, trust_remote_code)
+    # land in KServe's HF runtime parser; hyphenated flags
+    # (tensor-parallel-size, gpu-memory-utilization, max-num-seqs) fall
+    # through to vLLM via parse_known_args. See _build_llm_args docstring.
     assert args == [
         "--model_name=q",
         "--max_model_len=4096",
         "--dtype=bfloat16",
+        "--trust_remote_code",
         "--tensor-parallel-size=2",
-        "--trust-remote-code",
         "--gpu-memory-utilization=0.9",
         "--max-num-seqs=32",
     ]
 
 
 def test_serving_module_reexports_async_deploy_llm():
-    """cogflow.serving must expose async_deploy_llm at its public surface
-    alongside the other async_* helpers. Consumers (e.g. Cog-Engine) import
-    it as ``cogflow.serving.async_deploy_llm`` — regression guard for that.
-    """
-    import cogflow.core.serving as serving_module
+    """cogflow.serving must expose async_deploy_llm alongside the other
+    async_* helpers. Consumers (e.g. Cog-Engine) reach it via
+    ``from cogflow import serving as cogflow_serving`` through the
+    ``cogflow.__init__`` _LazyLoader.
 
-    assert hasattr(serving_module, "async_deploy_llm")
-    assert callable(serving_module.async_deploy_llm)
+    We check this in a fresh subprocess because pytest-mock's conftest
+    eagerly imports subpackages of ``cogflow`` before the test runs,
+    which defeats the _LazyLoader (``sys.modules['cogflow']`` ends up
+    as the plain package module, not the _LazyLoader stub). That's a
+    pre-existing cogflow-wide quirk, not a regression of this change —
+    the subprocess guarantees the only import machinery in play is the
+    one consumers actually see.
+    """
+    import subprocess
+    import sys
+
+    script = (
+        "from cogflow import serving as cogflow_serving; "
+        "assert hasattr(cogflow_serving, 'async_deploy_llm'); "
+        "assert callable(cogflow_serving.async_deploy_llm)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, (
+        f"Public API `cogflow.serving.async_deploy_llm` does not resolve.\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )

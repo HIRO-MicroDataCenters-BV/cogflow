@@ -596,19 +596,31 @@ class ServingManager:
         gpu_memory_utilization: Optional[float],
         max_num_seqs: Optional[int],
     ) -> List[str]:
-        """Whitelisted vLLM-runtime args passed into the HF runtime container.
+        """Whitelisted runtime args passed into the HF runtime container.
 
         Order is stable so the emitted ISVC is diff-friendly across reruns.
+
+        Naming note — the two conventions below are deliberate, not
+        accidental. KServe's huggingface runtime uses ``parse_known_args``
+        and consumes its own underscore-style flags first, then forwards
+        the remainder to the vLLM backend parser (hyphen-style).
+
+        - Underscore flags land in the KServe HF runtime parser
+          (``kserve/python/huggingfaceserver``): ``--model_name``,
+          ``--max_model_len``, ``--dtype``, ``--trust_remote_code``.
+        - Hyphen flags fall through to vLLM's CLI
+          (``--tensor-parallel-size``, ``--gpu-memory-utilization``,
+          ``--max-num-seqs``).
         """
         args: List[str] = [f"--model_name={served_model_name}"]
         if max_model_len is not None:
             args.append(f"--max_model_len={max_model_len}")
         if dtype is not None:
             args.append(f"--dtype={dtype}")
+        if trust_remote_code:
+            args.append("--trust_remote_code")
         if tensor_parallel_size is not None:
             args.append(f"--tensor-parallel-size={tensor_parallel_size}")
-        if trust_remote_code:
-            args.append("--trust-remote-code")
         if gpu_memory_utilization is not None:
             args.append(f"--gpu-memory-utilization={gpu_memory_utilization}")
         if max_num_seqs is not None:
