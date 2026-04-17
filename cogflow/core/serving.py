@@ -1409,6 +1409,7 @@ for attr_name in dir(ServingManager):
 # Expose async methods from AsyncServingManager
 from .async_serving import (  # noqa: E402
     async_deploy_model,
+    async_deploy_llm,
     async_update_model,
     async_delete_isvc,
     async_list_models,

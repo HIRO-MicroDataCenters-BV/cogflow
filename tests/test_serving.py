@@ -626,3 +626,14 @@ def test_deploy_llm_whitelisted_args_order_and_flags(serving, serving_module):
         "--gpu-memory-utilization=0.9",
         "--max-num-seqs=32",
     ]
+
+
+def test_serving_module_reexports_async_deploy_llm():
+    """cogflow.serving must expose async_deploy_llm at its public surface
+    alongside the other async_* helpers. Consumers (e.g. Cog-Engine) import
+    it as ``cogflow.serving.async_deploy_llm`` — regression guard for that.
+    """
+    import cogflow.core.serving as serving_module
+
+    assert hasattr(serving_module, "async_deploy_llm")
+    assert callable(serving_module.async_deploy_llm)
