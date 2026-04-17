@@ -260,3 +260,43 @@ def test_async_module_exports():
     assert callable(async_serving_module.async_update_isvc)
     assert callable(async_serving_module.async_restart_isvc)
     assert callable(async_serving_module.async_create_isvc)
+    assert callable(async_serving_module.async_deploy_llm)
+
+
+# ---------------------------------------------------------------------
+# LLM SERVING (async deploy_llm)
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_deploy_llm_emits_expected_spec(async_serving, fake_async_api):
+    """The async path delegates spec-building to the sync helper, so the
+    emitted ISVC must match what deploy_llm in serving.py produces."""
+    await async_serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        isvc_name="qwen25-coder",
+        served_model_name="qwen25-coder",
+        max_model_len=4096,
+        tolerations=[
+            {"key": "storage-type", "operator": "Equal",
+             "value": "local", "effect": "NoSchedule"}
+        ],
+        annotations={"model_type": "llm"},
+    )
+
+    creates = [c for c in fake_async_api.calls if c[0] == "create"]
+    assert len(creates) == 1
+    body = creates[0][1]["body"]
+    predictor = body["spec"]["predictor"]
+    model = predictor["model"]
+
+    assert body["metadata"]["name"] == "qwen25-coder"
+    assert body["metadata"]["annotations"]["model_type"] == "llm"
+    assert "serviceAccountName" not in predictor
+    assert model["modelFormat"] == {"name": "huggingface"}
+    assert model["storageUri"] == "hf://Qwen/Qwen2.5-Coder-7B-Instruct"
+    assert "--model_name=qwen25-coder" in model["args"]
+    assert "--max_model_len=4096" in model["args"]
+    assert predictor["tolerations"][0]["key"] == "storage-type"
+    # Defaults applied
+    assert model["resources"]["requests"]["nvidia.com/gpu"] == "1"
