@@ -665,20 +665,49 @@ class ServingManager:
                 f"<= max_replicas ({max_replicas})"
             )
 
+        # Source plumbing — HF Hub vs MLflow/MinIO routes through
+        # different KServe code paths:
+        #
+        #  hf://<org>/<model>  →  pass as ``--model_id=<id>`` argv to the
+        #                          HF runtime, which downloads it itself.
+        #                          Do NOT set ``storageUri``: that would
+        #                          route through KServe's storage-
+        #                          initializer, which injects
+        #                          ``POD_NAME``/``POD_NAMESPACE`` env
+        #                          vars via ``valueFrom.fieldRef``. In
+        #                          Serverless/Knative deployments those
+        #                          env shapes are rejected by the
+        #                          Knative admission webhook, so the
+        #                          predictor never reconciles.
+        #
+        #  s3://mlflow/...      →  set ``storageUri``; KServe's storage-
+        #                          initializer downloads to a local
+        #                          path and passes ``--model_dir=...``
+        #                          to the runtime.
+        is_hf_source = storage_uri.startswith("hf://")
+        runtime_args = ServingManager._build_llm_args(
+            served_model_name,
+            max_model_len=max_model_len,
+            dtype=dtype,
+            tensor_parallel_size=tensor_parallel_size,
+            trust_remote_code=trust_remote_code,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_num_seqs=max_num_seqs,
+        )
+        if is_hf_source:
+            # --model_id comes first for readability in the emitted YAML
+            runtime_args = [
+                f"--model_id={storage_uri[len('hf://'):]}",
+                *runtime_args,
+            ]
+
         model_block: Dict[str, Any] = {
             "modelFormat": {"name": "huggingface"},
-            "storageUri": storage_uri,
-            "args": ServingManager._build_llm_args(
-                served_model_name,
-                max_model_len=max_model_len,
-                dtype=dtype,
-                tensor_parallel_size=tensor_parallel_size,
-                trust_remote_code=trust_remote_code,
-                gpu_memory_utilization=gpu_memory_utilization,
-                max_num_seqs=max_num_seqs,
-            ),
+            "args": runtime_args,
             "resources": ServingManager._merge_resources(resources),
         }
+        if not is_hf_source:
+            model_block["storageUri"] = storage_uri
 
         if hf_secret_name:
             model_block["env"] = [
