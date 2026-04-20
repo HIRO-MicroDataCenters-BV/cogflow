@@ -513,6 +513,31 @@ def test_deploy_llm_hf_uri_emits_expected_spec(serving, serving_module):
     assert predictor["tolerations"][0]["key"] == "storage-type"
 
 
+def test_deploy_llm_rejects_empty_hf_id(serving, serving_module):
+    """'hf://' with no model id should fail fast, not emit --model_id=."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    for bad in ("hf://", "hf:///", "hf://   ", "hf:// / / "):
+        with pytest.raises(CogflowValidationError, match="invalid HF model id"):
+            serving.deploy_llm(
+                storage_uri=bad,
+                isvc_name="bad",
+                served_model_name="bad",
+            )
+
+
+def test_deploy_llm_hf_uri_trims_decorative_slashes(serving, serving_module):
+    """Leading/trailing slashes on the HF id are stripped before emit."""
+    _, fake_api, _ = serving_module
+    serving.deploy_llm(
+        storage_uri="hf:///Qwen/Qwen2.5-Coder-7B-Instruct/",
+        isvc_name="q",
+        served_model_name="q",
+    )
+    args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
+    assert "--model_id=Qwen/Qwen2.5-Coder-7B-Instruct" in args
+
+
 def test_deploy_llm_s3_uri_sets_service_account(serving, serving_module):
     """s3:// URI → uses storageUri + kserve-controller-s3 SA."""
     _, fake_api, _ = serving_module

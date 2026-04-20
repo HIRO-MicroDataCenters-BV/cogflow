@@ -695,11 +695,18 @@ class ServingManager:
             max_num_seqs=max_num_seqs,
         )
         if is_hf_source:
+            # Strip the scheme and any decorative slashes. Reject early
+            # on empty/whitespace input so we don't emit
+            # ``--model_id=<junk>`` and leave the runtime to fail opaquely
+            # at pull time. Real HF ids never contain whitespace.
+            hf_id = storage_uri[len("hf://"):].strip().strip("/")
+            if not hf_id or any(ch.isspace() for ch in hf_id):
+                raise CogflowValidationError(
+                    f"storage_uri={storage_uri!r} has an invalid HF model id; "
+                    f"expected 'hf://<org>/<model>' (or 'hf://<model>')"
+                )
             # --model_id comes first for readability in the emitted YAML
-            runtime_args = [
-                f"--model_id={storage_uri[len('hf://'):]}",
-                *runtime_args,
-            ]
+            runtime_args = [f"--model_id={hf_id}", *runtime_args]
 
         model_block: Dict[str, Any] = {
             "modelFormat": {"name": "huggingface"},
