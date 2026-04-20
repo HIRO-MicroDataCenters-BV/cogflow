@@ -503,14 +503,43 @@ def test_deploy_llm_hf_uri_emits_expected_spec(serving, serving_module):
     assert body["metadata"]["annotations"]["model_type"] == "llm"
     assert "serviceAccountName" not in predictor  # HF pull — no S3 SA
     assert model["modelFormat"] == {"name": "huggingface"}
-    assert model["storageUri"] == "hf://Qwen/Qwen2.5-Coder-7B-Instruct"
+    # HF source: pass the id via --model_id (runtime downloads from HF
+    # Hub). storageUri would route through KServe's storage-initializer,
+    # which injects fieldRef env vars Knative rejects.
+    assert "storageUri" not in model
+    assert "--model_id=Qwen/Qwen2.5-Coder-7B-Instruct" in model["args"]
     assert "--model_name=qwen25-coder" in model["args"]
     assert "--max_model_len=4096" in model["args"]
     assert predictor["tolerations"][0]["key"] == "storage-type"
 
 
+def test_deploy_llm_rejects_empty_hf_id(serving, serving_module):
+    """'hf://' with no model id should fail fast, not emit --model_id=."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    for bad in ("hf://", "hf:///", "hf://   ", "hf:// / / "):
+        with pytest.raises(CogflowValidationError, match="invalid HF model id"):
+            serving.deploy_llm(
+                storage_uri=bad,
+                isvc_name="bad",
+                served_model_name="bad",
+            )
+
+
+def test_deploy_llm_hf_uri_trims_decorative_slashes(serving, serving_module):
+    """Leading/trailing slashes on the HF id are stripped before emit."""
+    _, fake_api, _ = serving_module
+    serving.deploy_llm(
+        storage_uri="hf:///Qwen/Qwen2.5-Coder-7B-Instruct/",
+        isvc_name="q",
+        served_model_name="q",
+    )
+    args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
+    assert "--model_id=Qwen/Qwen2.5-Coder-7B-Instruct" in args
+
+
 def test_deploy_llm_s3_uri_sets_service_account(serving, serving_module):
-    """s3:// URI → serviceAccountName=kserve-controller-s3."""
+    """s3:// URI → uses storageUri + kserve-controller-s3 SA."""
     _, fake_api, _ = serving_module
 
     serving.deploy_llm(
@@ -519,8 +548,14 @@ def test_deploy_llm_s3_uri_sets_service_account(serving, serving_module):
         served_model_name="mlf-llm",
     )
 
-    predictor = _deploy_llm_create_call(fake_api)["spec"]["predictor"]
+    body = _deploy_llm_create_call(fake_api)
+    predictor = body["spec"]["predictor"]
+    model = predictor["model"]
     assert predictor["serviceAccountName"] == "kserve-controller-s3"
+    assert model["storageUri"] == "s3://mlflow/0/abc/artifacts/model"
+    # s3 path does NOT emit --model_id; the storage-initializer passes
+    # --model_dir to the runtime instead.
+    assert not any(a.startswith("--model_id=") for a in model["args"])
 
 
 def test_deploy_llm_default_resources(serving, serving_module):
@@ -658,11 +693,14 @@ def test_deploy_llm_whitelisted_args_order_and_flags(serving, serving_module):
     )
 
     args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
-    # Underscored flags (model_name, max_model_len, dtype, trust_remote_code)
-    # land in KServe's HF runtime parser; hyphenated flags
-    # (tensor-parallel-size, gpu-memory-utilization, max-num-seqs) fall
-    # through to vLLM via parse_known_args. See _build_llm_args docstring.
+    # HF source prepends --model_id= so the runtime knows which model to
+    # pull. Underscored flags (model_name, max_model_len, dtype,
+    # trust_remote_code) land in KServe's HF runtime parser; hyphenated
+    # flags (tensor-parallel-size, gpu-memory-utilization, max-num-seqs)
+    # fall through to vLLM via parse_known_args. See _build_llm_args
+    # docstring for the split rationale.
     assert args == [
+        "--model_id=Qwen/Qwen2.5-Coder-7B-Instruct",
         "--model_name=q",
         "--max_model_len=4096",
         "--dtype=bfloat16",

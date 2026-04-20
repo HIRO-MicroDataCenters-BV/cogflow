@@ -294,7 +294,9 @@ async def test_async_deploy_llm_emits_expected_spec(async_serving, fake_async_ap
     assert body["metadata"]["annotations"]["model_type"] == "llm"
     assert "serviceAccountName" not in predictor
     assert model["modelFormat"] == {"name": "huggingface"}
-    assert model["storageUri"] == "hf://Qwen/Qwen2.5-Coder-7B-Instruct"
+    # HF source: --model_id arg instead of storageUri (see sync test).
+    assert "storageUri" not in model
+    assert "--model_id=Qwen/Qwen2.5-Coder-7B-Instruct" in model["args"]
     assert "--model_name=qwen25-coder" in model["args"]
     assert "--max_model_len=4096" in model["args"]
     assert predictor["tolerations"][0]["key"] == "storage-type"
