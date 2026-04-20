@@ -195,6 +195,13 @@ jobs:
           sys.exit(1)
           PY
 
+      - name: Set up QEMU
+        # Needed for cross-platform builds: the runner is linux/amd64,
+        # so emulation is required to produce the linux/arm64 layer.
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -208,6 +215,12 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./docker_image_variants/latest
+          # Explicit multi-arch publish. Without this the action defaults
+          # to the runner's native arch (amd64) only — and because v5
+          # wraps the result in a multi-arch manifest index, downstream
+          # `--platform linux/arm64` consumers get a strict "platform not
+          # found" error instead of a silent amd64 fallback.
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
