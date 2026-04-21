@@ -1,3 +1,9 @@
+# syntax=docker/dockerfile:1
+# ``# syntax=docker/dockerfile:1`` enables the BuildKit Dockerfile
+# frontend (1.2+), which is what supports ``RUN --mount=type=bind``
+# below. docker/build-push-action@v6 already uses BuildKit; this
+# directive just pins the Dockerfile syntax version explicitly.
+
 # Use the official Python image as the base image
 FROM python:3.10-slim
 
@@ -18,23 +24,30 @@ ARG COGFLOW_VERSION=1.11.15
 # ``pip install cogflow==$VERSION`` from PyPI (the version is already
 # long-published in this code path, so no race).
 #
-# Local ``docker build`` with no ``./dist/`` directory: the COPY of
-# the empty/absent directory would fail, so the workflow always
-# creates the directory first. Dev builds without the workflow can
-# just ``mkdir -p dist`` in the build context or use the PyPI fallback.
-COPY dist/ /tmp/cogflow-dist/
-# Match wheels by the exact ``COGFLOW_VERSION`` so a stale wheel from
-# a different version left in the build context (e.g. a dev who ran
-# ``python -m build`` earlier) can't silently install the wrong
-# cogflow and contradict the build arg. ``find`` is POSIX-sh portable
-# (``python:3.10-slim``'s ``/bin/sh`` is dash, no ``compgen``).
+# Local ``docker build`` with no ``./dist/`` directory: the bind
+# mount below fails. The release workflow always ``mkdir -p dist``s
+# before building, so both CI paths are covered; local dev can do
+# the same or just install from PyPI directly.
 #
-# Invariants:
-#   exactly 1 matching wheel → install it
-#   more than 1 matching wheel → hard fail (ambiguous build context)
-#   zero matches → fall back to ``pip install cogflow==$VERSION``
-#                  from PyPI (workflow_dispatch / local no-artifact path)
-RUN wheel_match="cogflow-${COGFLOW_VERSION}-*.whl"; \
+# Wheel matching:
+#
+# - Exact ``COGFLOW_VERSION`` match so a stale wheel from a different
+#   version in the build context (e.g. a dev who ran ``python -m build``
+#   earlier) can't silently install the wrong cogflow.
+# - ``find`` is POSIX-sh portable (slim base uses ``dash`` — no
+#   ``compgen``).
+# - Match-count branching:
+#     1   → install that wheel
+#     >1  → hard fail (ambiguous build context)
+#     0   → PyPI fallback
+#
+# BuildKit bind-mount (``--mount=type=bind``): mounts ``./dist/`` into
+# the RUN read-only for this step only, so wheel bytes NEVER land in
+# a committed image layer. Using ``COPY`` would bake them into an
+# earlier layer that a later ``rm`` can't reclaim — Docker layers are
+# immutable — bloating the image by the wheel size.
+RUN --mount=type=bind,source=dist,target=/tmp/cogflow-dist \
+    wheel_match="cogflow-${COGFLOW_VERSION}-*.whl"; \
     wheel_count="$(find /tmp/cogflow-dist -maxdepth 1 -type f -name "${wheel_match}" | wc -l)"; \
     if [ "${wheel_count}" -eq 1 ]; then \
         wheel_path="$(find /tmp/cogflow-dist -maxdepth 1 -type f -name "${wheel_match}")"; \
@@ -43,13 +56,11 @@ RUN wheel_match="cogflow-${COGFLOW_VERSION}-*.whl"; \
     elif [ "${wheel_count}" -gt 1 ]; then \
         echo "Ambiguous build context: expected exactly one ${wheel_match}, found ${wheel_count}" >&2; \
         find /tmp/cogflow-dist -maxdepth 1 -type f -name "${wheel_match}" >&2; \
-        rm -rf /tmp/cogflow-dist; \
         exit 1; \
     else \
         echo "No local wheel matching ${wheel_match}; installing cogflow==${COGFLOW_VERSION} from PyPI"; \
         pip3 install --ignore-installed cogflow==${COGFLOW_VERSION}; \
-    fi \
-    && rm -rf /tmp/cogflow-dist
+    fi
 
 # Install additional Python packages (shap, xgboost).
 # shap pinned to 0.44.* which publishes cp310 manylinux wheels; newer shap
