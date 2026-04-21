@@ -14,9 +14,10 @@ No circular imports occur because we load them lazily.
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
@@ -585,6 +586,88 @@ class ServingManager:
                     merged[section].update(override[section])
         return merged
 
+    # DNS-1123 label: InferenceService names (and all k8s object names)
+    # must match this. Surface errors here with a typed exception rather
+    # than letting the K8s admission webhook return an opaque 422 later.
+    _DNS1123_LABEL_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+
+    @staticmethod
+    def _k8s_slugify(name: str) -> str:
+        """Turn an arbitrary model name into a DNS-1123-compatible label.
+
+        Lowercases, replaces any run of non-``[a-z0-9]`` with a single
+        dash, strips leading/trailing dashes, and truncates to 63 chars
+        (the DNS-1123 label limit).
+
+        The result is not guaranteed to be DNS-1123-valid for adversarial
+        inputs (e.g. an all-punctuation string collapses to an empty
+        string); callers should validate via ``_DNS1123_LABEL_RE`` after.
+        """
+        slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+        if len(slug) > 63:
+            slug = slug[:63].rstrip("-")
+        return slug
+
+    @staticmethod
+    def derive_llm_names(
+        *,
+        hf_model_id: Optional[str] = None,
+        served_model_name: Optional[str] = None,
+        isvc_name: Optional[str] = None,
+    ) -> Tuple[str, str]:
+        """Fill in ``(isvc_name, served_model_name)`` from ``hf_model_id``
+        when not supplied, and validate the final ``isvc_name``.
+
+        Rules:
+
+        - ``served_model_name`` defaults to the part of ``hf_model_id``
+          after the first ``/`` — ``'Qwen/Qwen2.5-Coder-7B-Instruct'``
+          becomes ``'Qwen2.5-Coder-7B-Instruct'``. An ``hf_model_id`` with
+          no slash is used as-is (HF supports bare org-less ids).
+        - ``isvc_name`` defaults to a DNS-1123 slug of the resolved
+          ``served_model_name`` (``Qwen2.5-Coder-7B-Instruct`` →
+          ``qwen2-5-coder-7b-instruct``).
+
+        Keeps the logic in cogflow so every caller (Cog-Engine today,
+        direct SDK users tomorrow) gets the same defaults instead of
+        reimplementing them.
+
+        Raises
+        ------
+        CogflowValidationError
+            If ``served_model_name`` can't be resolved (neither passed
+            in nor derivable from a non-empty ``hf_model_id``), or if the
+            final ``isvc_name`` is not a valid DNS-1123 label.
+        """
+        if not served_model_name:
+            if not hf_model_id:
+                raise CogflowValidationError(
+                    "served_model_name is required when hf_model_id is not "
+                    "provided (MLflow-backed LLM path must supply a name)"
+                )
+            slug_source = hf_model_id.strip().strip("/")
+            # hf_model_id like 'Qwen/Qwen2.5-Coder-7B-Instruct': the
+            # served model is the repo, not the org, so split once and
+            # take the tail. A bare id with no slash is used directly.
+            served_model_name = slug_source.rsplit("/", 1)[-1].strip()
+            if not served_model_name:
+                raise CogflowValidationError(
+                    f"could not derive served_model_name from hf_model_id="
+                    f"{hf_model_id!r}"
+                )
+
+        if not isvc_name:
+            isvc_name = ServingManager._k8s_slugify(served_model_name)
+
+        if not ServingManager._DNS1123_LABEL_RE.match(isvc_name):
+            raise CogflowValidationError(
+                f"isvc_name={isvc_name!r} is not a valid DNS-1123 label "
+                f"(^[a-z0-9]([-a-z0-9]*[a-z0-9])?$); pass an explicit "
+                f"isvc_name or a served_model_name that slugifies cleanly"
+            )
+
+        return isvc_name, served_model_name
+
     @staticmethod
     def _build_llm_args(
         served_model_name: str,
@@ -748,8 +831,8 @@ class ServingManager:
         self,
         *,
         storage_uri: str,
-        isvc_name: str,
-        served_model_name: str,
+        isvc_name: Optional[str] = None,
+        served_model_name: Optional[str] = None,
         namespace: Optional[str] = None,
         # vLLM runtime args (whitelist)
         max_model_len: Optional[int] = None,
@@ -775,7 +858,28 @@ class ServingManager:
         for a direct HF Hub pull or ``s3://mlflow/...`` for an MLflow-stored
         HF-format checkpoint. Callers (e.g. Cog-Engine) are responsible for
         resolving the source.
+
+        ``isvc_name`` and ``served_model_name`` are optional for the
+        ``hf://`` path: when omitted, ``served_model_name`` defaults to the
+        part after the first ``/`` and ``isvc_name`` to its k8s slug.
+        See :meth:`derive_llm_names`. The ``s3://`` / MLflow path requires
+        an explicit ``served_model_name`` (cogflow can't see the catalog).
         """
+        # Only pass an ``hf_model_id`` hint to the derivation helper for
+        # ``hf://`` sources — ``_build_llm_predictor`` re-validates the URI
+        # format later, so we don't want this branch to reject inputs that
+        # are supposed to surface there.
+        hf_model_id_hint: Optional[str] = None
+        if storage_uri.startswith("hf://"):
+            candidate = storage_uri[len("hf://") :].strip().strip("/")
+            if candidate:
+                hf_model_id_hint = candidate
+        isvc_name, served_model_name = ServingManager.derive_llm_names(
+            hf_model_id=hf_model_id_hint,
+            served_model_name=served_model_name,
+            isvc_name=isvc_name,
+        )
+
         namespace = namespace or common.get_namespace()
         logger.info(
             "Creating LLM InferenceService name=%s namespace=%s storage_uri=%s",

@@ -562,8 +562,8 @@ class AsyncServingManager:
         self,
         *,
         storage_uri: str,
-        isvc_name: str,
-        served_model_name: str,
+        isvc_name: Optional[str] = None,
+        served_model_name: Optional[str] = None,
         namespace: Optional[str] = None,
         max_model_len: Optional[int] = None,
         dtype: Optional[str] = None,
@@ -584,11 +584,29 @@ class AsyncServingManager:
         Spec-building is delegated to ``ServingManager._build_llm_predictor``
         so there is a single source of truth for the ISVC shape; this method
         adds the async CRD create and the async K8s client plumbing.
+
+        ``isvc_name`` and ``served_model_name`` are optional for ``hf://``
+        sources — see :meth:`ServingManager.derive_llm_names`.
         """
+        sync_manager_cls = _get_serving_manager_class()
+
+        # Keep sync/async paths in lockstep: both derive names the same
+        # way, so a request that works via deploy_llm works via
+        # async_deploy_llm and vice-versa.
+        hf_model_id_hint: Optional[str] = None
+        if storage_uri.startswith("hf://"):
+            candidate = storage_uri[len("hf://") :].strip().strip("/")
+            if candidate:
+                hf_model_id_hint = candidate
+        isvc_name, served_model_name = sync_manager_cls.derive_llm_names(
+            hf_model_id=hf_model_id_hint,
+            served_model_name=served_model_name,
+            isvc_name=isvc_name,
+        )
+
         namespace = namespace or common.get_namespace()
         api = await self._get_api()
 
-        sync_manager_cls = _get_serving_manager_class()
         predictor_spec = sync_manager_cls._build_llm_predictor(
             storage_uri=storage_uri,
             served_model_name=served_model_name,
