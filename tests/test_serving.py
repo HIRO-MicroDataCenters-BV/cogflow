@@ -834,6 +834,257 @@ def test_deploy_llm_s3_without_served_model_name_raises(serving):
         serving.deploy_llm(storage_uri="s3://mlflow/0/abc/artifacts/model")
 
 
+# ---------------------------------------------------------------------
+# SERVE_LLM (high-level wrapper: MLflow run + catalog POST + deploy_llm)
+# ---------------------------------------------------------------------
+
+
+def _patch_llm_catalog(monkeypatch, serving_module, *, run_id: str):
+    """Stub out ``cogflow.models.register_llm_catalog_entry`` so serve_llm
+    tests never hit a real MLflow server or the CogFlow backend. Returns
+    the MagicMock so tests can assert call args.
+    """
+    from unittest.mock import MagicMock
+
+    import cogflow.core.models as cogflow_models_module  # real submodule path
+
+    mock = MagicMock(return_value=run_id)
+    monkeypatch.setattr(
+        cogflow_models_module,
+        "register_llm_catalog_entry",
+        mock,
+        raising=True,
+    )
+    return mock
+
+
+def test_serve_llm_end_to_end_happy_path(serving, serving_module, monkeypatch):
+    """serve_llm with only hf_model_id should: register via
+    register_llm_catalog_entry, inject model_id=run_id into ISVC
+    annotations, and return a structured dict with run_id + names +
+    isvc response."""
+    fake_run_id = "abcdef01234567890123456789abcdef"
+    register_mock = _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    _, fake_api, _ = serving_module
+
+    result = serving.serve_llm(hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct")
+
+    # Catalog registration called with derived name + HF id.
+    register_mock.assert_called_once()
+    reg_kwargs = register_mock.call_args.kwargs
+    assert reg_kwargs["served_model_name"] == "Qwen2.5-Coder-7B-Instruct"
+    assert reg_kwargs["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
+
+    # Return shape.
+    assert result["run_id"] == fake_run_id
+    assert result["served_model_name"] == "Qwen2.5-Coder-7B-Instruct"
+    assert result["isvc_name"] == "qwen2-5-coder-7b-instruct"
+    assert "isvc" in result
+
+    # Annotations on the ISVC: model_id == run_id (the invariant), plus
+    # model_type and hf_model_id. ``serve_llm`` normalizes the run_id into
+    # canonical UUID form to match what ``log_model`` already does.
+    create_body = _deploy_llm_create_call(fake_api)
+    meta_annotations = create_body["metadata"]["annotations"]
+    assert meta_annotations["model_id"] == common.normalize_uuid(fake_run_id)
+    assert meta_annotations["model_type"] == "llm"
+    assert meta_annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
+
+
+def test_serve_llm_storage_uri_hf_shorthand_populates_hf_model_id(
+    serving, serving_module, monkeypatch
+):
+    """Passing ``storage_uri='hf://org/name'`` instead of ``hf_model_id``
+    still tags and annotates with the HF id — the wrapper extracts it."""
+    fake_run_id = "1234567890abcdef1234567890abcdef"
+    register_mock = _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    _, fake_api, _ = serving_module
+
+    serving.serve_llm(storage_uri="hf://meta-llama/Llama-3.1-8B-Instruct")
+
+    reg_kwargs = register_mock.call_args.kwargs
+    assert reg_kwargs["hf_model_id"] == "meta-llama/Llama-3.1-8B-Instruct"
+
+    annotations = _deploy_llm_create_call(fake_api)["metadata"]["annotations"]
+    assert annotations["hf_model_id"] == "meta-llama/Llama-3.1-8B-Instruct"
+
+
+def test_serve_llm_preserves_caller_annotations(serving, serving_module, monkeypatch):
+    """Caller-supplied annotations are merged with the catalog-identity
+    ones; serve_llm should not clobber them (except for model_id, which
+    is always the authoritative run_id)."""
+    fake_run_id = "deadbeefdeadbeefdeadbeefdeadbeef"
+    _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    _, fake_api, _ = serving_module
+
+    serving.serve_llm(
+        hf_model_id="gpt2",
+        annotations={"model_type": "llm", "my-custom": "value", "model_id": "IGNORED"},
+    )
+
+    annotations = _deploy_llm_create_call(fake_api)["metadata"]["annotations"]
+    assert annotations["my-custom"] == "value"
+    # model_id is overwritten by the authoritative (normalized) run_id,
+    # not the caller's value.
+    assert annotations["model_id"] == common.normalize_uuid(fake_run_id)
+
+
+def test_serve_llm_requires_source(serving, serving_module, monkeypatch):
+    """Neither storage_uri nor hf_model_id → CogflowValidationError."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    _patch_llm_catalog(monkeypatch, serving_module, run_id="never-used")
+
+    with pytest.raises(CogflowValidationError, match="storage_uri"):
+        serving.serve_llm()
+
+
+def test_serve_llm_returns_isvc_name_from_caller(serving, serving_module, monkeypatch):
+    """Explicit isvc_name wins over the derived slug on the serve_llm path."""
+    _patch_llm_catalog(monkeypatch, serving_module, run_id="f" * 32)
+
+    result = serving.serve_llm(
+        hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct",
+        isvc_name="my-explicit-isvc",
+    )
+
+    assert result["isvc_name"] == "my-explicit-isvc"
+
+
+def test_register_llm_catalog_entry_posts_to_cogapi(serving_module, monkeypatch):
+    """Exercises ``ModelManager.register_llm_catalog_entry`` itself:
+    opens an MLflow run, sets LLM tags, POSTs to {API_PATH}/models/log
+    with the run_id as model_id. POST failures are swallowed (warn-only),
+    matching the log_model pattern."""
+    from unittest.mock import MagicMock
+
+    import cogflow.core.models as cogflow_models_module  # real submodule path
+    import cogflow.core.models as core_models_module
+
+    fake_run_id = "cafebabecafebabecafebabecafebabe"
+    fake_run_info = MagicMock()
+    fake_run_info.info.run_id = fake_run_id
+    fake_run_info.info.start_time = 1_700_000_000_000  # ms
+
+    run_ctx = MagicMock()
+    run_ctx.__enter__.return_value = fake_run_info
+    run_ctx.__exit__.return_value = False
+
+    start_run_mock = MagicMock(return_value=run_ctx)
+    set_tag_mock = MagicMock()
+    post_mock = MagicMock()
+    get_user_mock = MagicMock(return_value="user@example.com")
+
+    # Swap out the singleton's bound methods so register_llm_catalog_entry
+    # hits the stubs instead of MLflow / kubernetes.
+    monkeypatch.setattr(
+        cogflow_models_module, "start_run", start_run_mock, raising=True
+    )
+    monkeypatch.setattr(cogflow_models_module, "set_tag", set_tag_mock, raising=True)
+    # The module-level ``_models`` singleton's own methods are what
+    # register_llm_catalog_entry calls through ``self`` — rebind them to
+    # the same stubs so the entry point sees the patches consistently.
+    monkeypatch.setattr(
+        core_models_module._models, "start_run", start_run_mock, raising=True
+    )
+    monkeypatch.setattr(
+        core_models_module._models, "set_tag", set_tag_mock, raising=True
+    )
+    monkeypatch.setattr(
+        core_models_module._models, "_warn_if_unhealthy", lambda _ctx: None
+    )
+    monkeypatch.setattr(
+        core_models_module.network, "make_post_request", post_mock, raising=True
+    )
+    monkeypatch.setattr(
+        core_models_module.common, "get_current_user", get_user_mock, raising=True
+    )
+
+    run_id = cogflow_models_module.register_llm_catalog_entry(
+        served_model_name="Qwen2.5-Coder-7B-Instruct",
+        hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct",
+    )
+
+    assert run_id == fake_run_id
+    # Tags set in order we care about: type, source, hf_model_id, note.
+    tag_keys = [call.args[0] for call in set_tag_mock.call_args_list]
+    assert "type" in tag_keys
+    assert "source" in tag_keys
+    assert "hf_model_id" in tag_keys
+    assert "mlflow.note.content" in tag_keys
+
+    # POST was made with model_id=run_id (normalized to canonical UUID
+    # form, matching log_model's existing behaviour) and type=llm.
+    post_mock.assert_called_once()
+    post_kwargs = post_mock.call_args.kwargs
+    payload = post_kwargs["data"]
+    assert payload["model_id"] == common.normalize_uuid(run_id)
+    assert payload["type"] == "llm"
+    assert payload["model_name"] == "Qwen2.5-Coder-7B-Instruct"
+    assert payload["user_id"] == "user@example.com"
+    assert payload["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
+    assert post_kwargs["headers"]["kubeflow-userid"] == "user@example.com"
+
+
+def test_register_llm_catalog_entry_swallows_post_failure(
+    serving_module, monkeypatch, caplog
+):
+    """A CogFlow-backend POST failure must NOT abort the registration —
+    matches the log_model pattern. Returns the run_id regardless so the
+    caller can still create the ISVC."""
+    from unittest.mock import MagicMock
+
+    import cogflow.core.models as cogflow_models_module  # real submodule path
+    import cogflow.core.models as core_models_module
+
+    fake_run_id = "0123456789abcdef0123456789abcdef"
+    fake_run_info = MagicMock()
+    fake_run_info.info.run_id = fake_run_id
+    fake_run_info.info.start_time = 1_700_000_000_000
+
+    run_ctx = MagicMock()
+    run_ctx.__enter__.return_value = fake_run_info
+    run_ctx.__exit__.return_value = False
+
+    start_run_mock = MagicMock(return_value=run_ctx)
+    set_tag_mock = MagicMock()
+
+    def failing_post(**_kwargs):
+        raise RuntimeError("cogapi unreachable")
+
+    monkeypatch.setattr(
+        cogflow_models_module, "start_run", start_run_mock, raising=True
+    )
+    monkeypatch.setattr(cogflow_models_module, "set_tag", set_tag_mock, raising=True)
+    monkeypatch.setattr(
+        core_models_module._models, "start_run", start_run_mock, raising=True
+    )
+    monkeypatch.setattr(
+        core_models_module._models, "set_tag", set_tag_mock, raising=True
+    )
+    monkeypatch.setattr(
+        core_models_module._models, "_warn_if_unhealthy", lambda _ctx: None
+    )
+    monkeypatch.setattr(
+        core_models_module.network, "make_post_request", failing_post, raising=True
+    )
+    monkeypatch.setattr(
+        core_models_module.common,
+        "get_current_user",
+        lambda: "user@example.com",
+        raising=True,
+    )
+
+    # Should NOT raise.
+    run_id = cogflow_models_module.register_llm_catalog_entry(
+        served_model_name="gpt2",
+        hf_model_id="gpt2",
+        user_id="explicit-user",
+    )
+
+    assert run_id == fake_run_id
+
+
 def test_serving_module_reexports_async_deploy_llm():
     """cogflow.serving must expose async_deploy_llm alongside the other
     async_* helpers. Consumers (e.g. Cog-Engine) reach it via
