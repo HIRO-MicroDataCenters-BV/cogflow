@@ -598,11 +598,14 @@ class ServingManager:
         """Return the HF model id from an ``hf://`` URI, or ``None`` if
         the URI isn't an HF source.
 
-        Raises ``CogflowValidationError`` if the URI is shaped like
-        ``hf://`` but the id is empty or contains whitespace — catches
-        malformed input early so the error message is specific
-        ("invalid HF model id") regardless of whether the caller also
-        omitted ``isvc_name`` / ``served_model_name``.
+        Raises ``CogflowValidationError`` when the URI is shaped like
+        ``hf://`` but the extracted id is invalid — empty, contains
+        whitespace, or carries an embedded scheme (``://``). The
+        embedded-scheme check catches double-prefixed input like
+        ``hf://hf://org/name`` where stripping only one ``hf://``
+        would leave ``hf://org/name`` as the "id" and vLLM would
+        then receive a bogus ``--model_id`` arg. Real HF ids are
+        ``org/name`` or ``name`` — they never contain ``://``.
         """
         if not storage_uri.startswith("hf://"):
             return None
@@ -610,6 +613,12 @@ class ServingManager:
         if not hf_id or any(ch.isspace() for ch in hf_id):
             raise CogflowValidationError(
                 f"storage_uri={storage_uri!r} has an invalid HF model id; "
+                f"expected 'hf://<org>/<model>' (or 'hf://<model>')"
+            )
+        if "://" in hf_id:
+            raise CogflowValidationError(
+                f"storage_uri={storage_uri!r} has an invalid HF model id "
+                f"(extracted {hf_id!r} contains an embedded scheme); "
                 f"expected 'hf://<org>/<model>' (or 'hf://<model>')"
             )
         return hf_id
@@ -990,6 +999,192 @@ class ServingManager:
                 raise_as=CogflowServingError,
                 re_raise=True,
             )
+
+    def serve_llm(
+        self,
+        *,
+        storage_uri: Optional[str] = None,
+        hf_model_id: Optional[str] = None,
+        isvc_name: Optional[str] = None,
+        served_model_name: Optional[str] = None,
+        namespace: Optional[str] = None,
+        # vLLM runtime args (whitelist)
+        max_model_len: Optional[int] = None,
+        dtype: Optional[str] = None,
+        tensor_parallel_size: Optional[int] = None,
+        trust_remote_code: bool = False,
+        gpu_memory_utilization: Optional[float] = None,
+        max_num_seqs: Optional[int] = None,
+        # scheduling / scaling
+        resources: Optional[Dict[str, Dict[str, str]]] = None,
+        tolerations: Optional[List[Dict[str, Any]]] = None,
+        node_selector: Optional[Dict[str, str]] = None,
+        min_replicas: int = 1,
+        max_replicas: int = 1,
+        # auth
+        hf_secret_name: Optional[str] = None,
+        annotations: Optional[Dict[str, str]] = None,
+        # catalog
+        user_id: Optional[str] = None,
+        extra_tags: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """High-level LLM serving: MLflow-backed catalog registration
+        **plus** KServe InferenceService create, in one call.
+
+        This is the entry point notebook users should reach for — analogous
+        to ``cogflow.log_model`` for classical artifacts. It:
+
+        1. Resolves ``storage_uri`` (``hf://{hf_model_id}`` shorthand is
+           accepted) and derives ``isvc_name`` / ``served_model_name`` via
+           :meth:`ServingManager.derive_llm_names`.
+        2. Opens an MLflow run, tags it with LLM metadata, and posts a
+           catalog entry to the CogFlow backend (best-effort, like
+           ``log_model``). The MLflow run_id becomes the catalog row's
+           primary key — the uniform invariant every other registration
+           path already respects, so ``get_run(model_id)`` works on LLM
+           rows without any type-branching on the consumer side.
+        3. Calls :meth:`deploy_llm` to create the KServe ISVC, injecting
+           ``model_id=run_id`` / ``model_type=llm`` / ``hf_model_id``
+           annotations on top of whatever the caller passed.
+
+        For the thin, ISVC-only path (no catalog), call :meth:`deploy_llm`
+        directly — ``serve_llm`` is strictly additive over it.
+
+        Returns:
+            Dict with ``run_id``, ``isvc_name``, ``served_model_name``,
+            and ``isvc`` (the KServe custom-object create response). The
+            ``run_id`` doubles as the CogFlow ``model_info.id`` for
+            subsequent catalog lookups.
+
+        Raises:
+            CogflowValidationError: neither ``storage_uri`` nor
+                ``hf_model_id`` supplied; malformed ``hf://`` URI;
+                invalid derived name.
+            CogflowModelError: MLflow run creation failed.
+            CogflowServingError / CogflowConnectionError: ISVC create
+                failed (same as :meth:`deploy_llm`).
+        """
+        # --- 1. Resolve storage_uri / hf_model_id into a consistent pair.
+        # Accept either the shorthand or the full ``hf://`` URI; derive
+        # the other end so downstream steps (tagging, annotations, deploy)
+        # see a consistent view regardless of which the caller supplied.
+        if storage_uri is None and hf_model_id is None:
+            raise CogflowValidationError(
+                "serve_llm requires either hf_model_id or storage_uri"
+            )
+        # Tolerate an ``hf_model_id`` that a caller accidentally prefixed
+        # with ``hf://`` (single layer only — ``_extract_hf_model_id``
+        # rejects deeper ``hf://hf://…`` nesting at the validator layer
+        # below, so there's no need to strip a loop here).
+        if hf_model_id is not None and hf_model_id.startswith("hf://"):
+            hf_model_id = hf_model_id[len("hf://") :]
+        # Reject inconsistent (s3://, file://, …) storage with an
+        # ``hf_model_id`` — we'd catalog/tag HuggingFace while deploying
+        # a non-HF artifact. MLflow-backed LLMs use ``storage_uri`` alone.
+        if (
+            storage_uri is not None
+            and not storage_uri.startswith("hf://")
+            and hf_model_id is not None
+        ):
+            raise CogflowValidationError(
+                f"hf_model_id={hf_model_id!r} was supplied alongside a "
+                f"non-HF storage_uri={storage_uri!r}; HuggingFace metadata "
+                f"only applies to hf:// sources"
+            )
+        if storage_uri is None:
+            # Route a bare ``hf_model_id`` through the same validator /
+            # normalizer the ``hf://`` URI path uses so whitespace, stray
+            # slashes, and empty input are rejected up-front — *before*
+            # we open an MLflow run or POST to the catalog. Previously
+            # an invalid id only surfaced deep inside deploy_llm and
+            # left an orphan run + catalog entry behind.
+            hf_model_id = ServingManager._extract_hf_model_id(f"hf://{hf_model_id}")
+            storage_uri = f"hf://{hf_model_id}"
+        elif storage_uri.startswith("hf://"):
+            # When the caller supplies both, reject mismatches up-front —
+            # otherwise we'd catalog/tag one model while deploying
+            # another. When only ``storage_uri`` is set, back-derive
+            # ``hf_model_id`` so downstream tags/annotations reflect the
+            # actual deployed model. Normalize both sides so e.g.
+            # ``"Org/Name/"`` compares equal to ``"Org/Name"``.
+            extracted = ServingManager._extract_hf_model_id(storage_uri)
+            if hf_model_id is None:
+                hf_model_id = extracted
+            else:
+                normalized = ServingManager._extract_hf_model_id(
+                    f"hf://{hf_model_id}"
+                )
+                if normalized != extracted:
+                    raise CogflowValidationError(
+                        f"hf_model_id={hf_model_id!r} does not match the id "
+                        f"encoded in storage_uri={storage_uri!r} "
+                        f"(extracted={extracted!r})"
+                    )
+                hf_model_id = normalized
+
+        # --- 2. Derive names.
+        isvc_name, served_model_name = ServingManager.derive_llm_names(
+            hf_model_id=hf_model_id,
+            served_model_name=served_model_name,
+            isvc_name=isvc_name,
+        )
+
+        # --- 3. Catalog registration (MLflow run + best-effort POST).
+        # Lazy import mirrors the existing pattern in ``_get_model_helpers``
+        # / ``_get_dataset_manager`` to avoid a circular import at module
+        # load time (serving imports models which imports serving for
+        # the LLM serving runtime metadata). Uses the real submodule path
+        # rather than ``cogflow.models`` (a _LazyLoader attribute that
+        # isn't resolvable via ``from … import …``).
+        from cogflow.core import models as cogflow_models
+
+        run_id = cogflow_models.register_llm_catalog_entry(
+            served_model_name=served_model_name,
+            hf_model_id=hf_model_id,
+            user_id=user_id,
+            extra_tags=extra_tags,
+        )
+
+        # --- 4. Merge the run_id / model_type / hf_model_id annotations
+        # onto whatever the caller supplied so consumers (Cog-Engine UI,
+        # direct kubectl inspectors) see the catalog link on the ISVC.
+        # Identity annotations are authoritative — overwrite any
+        # caller-supplied values rather than defaulting — so the ISVC
+        # metadata never drifts from the catalog entry. Unrelated
+        # caller annotations (``my-custom=…``) still pass through.
+        merged_annotations: Dict[str, str] = dict(annotations or {})
+        merged_annotations["model_type"] = "llm"
+        merged_annotations["model_id"] = common.normalize_uuid(run_id)
+        if hf_model_id:
+            merged_annotations["hf_model_id"] = hf_model_id
+
+        # --- 5. Actually create the ISVC.
+        isvc_response = self.deploy_llm(
+            storage_uri=storage_uri,
+            isvc_name=isvc_name,
+            served_model_name=served_model_name,
+            namespace=namespace,
+            max_model_len=max_model_len,
+            dtype=dtype,
+            tensor_parallel_size=tensor_parallel_size,
+            trust_remote_code=trust_remote_code,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_num_seqs=max_num_seqs,
+            resources=resources,
+            tolerations=tolerations,
+            node_selector=node_selector,
+            min_replicas=min_replicas,
+            max_replicas=max_replicas,
+            hf_secret_name=hf_secret_name,
+            annotations=merged_annotations,
+        )
+
+        return {
+            "run_id": run_id,
+            "isvc_name": isvc_name,
+            "served_model_name": served_model_name,
+            "isvc": isvc_response,
+        }
 
     @staticmethod
     def _process_isvc(isvc: dict) -> Dict[str, Any]:
@@ -1612,6 +1807,7 @@ for attr_name in dir(ServingManager):
 from .async_serving import (  # noqa: E402
     async_deploy_model,
     async_deploy_llm,
+    async_serve_llm,
     async_update_model,
     async_delete_isvc,
     async_list_models,

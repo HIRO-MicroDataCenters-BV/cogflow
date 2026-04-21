@@ -823,6 +823,155 @@ class ModelManager:
                 re_raise=True,
             )
 
+    def register_llm_catalog_entry(
+        self,
+        *,
+        served_model_name: str,
+        hf_model_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        extra_tags: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Create an MLflow run for an LLM and register its catalog entry
+        with the CogFlow backend.
+
+        HF-sourced LLMs have no MLflow artifact to log; we open a run
+        purely to establish the catalog identity (``model_info.id ==
+        MLflow run_id``, the same invariant every other registration
+        path respects) and to carry metadata tags.
+
+        Mirrors the ``log_model`` → ``/models/log`` pattern:
+
+        - Opens and closes an MLflow run; sets ``type=llm``,
+          ``source=huggingface`` (or ``mlflow`` if no HF id is given),
+          ``hf_model_id``, ``mlflow.note.content``, plus any caller-
+          supplied ``extra_tags``.
+        - Best-effort POST to ``{API_PATH}{LOG_MODEL}``: failures are
+          logged as warnings and do **not** raise — matches
+          ``log_model``'s behaviour so a transient CogFlow backend
+          outage can't abort an LLM deploy that otherwise succeeded.
+
+        Args:
+            served_model_name: Logical model name (vLLM ``--model_name``).
+                Also becomes the catalog row's ``name``.
+            hf_model_id: HuggingFace Hub id (e.g. ``"Qwen/Qwen2.5-Coder-7B-Instruct"``),
+                or ``None`` for MLflow-backed LLMs.
+            user_id: Override for the ``kubeflow-userid`` / catalog
+                ``register_user_id``. Falls back to
+                ``common.get_current_user()`` (reads the Kubeflow
+                namespace's ``owner`` annotation) which is what notebook
+                consumers want.
+            extra_tags: Additional MLflow tags to set on the run.
+
+        Returns:
+            The MLflow ``run_id`` — which is also the catalog row's
+            primary key.
+
+        Raises:
+            CogflowModelError: If opening the MLflow run itself fails.
+                Backend POST failures are *not* raised (warn-only).
+        """
+        self._warn_if_unhealthy("registering LLM catalog entry")
+
+        # Self-defensive normalization: ``serve_llm`` already runs the
+        # id through this validator, but direct callers (notebook users
+        # of ``cogflow.models.register_llm_catalog_entry``) shouldn't
+        # have to. Strip an accidental ``hf://`` prefix first, then run
+        # through the same ``_extract_hf_model_id`` helper the serving
+        # path uses so whitespace / stray slashes / empty input are
+        # rejected up-front — no orphan MLflow run, no orphan catalog
+        # row on bad input.
+        if hf_model_id is not None:
+            if hf_model_id.startswith("hf://"):
+                hf_model_id = hf_model_id[len("hf://") :]
+            from cogflow.core.serving import ServingManager as _ServingManager
+
+            hf_model_id = _ServingManager._extract_hf_model_id(
+                f"hf://{hf_model_id}"
+            )
+
+        description = (
+            f"LLM served from HuggingFace: {hf_model_id}"
+            if hf_model_id
+            else "LLM served from MLflow-backed checkpoint"
+        )
+
+        try:
+            with self.start_run(run_name=f"register-{served_model_name}") as run_info:
+                # Apply caller ``extra_tags`` FIRST so the reserved
+                # identity tags below always win on a collision — catalog
+                # consumers and downstream tooling rely on them being
+                # authoritative. A caller passing
+                # ``extra_tags={"type": "foo"}`` must not be able to
+                # desync the run from the catalog entry.
+                if extra_tags:
+                    for k, v in extra_tags.items():
+                        self.set_tag(k, v)
+                self.set_tag("type", "llm")
+                self.set_tag("source", "huggingface" if hf_model_id else "mlflow")
+                if hf_model_id:
+                    self.set_tag("hf_model_id", hf_model_id)
+                self.set_tag("mlflow.note.content", description)
+            run_id = run_info.info.run_id
+            start_time_ms = run_info.info.start_time
+            logger.info(
+                "Opened MLflow run %s for LLM '%s' (hf_model_id=%s)",
+                run_id,
+                served_model_name,
+                hf_model_id,
+            )
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Register LLM catalog entry '{served_model_name}'",
+                raise_as=CogflowModelError,
+                re_raise=True,
+            )
+
+        # Best-effort POST to the CogFlow backend — same pattern as
+        # log_model. If the catalog service is unreachable we still want
+        # the deploy to proceed; the warning surfaces in logs.
+        try:
+            resolved_user = user_id or common.get_current_user()
+            model_dict: Dict[str, Any] = {
+                "model_id": common.normalize_uuid(run_id),
+                "model_name": served_model_name,
+                # HF-sourced LLMs aren't MLflow-registered, so there's no
+                # registered-model version number to report. Use 0 as
+                # the sentinel for "unknown registry version" — matches
+                # the fallback ``log_model`` already uses for classical
+                # artifacts when ``model_details.get("model_version")``
+                # is missing or falsy.
+                "model_version": 0,
+                "register_date": datetime.fromtimestamp(
+                    start_time_ms / 1000
+                ).isoformat(),
+                "type": "llm",
+                "description": description,
+                "user_id": resolved_user,
+            }
+            if hf_model_id:
+                # Old catalog schemas (<= the ModelLogBase that predates
+                # this field) ignore unknown keys; newer ones will persist
+                # the hf_model_id column. Forward-compatible.
+                model_dict["hf_model_id"] = hf_model_id
+
+            url = f"{config.API_PATH}{config.LOG_MODEL}"
+            headers = {"kubeflow-userid": resolved_user}
+            network.make_post_request(url=url, data=model_dict, headers=headers)
+            logger.info(
+                "Registered LLM catalog entry via CogFlow backend: %s (run_id=%s)",
+                url,
+                run_id,
+            )
+        except Exception as post_err:
+            logger.warning(
+                "Failed to post LLM catalog entry to CogFlow backend "
+                "(deploy proceeds regardless): %s",
+                str(post_err),
+            )
+
+        return run_id
+
     def search_model_versions(self, filter_string: Optional[str] = None):
         """
         Search for model versions in the MLflow Model Registry.

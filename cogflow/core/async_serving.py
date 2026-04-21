@@ -681,6 +681,147 @@ class AsyncServingManager:
             )
 
 
+    async def serve_llm(
+        self,
+        *,
+        storage_uri: Optional[str] = None,
+        hf_model_id: Optional[str] = None,
+        isvc_name: Optional[str] = None,
+        served_model_name: Optional[str] = None,
+        namespace: Optional[str] = None,
+        max_model_len: Optional[int] = None,
+        dtype: Optional[str] = None,
+        tensor_parallel_size: Optional[int] = None,
+        trust_remote_code: bool = False,
+        gpu_memory_utilization: Optional[float] = None,
+        max_num_seqs: Optional[int] = None,
+        resources: Optional[Dict[str, Dict[str, str]]] = None,
+        tolerations: Optional[List[Dict[str, Any]]] = None,
+        node_selector: Optional[Dict[str, str]] = None,
+        min_replicas: int = 1,
+        max_replicas: int = 1,
+        hf_secret_name: Optional[str] = None,
+        annotations: Optional[Dict[str, str]] = None,
+        user_id: Optional[str] = None,
+        extra_tags: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        """Async variant of :meth:`ServingManager.serve_llm`.
+
+        The catalog-registration step (MLflow run + POST /models/log) is
+        synchronous — MLflow's tracking client and the catalog HTTP call
+        both block — so we keep it sync and only make the ISVC create
+        async via :meth:`deploy_llm`. That preserves the sync/async
+        behavioural parity with the existing ``deploy_llm`` pair.
+
+        See the sync version's docstring for rules and return shape.
+        """
+        sync_manager_cls = _get_serving_manager_class()
+
+        # Steps 1 + 2: resolve URI / shorthand and derive names (same
+        # helpers as the sync path — keeps behaviour identical).
+        if storage_uri is None and hf_model_id is None:
+            # Use sync manager's typed validation error for parity.
+            raise CogflowValidationError(
+                "async_serve_llm requires either hf_model_id or storage_uri"
+            )
+        # See sync serve_llm — single-layer strip; validator rejects
+        # deeper nesting.
+        if hf_model_id is not None and hf_model_id.startswith("hf://"):
+            hf_model_id = hf_model_id[len("hf://") :]
+        # Reject non-HF storage_uri paired with hf_model_id — same
+        # rationale as the sync path.
+        if (
+            storage_uri is not None
+            and not storage_uri.startswith("hf://")
+            and hf_model_id is not None
+        ):
+            raise CogflowValidationError(
+                f"hf_model_id={hf_model_id!r} was supplied alongside a "
+                f"non-HF storage_uri={storage_uri!r}; HuggingFace metadata "
+                f"only applies to hf:// sources"
+            )
+        if storage_uri is None:
+            # Normalize / validate via the same helper the hf:// URI
+            # path uses — see sync serve_llm for rationale.
+            hf_model_id = sync_manager_cls._extract_hf_model_id(
+                f"hf://{hf_model_id}"
+            )
+            storage_uri = f"hf://{hf_model_id}"
+        elif storage_uri.startswith("hf://"):
+            # See the sync serve_llm for the mismatch rationale — keep
+            # both paths behaviourally identical (including normalizing
+            # both sides before the equality check).
+            extracted = sync_manager_cls._extract_hf_model_id(storage_uri)
+            if hf_model_id is None:
+                hf_model_id = extracted
+            else:
+                normalized = sync_manager_cls._extract_hf_model_id(
+                    f"hf://{hf_model_id}"
+                )
+                if normalized != extracted:
+                    raise CogflowValidationError(
+                        f"hf_model_id={hf_model_id!r} does not match the id "
+                        f"encoded in storage_uri={storage_uri!r} "
+                        f"(extracted={extracted!r})"
+                    )
+                hf_model_id = normalized
+
+        isvc_name, served_model_name = sync_manager_cls.derive_llm_names(
+            hf_model_id=hf_model_id,
+            served_model_name=served_model_name,
+            isvc_name=isvc_name,
+        )
+
+        # Step 3: catalog registration — sync, lazy-imported (same
+        # rationale as the sync path). Uses the real submodule path
+        # rather than ``cogflow.models`` (a _LazyLoader attribute that
+        # isn't resolvable via ``from … import …``).
+        from cogflow.core import models as cogflow_models
+
+        run_id = cogflow_models.register_llm_catalog_entry(
+            served_model_name=served_model_name,
+            hf_model_id=hf_model_id,
+            user_id=user_id,
+            extra_tags=extra_tags,
+        )
+
+        # Step 4: merge annotations. Identity keys are authoritative
+        # — see sync serve_llm for rationale.
+        merged_annotations: Dict[str, str] = dict(annotations or {})
+        merged_annotations["model_type"] = "llm"
+        merged_annotations["model_id"] = common.normalize_uuid(run_id)
+        if hf_model_id:
+            merged_annotations["hf_model_id"] = hf_model_id
+
+        # Step 5: actual ISVC create (async).
+        isvc_response = await self.deploy_llm(
+            storage_uri=storage_uri,
+            isvc_name=isvc_name,
+            served_model_name=served_model_name,
+            namespace=namespace,
+            max_model_len=max_model_len,
+            dtype=dtype,
+            tensor_parallel_size=tensor_parallel_size,
+            trust_remote_code=trust_remote_code,
+            gpu_memory_utilization=gpu_memory_utilization,
+            max_num_seqs=max_num_seqs,
+            resources=resources,
+            tolerations=tolerations,
+            node_selector=node_selector,
+            min_replicas=min_replicas,
+            max_replicas=max_replicas,
+            hf_secret_name=hf_secret_name,
+            annotations=merged_annotations,
+        )
+
+        return {
+            "run_id": run_id,
+            "isvc_name": isvc_name,
+            "served_model_name": served_model_name,
+            "isvc": isvc_response,
+        }
+
+
 # Create singleton and expose async methods at module level
 _async_serving = AsyncServingManager()
 
@@ -693,3 +834,4 @@ async_update_isvc = _async_serving.update_isvc
 async_restart_isvc = _async_serving.restart_isvc
 async_create_isvc = _async_serving.create_isvc
 async_deploy_llm = _async_serving.deploy_llm
+async_serve_llm = _async_serving.serve_llm

@@ -261,6 +261,7 @@ def test_async_module_exports():
     assert callable(async_serving_module.async_restart_isvc)
     assert callable(async_serving_module.async_create_isvc)
     assert callable(async_serving_module.async_deploy_llm)
+    assert callable(async_serving_module.async_serve_llm)
 
 
 # ---------------------------------------------------------------------
@@ -302,3 +303,39 @@ async def test_async_deploy_llm_emits_expected_spec(async_serving, fake_async_ap
     assert predictor["tolerations"][0]["key"] == "storage-type"
     # Defaults applied
     assert model["resources"]["requests"]["nvidia.com/gpu"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_async_serve_llm_registers_and_deploys(
+    async_serving, fake_async_api, monkeypatch
+):
+    """async_serve_llm should register the catalog entry (sync, via
+    register_llm_catalog_entry) and then create the KServe ISVC async.
+    Annotations on the resulting ISVC must include model_id=run_id —
+    the uniform invariant that keeps GET /models/{id} working for LLM
+    rows without any type branching."""
+    import cogflow.core.models as core_models_module
+
+    fake_run_id = "deadbeef0000deadbeef0000deadbeef"
+    register_mock = MagicMock(return_value=fake_run_id)
+    monkeypatch.setattr(
+        core_models_module,
+        "register_llm_catalog_entry",
+        register_mock,
+        raising=True,
+    )
+
+    result = await async_serving.serve_llm(hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct")
+
+    register_mock.assert_called_once()
+    assert result["run_id"] == fake_run_id
+    assert result["served_model_name"] == "Qwen2.5-Coder-7B-Instruct"
+    assert result["isvc_name"] == "qwen2-5-coder-7b-instruct"
+
+    creates = [c for c in fake_async_api.calls if c[0] == "create"]
+    assert len(creates) == 1
+    body = creates[0][1]["body"]
+    annotations = body["metadata"]["annotations"]
+    assert annotations["model_id"] == common.normalize_uuid(fake_run_id)
+    assert annotations["model_type"] == "llm"
+    assert annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
