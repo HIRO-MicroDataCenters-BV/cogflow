@@ -211,13 +211,14 @@ jobs:
           PY
 
       - name: Set up QEMU
-        # Only needed when arm64 is in the platform list — QEMU emulates
-        # arm64 on the amd64 runner. Skipping the setup on amd64-only
-        # pre-release builds trims the job start-up time.
+        # Only needed when the platform list includes a non-native arch
+        # (runners are amd64, so arm64 is what actually needs emulation).
+        # Drive `with.platforms` from the same step so the QEMU and build
+        # platform lists can't drift if we later add/remove archs.
         if: contains(steps.tags.outputs.platforms, 'arm64')
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.tags.outputs.platforms }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
