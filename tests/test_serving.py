@@ -711,6 +711,129 @@ def test_deploy_llm_whitelisted_args_order_and_flags(serving, serving_module):
     ]
 
 
+# ---------------------------------------------------------------------
+# LLM name derivation (derive_llm_names + deploy_llm with omitted names)
+# ---------------------------------------------------------------------
+
+
+def test_derive_llm_names_uses_slug_after_slash(serving_module):
+    """hf_model_id='Org/Name' → served_model_name='Name',
+    isvc_name=<DNS-1123 slug of Name>."""
+    module_obj, _, _ = serving_module
+    isvc, smn = module_obj.ServingManager.derive_llm_names(
+        hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct",
+    )
+    assert smn == "Qwen2.5-Coder-7B-Instruct"
+    assert isvc == "qwen2-5-coder-7b-instruct"
+
+
+def test_derive_llm_names_bare_hf_id_no_slash(serving_module):
+    """HF supports bare ids without an org segment — use as-is."""
+    module_obj, _, _ = serving_module
+    isvc, smn = module_obj.ServingManager.derive_llm_names(
+        hf_model_id="gpt2",
+    )
+    assert smn == "gpt2"
+    assert isvc == "gpt2"
+
+
+def test_derive_llm_names_respects_explicit_inputs(serving_module):
+    """Caller-supplied names beat HF-id derivation."""
+    module_obj, _, _ = serving_module
+    isvc, smn = module_obj.ServingManager.derive_llm_names(
+        hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct",
+        served_model_name="my-model",
+        isvc_name="my-isvc",
+    )
+    assert smn == "my-model"
+    assert isvc == "my-isvc"
+
+
+def test_derive_llm_names_mlflow_without_name_raises(serving_module):
+    """No hf_model_id + no served_model_name → typed error."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    module_obj, _, _ = serving_module
+    with pytest.raises(CogflowValidationError, match="served_model_name is required"):
+        module_obj.ServingManager.derive_llm_names()
+
+
+def test_derive_llm_names_rejects_too_long_isvc_name(serving_module):
+    """Explicit isvc_name longer than 63 chars is DNS-1123-invalid even if
+    it matches the char-class regex — K8s/KServe admission would reject
+    it. Surface the length cap here with a typed exception."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    module_obj, _, _ = serving_module
+    too_long = "a" * 64
+    with pytest.raises(CogflowValidationError, match="63 characters"):
+        module_obj.ServingManager.derive_llm_names(
+            served_model_name="ok",
+            isvc_name=too_long,
+        )
+
+
+def test_derive_llm_names_rejects_non_dns1123_isvc(serving_module):
+    """Explicit isvc_name must match the DNS-1123 label pattern."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    module_obj, _, _ = serving_module
+    with pytest.raises(CogflowValidationError, match="DNS-1123"):
+        module_obj.ServingManager.derive_llm_names(
+            served_model_name="ok",
+            isvc_name="Not_A_Valid_Name",
+        )
+
+
+def test_deploy_llm_derives_both_names_from_hf_uri(serving, serving_module):
+    """Omit both name args → cogflow derives them from the hf:// URI."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct")
+
+    body = _deploy_llm_create_call(fake_api)
+    assert body["metadata"]["name"] == "qwen2-5-coder-7b-instruct"
+    args = body["spec"]["predictor"]["model"]["args"]
+    assert "--model_name=Qwen2.5-Coder-7B-Instruct" in args
+    assert "--model_id=Qwen/Qwen2.5-Coder-7B-Instruct" in args
+
+
+def test_deploy_llm_derives_isvc_from_served_model_name(serving, serving_module):
+    """Only served_model_name supplied → isvc_name defaults to its slug."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        served_model_name="My.Custom_Name",
+    )
+
+    body = _deploy_llm_create_call(fake_api)
+    assert body["metadata"]["name"] == "my-custom-name"
+
+
+def test_deploy_llm_malformed_hf_uri_raises_hf_error_not_name_error(serving):
+    """Malformed ``hf://`` URI with names omitted must surface the
+    specific "invalid HF model id" error from URI validation, not
+    the generic "served_model_name is required" from name derivation.
+
+    Regression: earlier the derivation step ran first and shadowed
+    the URI error when both the URI was bad and the names were None.
+    """
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    for bad in ("hf://", "hf:///", "hf://   "):
+        with pytest.raises(CogflowValidationError, match="invalid HF model id"):
+            serving.deploy_llm(storage_uri=bad)
+
+
+def test_deploy_llm_s3_without_served_model_name_raises(serving):
+    """MLflow/s3 path can't derive a name — caller must supply one."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="served_model_name is required"):
+        serving.deploy_llm(storage_uri="s3://mlflow/0/abc/artifacts/model")
+
+
 def test_serving_module_reexports_async_deploy_llm():
     """cogflow.serving must expose async_deploy_llm alongside the other
     async_* helpers. Consumers (e.g. Cog-Engine) reach it via

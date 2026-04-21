@@ -14,9 +14,10 @@ No circular imports occur because we load them lazily.
 
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
@@ -585,6 +586,119 @@ class ServingManager:
                     merged[section].update(override[section])
         return merged
 
+    # Stricter DNS-1123 *label* check used for InferenceService names in
+    # this serving flow (KServe/Knative require it — Kubernetes itself
+    # accepts the looser DNS-1123 *subdomain* form for ``metadata.name``).
+    # Surfaces errors here with a typed exception rather than letting the
+    # K8s admission webhook return an opaque 422 later.
+    _DNS1123_LABEL_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+
+    @staticmethod
+    def _extract_hf_model_id(storage_uri: str) -> Optional[str]:
+        """Return the HF model id from an ``hf://`` URI, or ``None`` if
+        the URI isn't an HF source.
+
+        Raises ``CogflowValidationError`` if the URI is shaped like
+        ``hf://`` but the id is empty or contains whitespace — catches
+        malformed input early so the error message is specific
+        ("invalid HF model id") regardless of whether the caller also
+        omitted ``isvc_name`` / ``served_model_name``.
+        """
+        if not storage_uri.startswith("hf://"):
+            return None
+        hf_id = storage_uri[len("hf://") :].strip().strip("/")
+        if not hf_id or any(ch.isspace() for ch in hf_id):
+            raise CogflowValidationError(
+                f"storage_uri={storage_uri!r} has an invalid HF model id; "
+                f"expected 'hf://<org>/<model>' (or 'hf://<model>')"
+            )
+        return hf_id
+
+    @staticmethod
+    def _k8s_slugify(name: str) -> str:
+        """Turn an arbitrary model name into a DNS-1123-compatible label.
+
+        Lowercases, replaces any run of non-``[a-z0-9]`` with a single
+        dash, strips leading/trailing dashes, and truncates to 63 chars
+        (the DNS-1123 label limit).
+
+        The result is not guaranteed to be DNS-1123-valid for adversarial
+        inputs (e.g. an all-punctuation string collapses to an empty
+        string); callers should validate via ``_DNS1123_LABEL_RE`` after.
+        """
+        slug = re.sub(r"[^a-z0-9]+", "-", name.strip().lower()).strip("-")
+        if len(slug) > 63:
+            slug = slug[:63].rstrip("-")
+        return slug
+
+    @staticmethod
+    def derive_llm_names(
+        *,
+        hf_model_id: Optional[str] = None,
+        served_model_name: Optional[str] = None,
+        isvc_name: Optional[str] = None,
+    ) -> Tuple[str, str]:
+        """Fill in ``(isvc_name, served_model_name)`` from ``hf_model_id``
+        when not supplied, and validate the final ``isvc_name``.
+
+        Rules:
+
+        - ``served_model_name`` defaults to the part of ``hf_model_id``
+          after the last ``/`` — ``'Qwen/Qwen2.5-Coder-7B-Instruct'``
+          becomes ``'Qwen2.5-Coder-7B-Instruct'``. An ``hf_model_id`` with
+          no slash is used as-is (HF supports bare org-less ids).
+        - ``isvc_name`` defaults to a DNS-1123 slug of the resolved
+          ``served_model_name`` (``Qwen2.5-Coder-7B-Instruct`` →
+          ``qwen2-5-coder-7b-instruct``).
+
+        Keeps the logic in cogflow so every caller (Cog-Engine today,
+        direct SDK users tomorrow) gets the same defaults instead of
+        reimplementing them.
+
+        Raises
+        ------
+        CogflowValidationError
+            If ``served_model_name`` can't be resolved (neither passed
+            in nor derivable from a non-empty ``hf_model_id``), or if the
+            final ``isvc_name`` is not a valid DNS-1123 label.
+        """
+        if not served_model_name:
+            if not hf_model_id:
+                raise CogflowValidationError(
+                    "served_model_name is required when hf_model_id is not "
+                    "provided (MLflow-backed LLM path must supply a name)"
+                )
+            slug_source = hf_model_id.strip().strip("/")
+            # hf_model_id like 'Qwen/Qwen2.5-Coder-7B-Instruct': the
+            # served model is the repo, not the org, so split once and
+            # take the tail. A bare id with no slash is used directly.
+            served_model_name = slug_source.rsplit("/", 1)[-1].strip()
+            if not served_model_name:
+                raise CogflowValidationError(
+                    f"could not derive served_model_name from hf_model_id="
+                    f"{hf_model_id!r}"
+                )
+
+        if not isvc_name:
+            isvc_name = ServingManager._k8s_slugify(served_model_name)
+
+        # DNS-1123 label: regex AND the 63-char length cap. Caller-supplied
+        # isvc_name could be regex-valid but too long; ``_k8s_slugify``
+        # already truncates, so this only rejects explicit inputs.
+        if len(isvc_name) > 63:
+            raise CogflowValidationError(
+                f"isvc_name={isvc_name!r} exceeds the DNS-1123 label "
+                f"length limit of 63 characters (got {len(isvc_name)})"
+            )
+        if not ServingManager._DNS1123_LABEL_RE.match(isvc_name):
+            raise CogflowValidationError(
+                f"isvc_name={isvc_name!r} is not a valid DNS-1123 label "
+                f"(^[a-z0-9]([-a-z0-9]*[a-z0-9])?$); pass an explicit "
+                f"isvc_name or a served_model_name that slugifies cleanly"
+            )
+
+        return isvc_name, served_model_name
+
     @staticmethod
     def _build_llm_args(
         served_model_name: str,
@@ -684,7 +798,12 @@ class ServingManager:
         #                          initializer downloads to a local
         #                          path and passes ``--model_dir=...``
         #                          to the runtime.
-        is_hf_source = storage_uri.startswith("hf://")
+        # ``_extract_hf_model_id`` validates the ``hf://`` URI shape and
+        # returns ``None`` for non-HF sources. This is also called from
+        # ``deploy_llm`` so direct callers of this helper (tests, future
+        # SDK users) still get the same validation.
+        hf_id = ServingManager._extract_hf_model_id(storage_uri)
+        is_hf_source = hf_id is not None
         runtime_args = ServingManager._build_llm_args(
             served_model_name,
             max_model_len=max_model_len,
@@ -695,16 +814,6 @@ class ServingManager:
             max_num_seqs=max_num_seqs,
         )
         if is_hf_source:
-            # Strip the scheme and any decorative slashes. Reject early
-            # on empty/whitespace input so we don't emit
-            # ``--model_id=<junk>`` and leave the runtime to fail opaquely
-            # at pull time. Real HF ids never contain whitespace.
-            hf_id = storage_uri[len("hf://"):].strip().strip("/")
-            if not hf_id or any(ch.isspace() for ch in hf_id):
-                raise CogflowValidationError(
-                    f"storage_uri={storage_uri!r} has an invalid HF model id; "
-                    f"expected 'hf://<org>/<model>' (or 'hf://<model>')"
-                )
             # --model_id comes first for readability in the emitted YAML
             runtime_args = [f"--model_id={hf_id}", *runtime_args]
 
@@ -748,8 +857,8 @@ class ServingManager:
         self,
         *,
         storage_uri: str,
-        isvc_name: str,
-        served_model_name: str,
+        isvc_name: Optional[str] = None,
+        served_model_name: Optional[str] = None,
         namespace: Optional[str] = None,
         # vLLM runtime args (whitelist)
         max_model_len: Optional[int] = None,
@@ -775,7 +884,29 @@ class ServingManager:
         for a direct HF Hub pull or ``s3://mlflow/...`` for an MLflow-stored
         HF-format checkpoint. Callers (e.g. Cog-Engine) are responsible for
         resolving the source.
+
+        ``isvc_name`` may be omitted whenever ``served_model_name`` is
+        available; it is derived as a DNS-1123-safe slug of that name.
+        For the ``hf://`` path, ``served_model_name`` may also be omitted:
+        it defaults to the part after the last ``/`` of the HF model id,
+        and ``isvc_name`` then derives from that. See
+        :meth:`derive_llm_names`. The ``s3://`` / MLflow path still
+        requires an explicit ``served_model_name`` (cogflow has no
+        catalog visibility).
         """
+        # Validate the ``hf://`` URI shape up-front so a malformed input
+        # surfaces as "invalid HF model id" regardless of whether the
+        # caller omitted names (otherwise the name-derivation step below
+        # would raise "served_model_name is required" first and obscure
+        # the real problem). ``_build_llm_predictor`` keeps the same
+        # check as a defensive guard for direct helper callers.
+        hf_model_id_hint = ServingManager._extract_hf_model_id(storage_uri)
+        isvc_name, served_model_name = ServingManager.derive_llm_names(
+            hf_model_id=hf_model_id_hint,
+            served_model_name=served_model_name,
+            isvc_name=isvc_name,
+        )
+
         namespace = namespace or common.get_namespace()
         logger.info(
             "Creating LLM InferenceService name=%s namespace=%s storage_uri=%s",
