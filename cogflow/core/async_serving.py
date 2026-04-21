@@ -585,19 +585,18 @@ class AsyncServingManager:
         so there is a single source of truth for the ISVC shape; this method
         adds the async CRD create and the async K8s client plumbing.
 
-        ``isvc_name`` and ``served_model_name`` are optional for ``hf://``
-        sources — see :meth:`ServingManager.derive_llm_names`.
+        For ``hf://`` sources, ``served_model_name`` may be omitted and
+        is derived from the HF model id. ``isvc_name`` may be omitted for
+        any source and is derived from ``served_model_name`` — see
+        :meth:`ServingManager.derive_llm_names`.
         """
         sync_manager_cls = _get_serving_manager_class()
 
         # Keep sync/async paths in lockstep: both derive names the same
         # way, so a request that works via deploy_llm works via
-        # async_deploy_llm and vice-versa.
-        hf_model_id_hint: Optional[str] = None
-        if storage_uri.startswith("hf://"):
-            candidate = storage_uri[len("hf://") :].strip().strip("/")
-            if candidate:
-                hf_model_id_hint = candidate
+        # async_deploy_llm and vice-versa. Early URI validation keeps
+        # error ordering URI-first (see deploy_llm for rationale).
+        hf_model_id_hint = sync_manager_cls._extract_hf_model_id(storage_uri)
         isvc_name, served_model_name = sync_manager_cls.derive_llm_names(
             hf_model_id=hf_model_id_hint,
             served_model_name=served_model_name,

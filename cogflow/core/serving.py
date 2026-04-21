@@ -586,10 +586,33 @@ class ServingManager:
                     merged[section].update(override[section])
         return merged
 
-    # DNS-1123 label: InferenceService names (and all k8s object names)
-    # must match this. Surface errors here with a typed exception rather
-    # than letting the K8s admission webhook return an opaque 422 later.
+    # Stricter DNS-1123 *label* check used for InferenceService names in
+    # this serving flow (KServe/Knative require it — Kubernetes itself
+    # accepts the looser DNS-1123 *subdomain* form for ``metadata.name``).
+    # Surfaces errors here with a typed exception rather than letting the
+    # K8s admission webhook return an opaque 422 later.
     _DNS1123_LABEL_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
+
+    @staticmethod
+    def _extract_hf_model_id(storage_uri: str) -> Optional[str]:
+        """Return the HF model id from an ``hf://`` URI, or ``None`` if
+        the URI isn't an HF source.
+
+        Raises ``CogflowValidationError`` if the URI is shaped like
+        ``hf://`` but the id is empty or contains whitespace — catches
+        malformed input early so the error message is specific
+        ("invalid HF model id") regardless of whether the caller also
+        omitted ``isvc_name`` / ``served_model_name``.
+        """
+        if not storage_uri.startswith("hf://"):
+            return None
+        hf_id = storage_uri[len("hf://") :].strip().strip("/")
+        if not hf_id or any(ch.isspace() for ch in hf_id):
+            raise CogflowValidationError(
+                f"storage_uri={storage_uri!r} has an invalid HF model id; "
+                f"expected 'hf://<org>/<model>' (or 'hf://<model>')"
+            )
+        return hf_id
 
     @staticmethod
     def _k8s_slugify(name: str) -> str:
@@ -621,7 +644,7 @@ class ServingManager:
         Rules:
 
         - ``served_model_name`` defaults to the part of ``hf_model_id``
-          after the first ``/`` — ``'Qwen/Qwen2.5-Coder-7B-Instruct'``
+          after the last ``/`` — ``'Qwen/Qwen2.5-Coder-7B-Instruct'``
           becomes ``'Qwen2.5-Coder-7B-Instruct'``. An ``hf_model_id`` with
           no slash is used as-is (HF supports bare org-less ids).
         - ``isvc_name`` defaults to a DNS-1123 slug of the resolved
@@ -767,7 +790,12 @@ class ServingManager:
         #                          initializer downloads to a local
         #                          path and passes ``--model_dir=...``
         #                          to the runtime.
-        is_hf_source = storage_uri.startswith("hf://")
+        # ``_extract_hf_model_id`` validates the ``hf://`` URI shape and
+        # returns ``None`` for non-HF sources. This is also called from
+        # ``deploy_llm`` so direct callers of this helper (tests, future
+        # SDK users) still get the same validation.
+        hf_id = ServingManager._extract_hf_model_id(storage_uri)
+        is_hf_source = hf_id is not None
         runtime_args = ServingManager._build_llm_args(
             served_model_name,
             max_model_len=max_model_len,
@@ -778,16 +806,6 @@ class ServingManager:
             max_num_seqs=max_num_seqs,
         )
         if is_hf_source:
-            # Strip the scheme and any decorative slashes. Reject early
-            # on empty/whitespace input so we don't emit
-            # ``--model_id=<junk>`` and leave the runtime to fail opaquely
-            # at pull time. Real HF ids never contain whitespace.
-            hf_id = storage_uri[len("hf://"):].strip().strip("/")
-            if not hf_id or any(ch.isspace() for ch in hf_id):
-                raise CogflowValidationError(
-                    f"storage_uri={storage_uri!r} has an invalid HF model id; "
-                    f"expected 'hf://<org>/<model>' (or 'hf://<model>')"
-                )
             # --model_id comes first for readability in the emitted YAML
             runtime_args = [f"--model_id={hf_id}", *runtime_args]
 
@@ -859,21 +877,22 @@ class ServingManager:
         HF-format checkpoint. Callers (e.g. Cog-Engine) are responsible for
         resolving the source.
 
-        ``isvc_name`` and ``served_model_name`` are optional for the
-        ``hf://`` path: when omitted, ``served_model_name`` defaults to the
-        part after the first ``/`` and ``isvc_name`` to its k8s slug.
-        See :meth:`derive_llm_names`. The ``s3://`` / MLflow path requires
-        an explicit ``served_model_name`` (cogflow can't see the catalog).
+        ``isvc_name`` may be omitted whenever ``served_model_name`` is
+        available; it is derived as a DNS-1123-safe slug of that name.
+        For the ``hf://`` path, ``served_model_name`` may also be omitted:
+        it defaults to the part after the last ``/`` of the HF model id,
+        and ``isvc_name`` then derives from that. See
+        :meth:`derive_llm_names`. The ``s3://`` / MLflow path still
+        requires an explicit ``served_model_name`` (cogflow has no
+        catalog visibility).
         """
-        # Only pass an ``hf_model_id`` hint to the derivation helper for
-        # ``hf://`` sources — ``_build_llm_predictor`` re-validates the URI
-        # format later, so we don't want this branch to reject inputs that
-        # are supposed to surface there.
-        hf_model_id_hint: Optional[str] = None
-        if storage_uri.startswith("hf://"):
-            candidate = storage_uri[len("hf://") :].strip().strip("/")
-            if candidate:
-                hf_model_id_hint = candidate
+        # Validate the ``hf://`` URI shape up-front so a malformed input
+        # surfaces as "invalid HF model id" regardless of whether the
+        # caller omitted names (otherwise the name-derivation step below
+        # would raise "served_model_name is required" first and obscure
+        # the real problem). ``_build_llm_predictor`` keeps the same
+        # check as a defensive guard for direct helper callers.
+        hf_model_id_hint = ServingManager._extract_hf_model_id(storage_uri)
         isvc_name, served_model_name = ServingManager.derive_llm_names(
             hf_model_id=hf_model_id_hint,
             served_model_name=served_model_name,

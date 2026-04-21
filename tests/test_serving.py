@@ -796,6 +796,21 @@ def test_deploy_llm_derives_isvc_from_served_model_name(serving, serving_module)
     assert body["metadata"]["name"] == "my-custom-name"
 
 
+def test_deploy_llm_malformed_hf_uri_raises_hf_error_not_name_error(serving):
+    """Malformed ``hf://`` URI with names omitted must surface the
+    specific "invalid HF model id" error from URI validation, not
+    the generic "served_model_name is required" from name derivation.
+
+    Regression: earlier the derivation step ran first and shadowed
+    the URI error when both the URI was bad and the names were None.
+    """
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    for bad in ("hf://", "hf:///", "hf://   "):
+        with pytest.raises(CogflowValidationError, match="invalid HF model id"):
+            serving.deploy_llm(storage_uri=bad)
+
+
 def test_deploy_llm_s3_without_served_model_name_raises(serving):
     """MLflow/s3 path can't derive a name — caller must supply one."""
     from cogflow.utils.exceptions import CogflowValidationError
