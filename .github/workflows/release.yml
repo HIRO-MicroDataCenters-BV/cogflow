@@ -27,10 +27,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -59,7 +59,7 @@ jobs:
           echo "Built version: $VERSION"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: cogflow-${{ steps.version.outputs.version }}
           path: dist/
@@ -76,7 +76,7 @@ jobs:
 
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: cogflow-${{ needs.build.outputs.version }}
           path: dist/
@@ -93,7 +93,7 @@ jobs:
 
     steps:
       - name: Download build artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           name: cogflow-${{ needs.build.outputs.version }}
           path: dist/
@@ -107,21 +107,25 @@ jobs:
 
   docker-publish:
     needs: [build, publish-pypi]
-    # Run on tag push (after publish-pypi success) OR manual dispatch with a version input.
-    # `always()` lets the job run even when `build`/`publish-pypi` were skipped by
-    # workflow_dispatch — we guard on the result condition explicitly.
-    if: |
+    # Two triggers, both land here:
+    #   1. Tag push  — `build` and `publish-pypi` ran; gate on pypi success.
+    #   2. workflow_dispatch (manual rebuild of an already-published version)
+    #      — `build` and `publish-pypi` were skipped because their `if` gates
+    #      require `event_name == 'push'`, so the default needs-success gate
+    #      would skip this job too. `always()` overrides that; the inner
+    #      condition then chooses the mode.
+    if: >-
       always() && (
-        (startsWith(github.ref, 'refs/tags/v') && needs.publish-pypi.result == 'success')
-        || github.event_name == 'workflow_dispatch'
+        github.event_name == 'workflow_dispatch'
+        || (startsWith(github.ref, 'refs/tags/v') && needs.publish-pypi.result == 'success')
       )
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Determine channel and image tags
+      - name: Determine channel, image tags, and build platforms
         id: tags
         env:
           VERSION: ${{ github.event.inputs.version || needs.build.outputs.version }}
@@ -138,19 +142,30 @@ jobs:
           fi
           if [[ "$CHANNEL" == "stable" ]]; then
             TAGS="$REGISTRY:$VERSION,$REGISTRY:latest"
+            # Stable channel is consumer-facing (main branch images,
+            # downstream charm releases, external users) and must work
+            # on arm64 too.
+            PLATFORMS="linux/amd64,linux/arm64"
           else
             TAGS="$REGISTRY:$VERSION,$REGISTRY:latest-$CHANNEL"
+            # Pre-release channels (beta/rc/alpha) are consumed only by
+            # our own dev-cluster CD which runs on amd64 nodes. Skipping
+            # the arm64 build saves ~8–10 min per release (QEMU emulation
+            # is the slow step) and matches the documented arch policy.
+            PLATFORMS="linux/amd64"
           fi
           {
             echo "tags=$TAGS"
             echo "channel=$CHANNEL"
+            echo "platforms=$PLATFORMS"
             echo "version_tag=$REGISTRY:$VERSION"
           } >> "$GITHUB_OUTPUT"
           echo "Channel: $CHANNEL"
           echo "Tags: $TAGS"
+          echo "Platforms: $PLATFORMS"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
@@ -196,11 +211,14 @@ jobs:
           PY
 
       - name: Set up QEMU
-        # Needed for cross-platform builds: the runner is linux/amd64,
-        # so emulation is required to produce the linux/arm64 layer.
+        # Only needed when the platform list includes a non-native arch
+        # (runners are amd64, so arm64 is what actually needs emulation).
+        # Drive `with.platforms` from the same step so the QEMU and build
+        # platform lists can't drift if we later add/remove archs.
+        if: contains(steps.tags.outputs.platforms, 'arm64')
         uses: docker/setup-qemu-action@v3
         with:
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.tags.outputs.platforms }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -211,20 +229,25 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push cogflow:latest image
-        uses: docker/build-push-action@v5
+      - name: Build and push cogflow image
+        uses: docker/build-push-action@v6
         with:
           context: ./docker_image_variants/latest
-          # Explicit multi-arch publish. Without this the action defaults
-          # to the runner's native arch (amd64) only — and because v5
-          # wraps the result in a multi-arch manifest index, downstream
-          # `--platform linux/arm64` consumers get a strict "platform not
-          # found" error instead of a silent amd64 fallback.
-          platforms: linux/amd64,linux/arm64
+          # Platforms come from the tags step so stable builds multi-arch
+          # and pre-release builds amd64-only. Even for amd64-only we keep
+          # the explicit platform list — build-push-action@v6 otherwise
+          # wraps the output in a manifest index that downstream
+          # `--platform linux/arm64` consumers reject outright.
+          platforms: ${{ steps.tags.outputs.platforms }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
             COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
+          # Buildx GitHub-Actions cache: layer reuse across runs when
+          # only requirements.txt / cogflow version changes. `mode=max`
+          # includes intermediate layers so later runs benefit too.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Smoke test pushed image
         run: |
