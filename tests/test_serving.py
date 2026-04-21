@@ -839,10 +839,14 @@ def test_deploy_llm_s3_without_served_model_name_raises(serving):
 # ---------------------------------------------------------------------
 
 
-def _patch_llm_catalog(monkeypatch, serving_module, *, run_id: str):
-    """Stub out ``cogflow.models.register_llm_catalog_entry`` so serve_llm
-    tests never hit a real MLflow server or the CogFlow backend. Returns
-    the MagicMock so tests can assert call args.
+def _patch_llm_catalog(monkeypatch, *, run_id: str):
+    """Stub out ``cogflow.core.models.register_llm_catalog_entry`` so
+    serve_llm tests never hit a real MLflow server or the CogFlow
+    backend. Returns the MagicMock so tests can assert call args.
+
+    The MLflow tracking-server health check that ``ModelManager.__init__``
+    runs at module-import time is stubbed globally in ``conftest.py``,
+    so importing ``cogflow.core.models`` here is side-effect-free.
     """
     from unittest.mock import MagicMock
 
@@ -864,7 +868,7 @@ def test_serve_llm_end_to_end_happy_path(serving, serving_module, monkeypatch):
     annotations, and return a structured dict with run_id + names +
     isvc response."""
     fake_run_id = "abcdef01234567890123456789abcdef"
-    register_mock = _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    register_mock = _patch_llm_catalog(monkeypatch, run_id=fake_run_id)
     _, fake_api, _ = serving_module
 
     result = serving.serve_llm(hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct")
@@ -897,7 +901,7 @@ def test_serve_llm_storage_uri_hf_shorthand_populates_hf_model_id(
     """Passing ``storage_uri='hf://org/name'`` instead of ``hf_model_id``
     still tags and annotates with the HF id — the wrapper extracts it."""
     fake_run_id = "1234567890abcdef1234567890abcdef"
-    register_mock = _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    register_mock = _patch_llm_catalog(monkeypatch, run_id=fake_run_id)
     _, fake_api, _ = serving_module
 
     serving.serve_llm(storage_uri="hf://meta-llama/Llama-3.1-8B-Instruct")
@@ -917,7 +921,7 @@ def test_serve_llm_preserves_caller_annotations(serving, serving_module, monkeyp
     ``test_serve_llm_identity_annotations_are_authoritative`` for that
     coverage."""
     fake_run_id = "deadbeefdeadbeefdeadbeefdeadbeef"
-    _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    _patch_llm_catalog(monkeypatch, run_id=fake_run_id)
     _, fake_api, _ = serving_module
 
     serving.serve_llm(
@@ -940,7 +944,7 @@ def test_serve_llm_identity_annotations_are_authoritative(
     the ISVC metadata could drift from the catalog entry.
     """
     fake_run_id = "11111111111111111111111111111111"
-    _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    _patch_llm_catalog(monkeypatch, run_id=fake_run_id)
     _, fake_api, _ = serving_module
 
     serving.serve_llm(
@@ -966,7 +970,7 @@ def test_serve_llm_normalizes_dirty_hf_model_id(serving, serving_module, monkeyp
     form. Prevents an orphan run from slipping through when
     ``deploy_llm`` would reject the URI later."""
     fake_run_id = "abababababababababababababababab"
-    register_mock = _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    register_mock = _patch_llm_catalog(monkeypatch, run_id=fake_run_id)
     _, fake_api, _ = serving_module
 
     serving.serve_llm(hf_model_id="/Qwen/Qwen2.5-Coder-7B-Instruct/")
@@ -988,7 +992,7 @@ def test_serve_llm_strips_accidental_hf_scheme_prefix(
     double-schemed) should not produce a ``hf://hf://…`` URI. Strip the
     leading ``hf://`` from the bare id before building the URI."""
     fake_run_id = "c" * 32
-    register_mock = _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    register_mock = _patch_llm_catalog(monkeypatch, run_id=fake_run_id)
     _, fake_api, _ = serving_module
 
     serving.serve_llm(hf_model_id="hf://Qwen/Qwen2.5-Coder-7B-Instruct")
@@ -1013,9 +1017,7 @@ def test_serve_llm_invalid_hf_model_id_rejected_before_catalog(
     or catalog POST is issued — no side effects to clean up."""
     from cogflow.utils.exceptions import CogflowValidationError
 
-    register_mock = _patch_llm_catalog(
-        monkeypatch, serving_module, run_id="never-created"
-    )
+    register_mock = _patch_llm_catalog(monkeypatch, run_id="never-created")
 
     for bad in ("", "   ", "/"):
         with pytest.raises(CogflowValidationError, match="invalid HF model id"):
@@ -1031,7 +1033,7 @@ def test_serve_llm_storage_uri_hf_id_mismatch_raises(serving, serving_module, mo
     Reject up-front with a typed error."""
     from cogflow.utils.exceptions import CogflowValidationError
 
-    _patch_llm_catalog(monkeypatch, serving_module, run_id="never-used")
+    _patch_llm_catalog(monkeypatch, run_id="never-used")
 
     with pytest.raises(CogflowValidationError, match="does not match"):
         serving.serve_llm(
@@ -1101,7 +1103,7 @@ def test_serve_llm_requires_source(serving, serving_module, monkeypatch):
     """Neither storage_uri nor hf_model_id → CogflowValidationError."""
     from cogflow.utils.exceptions import CogflowValidationError
 
-    _patch_llm_catalog(monkeypatch, serving_module, run_id="never-used")
+    _patch_llm_catalog(monkeypatch, run_id="never-used")
 
     with pytest.raises(CogflowValidationError, match="storage_uri"):
         serving.serve_llm()
@@ -1109,7 +1111,7 @@ def test_serve_llm_requires_source(serving, serving_module, monkeypatch):
 
 def test_serve_llm_returns_isvc_name_from_caller(serving, serving_module, monkeypatch):
     """Explicit isvc_name wins over the derived slug on the serve_llm path."""
-    _patch_llm_catalog(monkeypatch, serving_module, run_id="f" * 32)
+    _patch_llm_catalog(monkeypatch, run_id="f" * 32)
 
     result = serving.serve_llm(
         hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct",

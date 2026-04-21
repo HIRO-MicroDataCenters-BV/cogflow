@@ -872,6 +872,23 @@ class ModelManager:
         """
         self._warn_if_unhealthy("registering LLM catalog entry")
 
+        # Self-defensive normalization: ``serve_llm`` already runs the
+        # id through this validator, but direct callers (notebook users
+        # of ``cogflow.models.register_llm_catalog_entry``) shouldn't
+        # have to. Strip an accidental ``hf://`` prefix first, then run
+        # through the same ``_extract_hf_model_id`` helper the serving
+        # path uses so whitespace / stray slashes / empty input are
+        # rejected up-front — no orphan MLflow run, no orphan catalog
+        # row on bad input.
+        if hf_model_id is not None:
+            if hf_model_id.startswith("hf://"):
+                hf_model_id = hf_model_id[len("hf://") :]
+            from cogflow.core.serving import ServingManager as _ServingManager
+
+            hf_model_id = _ServingManager._extract_hf_model_id(
+                f"hf://{hf_model_id}"
+            )
+
         description = (
             f"LLM served from HuggingFace: {hf_model_id}"
             if hf_model_id
