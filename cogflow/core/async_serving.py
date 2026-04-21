@@ -726,8 +726,18 @@ class AsyncServingManager:
             )
         if storage_uri is None:
             storage_uri = f"hf://{hf_model_id}"
-        elif hf_model_id is None and storage_uri.startswith("hf://"):
-            hf_model_id = sync_manager_cls._extract_hf_model_id(storage_uri)
+        elif storage_uri.startswith("hf://"):
+            # See the sync serve_llm for the mismatch rationale — keep
+            # both paths behaviourally identical.
+            extracted = sync_manager_cls._extract_hf_model_id(storage_uri)
+            if hf_model_id is None:
+                hf_model_id = extracted
+            elif hf_model_id != extracted:
+                raise CogflowValidationError(
+                    f"hf_model_id={hf_model_id!r} does not match the id "
+                    f"encoded in storage_uri={storage_uri!r} "
+                    f"(extracted={extracted!r})"
+                )
 
         isvc_name, served_model_name = sync_manager_cls.derive_llm_names(
             hf_model_id=hf_model_id,
@@ -748,12 +758,13 @@ class AsyncServingManager:
             extra_tags=extra_tags,
         )
 
-        # Step 4: merge annotations.
+        # Step 4: merge annotations. Identity keys are authoritative
+        # — see sync serve_llm for rationale.
         merged_annotations: Dict[str, str] = dict(annotations or {})
-        merged_annotations.setdefault("model_type", "llm")
+        merged_annotations["model_type"] = "llm"
         merged_annotations["model_id"] = common.normalize_uuid(run_id)
         if hf_model_id:
-            merged_annotations.setdefault("hf_model_id", hf_model_id)
+            merged_annotations["hf_model_id"] = hf_model_id
 
         # Step 5: actual ISVC create (async).
         isvc_response = await self.deploy_llm(

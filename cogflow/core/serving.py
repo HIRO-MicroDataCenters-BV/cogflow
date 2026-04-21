@@ -1065,8 +1065,21 @@ class ServingManager:
             )
         if storage_uri is None:
             storage_uri = f"hf://{hf_model_id}"
-        elif hf_model_id is None and storage_uri.startswith("hf://"):
-            hf_model_id = ServingManager._extract_hf_model_id(storage_uri)
+        elif storage_uri.startswith("hf://"):
+            # When the caller supplies both, reject mismatches up-front —
+            # otherwise we'd catalog/tag one model while deploying
+            # another. When only ``storage_uri`` is set, back-derive
+            # ``hf_model_id`` so downstream tags/annotations reflect the
+            # actual deployed model.
+            extracted = ServingManager._extract_hf_model_id(storage_uri)
+            if hf_model_id is None:
+                hf_model_id = extracted
+            elif hf_model_id != extracted:
+                raise CogflowValidationError(
+                    f"hf_model_id={hf_model_id!r} does not match the id "
+                    f"encoded in storage_uri={storage_uri!r} "
+                    f"(extracted={extracted!r})"
+                )
 
         # --- 2. Derive names.
         isvc_name, served_model_name = ServingManager.derive_llm_names(
@@ -1094,11 +1107,15 @@ class ServingManager:
         # --- 4. Merge the run_id / model_type / hf_model_id annotations
         # onto whatever the caller supplied so consumers (Cog-Engine UI,
         # direct kubectl inspectors) see the catalog link on the ISVC.
+        # Identity annotations are authoritative — overwrite any
+        # caller-supplied values rather than defaulting — so the ISVC
+        # metadata never drifts from the catalog entry. Unrelated
+        # caller annotations (``my-custom=…``) still pass through.
         merged_annotations: Dict[str, str] = dict(annotations or {})
-        merged_annotations.setdefault("model_type", "llm")
+        merged_annotations["model_type"] = "llm"
         merged_annotations["model_id"] = common.normalize_uuid(run_id)
         if hf_model_id:
-            merged_annotations.setdefault("hf_model_id", hf_model_id)
+            merged_annotations["hf_model_id"] = hf_model_id
 
         # --- 5. Actually create the ISVC.
         isvc_response = self.deploy_llm(

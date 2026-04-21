@@ -880,14 +880,20 @@ class ModelManager:
 
         try:
             with self.start_run(run_name=f"register-{served_model_name}") as run_info:
+                # Apply caller ``extra_tags`` FIRST so the reserved
+                # identity tags below always win on a collision — catalog
+                # consumers and downstream tooling rely on them being
+                # authoritative. A caller passing
+                # ``extra_tags={"type": "foo"}`` must not be able to
+                # desync the run from the catalog entry.
+                if extra_tags:
+                    for k, v in extra_tags.items():
+                        self.set_tag(k, v)
                 self.set_tag("type", "llm")
                 self.set_tag("source", "huggingface" if hf_model_id else "mlflow")
                 if hf_model_id:
                     self.set_tag("hf_model_id", hf_model_id)
                 self.set_tag("mlflow.note.content", description)
-                if extra_tags:
-                    for k, v in extra_tags.items():
-                        self.set_tag(k, v)
             run_id = run_info.info.run_id
             start_time_ms = run_info.info.start_time
             logger.info(
@@ -913,10 +919,12 @@ class ModelManager:
                 "model_id": common.normalize_uuid(run_id),
                 "model_name": served_model_name,
                 # HF-sourced LLMs aren't MLflow-registered, so there's no
-                # registered-model version number to report. Use 1 as a
-                # placeholder; the catalog's response schema already
-                # treats version as Optional on the read path.
-                "model_version": 1,
+                # registered-model version number to report. Use 0 as
+                # the sentinel for "unknown registry version" — matches
+                # the fallback ``log_model`` already uses for classical
+                # artifacts when ``model_details.get("model_version")``
+                # is missing or falsy.
+                "model_version": 0,
                 "register_date": datetime.fromtimestamp(
                     start_time_ms / 1000
                 ).isoformat(),
