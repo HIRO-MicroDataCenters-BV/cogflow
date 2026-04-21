@@ -1064,22 +1064,35 @@ class ServingManager:
                 "serve_llm requires either hf_model_id or storage_uri"
             )
         if storage_uri is None:
+            # Route a bare ``hf_model_id`` through the same validator /
+            # normalizer the ``hf://`` URI path uses so whitespace, stray
+            # slashes, and empty input are rejected up-front — *before*
+            # we open an MLflow run or POST to the catalog. Previously
+            # an invalid id only surfaced deep inside deploy_llm and
+            # left an orphan run + catalog entry behind.
+            hf_model_id = ServingManager._extract_hf_model_id(f"hf://{hf_model_id}")
             storage_uri = f"hf://{hf_model_id}"
         elif storage_uri.startswith("hf://"):
             # When the caller supplies both, reject mismatches up-front —
             # otherwise we'd catalog/tag one model while deploying
             # another. When only ``storage_uri`` is set, back-derive
             # ``hf_model_id`` so downstream tags/annotations reflect the
-            # actual deployed model.
+            # actual deployed model. Normalize both sides so e.g.
+            # ``"Org/Name/"`` compares equal to ``"Org/Name"``.
             extracted = ServingManager._extract_hf_model_id(storage_uri)
             if hf_model_id is None:
                 hf_model_id = extracted
-            elif hf_model_id != extracted:
-                raise CogflowValidationError(
-                    f"hf_model_id={hf_model_id!r} does not match the id "
-                    f"encoded in storage_uri={storage_uri!r} "
-                    f"(extracted={extracted!r})"
+            else:
+                normalized = ServingManager._extract_hf_model_id(
+                    f"hf://{hf_model_id}"
                 )
+                if normalized != extracted:
+                    raise CogflowValidationError(
+                        f"hf_model_id={hf_model_id!r} does not match the id "
+                        f"encoded in storage_uri={storage_uri!r} "
+                        f"(extracted={extracted!r})"
+                    )
+                hf_model_id = normalized
 
         # --- 2. Derive names.
         isvc_name, served_model_name = ServingManager.derive_llm_names(

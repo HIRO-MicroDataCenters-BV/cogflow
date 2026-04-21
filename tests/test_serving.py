@@ -959,6 +959,48 @@ def test_serve_llm_identity_annotations_are_authoritative(
     assert annotations["keep-this"] == "yes"
 
 
+def test_serve_llm_normalizes_dirty_hf_model_id(serving, serving_module, monkeypatch):
+    """``hf_model_id`` with trailing/leading slashes is normalized via
+    ``_extract_hf_model_id`` *before* the catalog entry is opened, so
+    tags / annotations / the staged MLflow run all see the canonical
+    form. Prevents an orphan run from slipping through when
+    ``deploy_llm`` would reject the URI later."""
+    fake_run_id = "abababababababababababababababab"
+    register_mock = _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    _, fake_api, _ = serving_module
+
+    serving.serve_llm(hf_model_id="/Qwen/Qwen2.5-Coder-7B-Instruct/")
+
+    # Catalog registration saw the canonical id.
+    assert (
+        register_mock.call_args.kwargs["hf_model_id"]
+        == "Qwen/Qwen2.5-Coder-7B-Instruct"
+    )
+    # ISVC annotation carries the canonical id too.
+    annotations = _deploy_llm_create_call(fake_api)["metadata"]["annotations"]
+    assert annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
+
+
+def test_serve_llm_invalid_hf_model_id_rejected_before_catalog(
+    serving, serving_module, monkeypatch
+):
+    """An invalid bare ``hf_model_id`` (empty, whitespace, slash-only)
+    must raise CogflowValidationError BEFORE any MLflow run is opened
+    or catalog POST is issued — no side effects to clean up."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    register_mock = _patch_llm_catalog(
+        monkeypatch, serving_module, run_id="never-created"
+    )
+
+    for bad in ("", "   ", "/"):
+        with pytest.raises(CogflowValidationError, match="invalid HF model id"):
+            serving.serve_llm(hf_model_id=bad)
+
+    # register_llm_catalog_entry must NOT have been reached.
+    register_mock.assert_not_called()
+
+
 def test_serve_llm_storage_uri_hf_id_mismatch_raises(serving, serving_module, monkeypatch):
     """Passing both ``storage_uri='hf://A'`` and ``hf_model_id='B'`` is
     a configuration bug — we'd deploy one model and catalog another.

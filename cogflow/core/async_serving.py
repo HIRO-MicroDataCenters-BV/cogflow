@@ -725,19 +725,30 @@ class AsyncServingManager:
                 "async_serve_llm requires either hf_model_id or storage_uri"
             )
         if storage_uri is None:
+            # Normalize / validate via the same helper the hf:// URI
+            # path uses — see sync serve_llm for rationale.
+            hf_model_id = sync_manager_cls._extract_hf_model_id(
+                f"hf://{hf_model_id}"
+            )
             storage_uri = f"hf://{hf_model_id}"
         elif storage_uri.startswith("hf://"):
             # See the sync serve_llm for the mismatch rationale — keep
-            # both paths behaviourally identical.
+            # both paths behaviourally identical (including normalizing
+            # both sides before the equality check).
             extracted = sync_manager_cls._extract_hf_model_id(storage_uri)
             if hf_model_id is None:
                 hf_model_id = extracted
-            elif hf_model_id != extracted:
-                raise CogflowValidationError(
-                    f"hf_model_id={hf_model_id!r} does not match the id "
-                    f"encoded in storage_uri={storage_uri!r} "
-                    f"(extracted={extracted!r})"
+            else:
+                normalized = sync_manager_cls._extract_hf_model_id(
+                    f"hf://{hf_model_id}"
                 )
+                if normalized != extracted:
+                    raise CogflowValidationError(
+                        f"hf_model_id={hf_model_id!r} does not match the id "
+                        f"encoded in storage_uri={storage_uri!r} "
+                        f"(extracted={extracted!r})"
+                    )
+                hf_model_id = normalized
 
         isvc_name, served_model_name = sync_manager_cls.derive_llm_names(
             hf_model_id=hf_model_id,
