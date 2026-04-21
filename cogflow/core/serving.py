@@ -682,6 +682,14 @@ class ServingManager:
         if not isvc_name:
             isvc_name = ServingManager._k8s_slugify(served_model_name)
 
+        # DNS-1123 label: regex AND the 63-char length cap. Caller-supplied
+        # isvc_name could be regex-valid but too long; ``_k8s_slugify``
+        # already truncates, so this only rejects explicit inputs.
+        if len(isvc_name) > 63:
+            raise CogflowValidationError(
+                f"isvc_name={isvc_name!r} exceeds the DNS-1123 label "
+                f"length limit of 63 characters (got {len(isvc_name)})"
+            )
         if not ServingManager._DNS1123_LABEL_RE.match(isvc_name):
             raise CogflowValidationError(
                 f"isvc_name={isvc_name!r} is not a valid DNS-1123 label "

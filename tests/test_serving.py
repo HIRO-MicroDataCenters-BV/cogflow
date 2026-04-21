@@ -758,6 +758,21 @@ def test_derive_llm_names_mlflow_without_name_raises(serving_module):
         module_obj.ServingManager.derive_llm_names()
 
 
+def test_derive_llm_names_rejects_too_long_isvc_name(serving_module):
+    """Explicit isvc_name longer than 63 chars is DNS-1123-invalid even if
+    it matches the char-class regex — K8s/KServe admission would reject
+    it. Surface the length cap here with a typed exception."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    module_obj, _, _ = serving_module
+    too_long = "a" * 64
+    with pytest.raises(CogflowValidationError, match="63 characters"):
+        module_obj.ServingManager.derive_llm_names(
+            served_model_name="ok",
+            isvc_name=too_long,
+        )
+
+
 def test_derive_llm_names_rejects_non_dns1123_isvc(serving_module):
     """Explicit isvc_name must match the DNS-1123 label pattern."""
     from cogflow.utils.exceptions import CogflowValidationError
