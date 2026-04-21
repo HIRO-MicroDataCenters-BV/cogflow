@@ -981,6 +981,30 @@ def test_serve_llm_normalizes_dirty_hf_model_id(serving, serving_module, monkeyp
     assert annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
 
 
+def test_serve_llm_strips_accidental_hf_scheme_prefix(
+    serving, serving_module, monkeypatch
+):
+    """A caller passing ``hf_model_id="hf://Org/Name"`` (accidentally
+    double-schemed) should not produce a ``hf://hf://…`` URI. Strip the
+    leading ``hf://`` from the bare id before building the URI."""
+    fake_run_id = "c" * 32
+    register_mock = _patch_llm_catalog(monkeypatch, serving_module, run_id=fake_run_id)
+    _, fake_api, _ = serving_module
+
+    serving.serve_llm(hf_model_id="hf://Qwen/Qwen2.5-Coder-7B-Instruct")
+
+    assert (
+        register_mock.call_args.kwargs["hf_model_id"]
+        == "Qwen/Qwen2.5-Coder-7B-Instruct"
+    )
+    annotations = _deploy_llm_create_call(fake_api)["metadata"]["annotations"]
+    assert annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
+    # The deploy's args must carry the canonical ``--model_id`` — not the
+    # double-schemed form — so vLLM actually pulls the right model.
+    args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
+    assert "--model_id=Qwen/Qwen2.5-Coder-7B-Instruct" in args
+
+
 def test_serve_llm_invalid_hf_model_id_rejected_before_catalog(
     serving, serving_module, monkeypatch
 ):

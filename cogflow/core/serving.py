@@ -1063,6 +1063,14 @@ class ServingManager:
             raise CogflowValidationError(
                 "serve_llm requires either hf_model_id or storage_uri"
             )
+        # Tolerate an ``hf_model_id`` that a caller accidentally prefixed
+        # with ``hf://`` — otherwise ``f"hf://{hf_model_id}"`` below would
+        # produce a bogus double-scheme ``hf://hf://…`` URI that
+        # ``_extract_hf_model_id`` would happily accept (it only strips
+        # one ``hf://`` and doesn't reject embedded schemes). One strip
+        # here covers both the bare-id path and the mismatch check.
+        if hf_model_id is not None and hf_model_id.startswith("hf://"):
+            hf_model_id = hf_model_id[len("hf://") :]
         if storage_uri is None:
             # Route a bare ``hf_model_id`` through the same validator /
             # normalizer the ``hf://`` URI path uses so whitespace, stray

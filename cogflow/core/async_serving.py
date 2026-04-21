@@ -724,6 +724,10 @@ class AsyncServingManager:
             raise CogflowValidationError(
                 "async_serve_llm requires either hf_model_id or storage_uri"
             )
+        # See sync serve_llm — strip an accidental ``hf://`` prefix on
+        # ``hf_model_id`` so we don't build ``hf://hf://…`` downstream.
+        if hf_model_id is not None and hf_model_id.startswith("hf://"):
+            hf_model_id = hf_model_id[len("hf://") :]
         if storage_uri is None:
             # Normalize / validate via the same helper the hf:// URI
             # path uses — see sync serve_llm for rationale.
