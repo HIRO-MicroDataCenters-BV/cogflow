@@ -598,11 +598,14 @@ class ServingManager:
         """Return the HF model id from an ``hf://`` URI, or ``None`` if
         the URI isn't an HF source.
 
-        Raises ``CogflowValidationError`` if the URI is shaped like
-        ``hf://`` but the id is empty or contains whitespace — catches
-        malformed input early so the error message is specific
-        ("invalid HF model id") regardless of whether the caller also
-        omitted ``isvc_name`` / ``served_model_name``.
+        Raises ``CogflowValidationError`` when the URI is shaped like
+        ``hf://`` but the extracted id is invalid — empty, contains
+        whitespace, or carries an embedded scheme (``://``). The
+        embedded-scheme check catches double-prefixed input like
+        ``hf://hf://org/name`` where stripping only one ``hf://``
+        would leave ``hf://org/name`` as the "id" and vLLM would
+        then receive a bogus ``--model_id`` arg. Real HF ids are
+        ``org/name`` or ``name`` — they never contain ``://``.
         """
         if not storage_uri.startswith("hf://"):
             return None
@@ -610,6 +613,12 @@ class ServingManager:
         if not hf_id or any(ch.isspace() for ch in hf_id):
             raise CogflowValidationError(
                 f"storage_uri={storage_uri!r} has an invalid HF model id; "
+                f"expected 'hf://<org>/<model>' (or 'hf://<model>')"
+            )
+        if "://" in hf_id:
+            raise CogflowValidationError(
+                f"storage_uri={storage_uri!r} has an invalid HF model id "
+                f"(extracted {hf_id!r} contains an embedded scheme); "
                 f"expected 'hf://<org>/<model>' (or 'hf://<model>')"
             )
         return hf_id
@@ -1064,13 +1073,24 @@ class ServingManager:
                 "serve_llm requires either hf_model_id or storage_uri"
             )
         # Tolerate an ``hf_model_id`` that a caller accidentally prefixed
-        # with ``hf://`` — otherwise ``f"hf://{hf_model_id}"`` below would
-        # produce a bogus double-scheme ``hf://hf://…`` URI that
-        # ``_extract_hf_model_id`` would happily accept (it only strips
-        # one ``hf://`` and doesn't reject embedded schemes). One strip
-        # here covers both the bare-id path and the mismatch check.
+        # with ``hf://`` (single layer only — ``_extract_hf_model_id``
+        # rejects deeper ``hf://hf://…`` nesting at the validator layer
+        # below, so there's no need to strip a loop here).
         if hf_model_id is not None and hf_model_id.startswith("hf://"):
             hf_model_id = hf_model_id[len("hf://") :]
+        # Reject inconsistent (s3://, file://, …) storage with an
+        # ``hf_model_id`` — we'd catalog/tag HuggingFace while deploying
+        # a non-HF artifact. MLflow-backed LLMs use ``storage_uri`` alone.
+        if (
+            storage_uri is not None
+            and not storage_uri.startswith("hf://")
+            and hf_model_id is not None
+        ):
+            raise CogflowValidationError(
+                f"hf_model_id={hf_model_id!r} was supplied alongside a "
+                f"non-HF storage_uri={storage_uri!r}; HuggingFace metadata "
+                f"only applies to hf:// sources"
+            )
         if storage_uri is None:
             # Route a bare ``hf_model_id`` through the same validator /
             # normalizer the ``hf://`` URI path uses so whitespace, stray

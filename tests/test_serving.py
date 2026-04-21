@@ -1009,6 +1009,80 @@ def test_serve_llm_strips_accidental_hf_scheme_prefix(
     assert "--model_id=Qwen/Qwen2.5-Coder-7B-Instruct" in args
 
 
+def test_serve_llm_rejects_double_hf_scheme_prefix(
+    serving, serving_module, monkeypatch
+):
+    """Tolerating one accidental ``hf://`` prefix is forgiveness; two or
+    more is a typo the user should see. Without rejection,
+    ``hf://hf://Org/Name`` would strip to ``hf://Org/Name`` and vLLM
+    would be handed an invalid ``--model_id``. Rejected at the validator
+    layer so every call path (bare id, storage_uri, direct
+    register_llm_catalog_entry) gets the protection."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    register_mock = _patch_llm_catalog(monkeypatch, run_id="never-created")
+
+    # Double-scheme via hf_model_id shorthand.
+    with pytest.raises(CogflowValidationError, match="embedded scheme"):
+        serving.serve_llm(hf_model_id="hf://hf://Qwen/Qwen2.5-Coder-7B-Instruct")
+
+    # Double-scheme via storage_uri directly.
+    with pytest.raises(CogflowValidationError, match="embedded scheme"):
+        serving.serve_llm(storage_uri="hf://hf://Qwen/Qwen2.5-Coder-7B-Instruct")
+
+    # Any non-hf scheme smuggled inside an hf_model_id also rejected.
+    with pytest.raises(CogflowValidationError, match="embedded scheme"):
+        serving.serve_llm(hf_model_id="s3://bucket/key")
+
+    register_mock.assert_not_called()
+
+
+def test_serve_llm_rejects_hf_id_with_non_hf_storage_uri(
+    serving, serving_module, monkeypatch
+):
+    """Passing ``hf_model_id`` alongside a non-``hf://`` ``storage_uri``
+    would tag the catalog as HuggingFace-sourced while deploying from
+    (say) s3. Reject up-front so the catalog can't diverge from the
+    actual deployed artifact."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    register_mock = _patch_llm_catalog(monkeypatch, run_id="never-created")
+
+    with pytest.raises(CogflowValidationError, match="non-HF storage_uri"):
+        serving.serve_llm(
+            storage_uri="s3://mlflow/0/abc/artifacts/model",
+            hf_model_id="gpt2",
+        )
+    register_mock.assert_not_called()
+
+
+def test_extract_hf_model_id_rejects_embedded_scheme(serving_module):
+    """Direct unit coverage for ``_extract_hf_model_id`` — the DRY fix
+    point for embedded-scheme inputs. Every call site
+    (``_build_llm_predictor``, ``serve_llm``, async variants,
+    ``register_llm_catalog_entry``) routes through here, so a single
+    validator check protects them all."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    module_obj, _, _ = serving_module
+    for bad in (
+        "hf://hf://Org/Name",
+        "hf://s3://bucket/key",
+        "hf://file:///etc/passwd",
+    ):
+        with pytest.raises(CogflowValidationError, match="embedded scheme"):
+            module_obj.ServingManager._extract_hf_model_id(bad)
+
+    # Well-formed inputs still pass.
+    assert (
+        module_obj.ServingManager._extract_hf_model_id(
+            "hf://Qwen/Qwen2.5-Coder-7B-Instruct"
+        )
+        == "Qwen/Qwen2.5-Coder-7B-Instruct"
+    )
+    assert module_obj.ServingManager._extract_hf_model_id("hf://gpt2") == "gpt2"
+
+
 def test_serve_llm_invalid_hf_model_id_rejected_before_catalog(
     serving, serving_module, monkeypatch
 ):

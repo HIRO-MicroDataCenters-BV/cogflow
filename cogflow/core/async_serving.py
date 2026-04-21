@@ -724,10 +724,22 @@ class AsyncServingManager:
             raise CogflowValidationError(
                 "async_serve_llm requires either hf_model_id or storage_uri"
             )
-        # See sync serve_llm — strip an accidental ``hf://`` prefix on
-        # ``hf_model_id`` so we don't build ``hf://hf://…`` downstream.
+        # See sync serve_llm — single-layer strip; validator rejects
+        # deeper nesting.
         if hf_model_id is not None and hf_model_id.startswith("hf://"):
             hf_model_id = hf_model_id[len("hf://") :]
+        # Reject non-HF storage_uri paired with hf_model_id — same
+        # rationale as the sync path.
+        if (
+            storage_uri is not None
+            and not storage_uri.startswith("hf://")
+            and hf_model_id is not None
+        ):
+            raise CogflowValidationError(
+                f"hf_model_id={hf_model_id!r} was supplied alongside a "
+                f"non-HF storage_uri={storage_uri!r}; HuggingFace metadata "
+                f"only applies to hf:// sources"
+            )
         if storage_uri is None:
             # Normalize / validate via the same helper the hf:// URI
             # path uses — see sync serve_llm for rationale.
