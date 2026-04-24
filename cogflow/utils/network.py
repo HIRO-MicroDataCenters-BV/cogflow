@@ -6,8 +6,14 @@ validating URIs, handling UUID conversions, and serializing datetime objects.
 """
 
 from typing import List, Optional, Union
+import httpx
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from .logging import get_logger
 
@@ -65,6 +71,68 @@ def make_post_request(
 
     except requests.RequestException as exp:
         logger.exception("Error making POST request to %s: %s", url, exp)
+        raise
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    # Restrict to httpx errors so a JSON decode bug (or similar logic
+    # error in the response body) fails fast instead of being retried
+    # 3x. The sync make_post_request is bare-@retry by historical
+    # accident; we don't change it here to keep the diff scoped.
+    retry=retry_if_exception_type(httpx.HTTPError),
+)
+async def make_async_post_request(
+    url: str,
+    data: Optional[dict] = None,
+    params: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> dict:
+    """Async POST mirror of :func:`make_post_request`.
+
+    Exists so callers already inside an ``async def`` can POST without
+    blocking the event loop — critical when the target URL resolves back
+    to the same process serving the caller. The sync version deadlocks
+    in that loop; this one does not.
+
+    Retries up to 3 times with exponential backoff on transport-level
+    HTTP errors. Other exception types (for example, a decoding error
+    on a malformed response body) are *not* retried — they're logic
+    errors, not transients.
+
+    Note: no ``files=`` support here — async multipart uploads aren't
+    needed today. Body selection matches the sync version: an empty
+    dict ``{}`` is treated the same as no body.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if data:
+                response = await client.post(
+                    url, json=data, params=params, headers=headers
+                )
+            else:
+                response = await client.post(
+                    url, params=params, headers=headers
+                )
+
+        if response.is_success:
+            logger.info(
+                "POST %s succeeded with status %s", url, response.status_code
+            )
+            return response.json()
+
+        logger.warning(
+            "POST %s failed: %s - %s",
+            url,
+            response.status_code,
+            response.text[:200],
+        )
+        response.raise_for_status()
+
+    except httpx.HTTPError as exp:
+        logger.exception("Error making async POST request to %s: %s", url, exp)
         raise
 
 

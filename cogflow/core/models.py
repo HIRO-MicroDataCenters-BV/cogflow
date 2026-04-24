@@ -823,52 +823,25 @@ class ModelManager:
                 re_raise=True,
             )
 
-    def register_llm_catalog_entry(
+    def _prepare_llm_catalog_run(
         self,
         *,
         served_model_name: str,
-        hf_model_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        extra_tags: Optional[Dict[str, str]] = None,
-    ) -> str:
-        """Create an MLflow run for an LLM and register its catalog entry
-        with the CogFlow backend.
+        hf_model_id: Optional[str],
+        extra_tags: Optional[Dict[str, str]],
+    ):
+        """Open the MLflow run that anchors an LLM catalog entry.
 
-        HF-sourced LLMs have no MLflow artifact to log; we open a run
-        purely to establish the catalog identity (``model_info.id ==
-        MLflow run_id``, the same invariant every other registration
-        path respects) and to carry metadata tags.
-
-        Mirrors the ``log_model`` → ``/models/log`` pattern:
-
-        - Opens and closes an MLflow run; sets ``type=llm``,
-          ``source=huggingface`` (or ``mlflow`` if no HF id is given),
-          ``hf_model_id``, ``mlflow.note.content``, plus any caller-
-          supplied ``extra_tags``.
-        - Best-effort POST to ``{API_PATH}{LOG_MODEL}``: failures are
-          logged as warnings and do **not** raise — matches
-          ``log_model``'s behaviour so a transient CogFlow backend
-          outage can't abort an LLM deploy that otherwise succeeded.
-
-        Args:
-            served_model_name: Logical model name (vLLM ``--model_name``).
-                Also becomes the catalog row's ``name``.
-            hf_model_id: HuggingFace Hub id (e.g. ``"Qwen/Qwen2.5-Coder-7B-Instruct"``),
-                or ``None`` for MLflow-backed LLMs.
-            user_id: Override for the ``kubeflow-userid`` / catalog
-                ``register_user_id``. Falls back to
-                ``common.get_current_user()`` (reads the Kubeflow
-                namespace's ``owner`` annotation) which is what notebook
-                consumers want.
-            extra_tags: Additional MLflow tags to set on the run.
+        Shared step between the sync and async registration paths
+        (:meth:`register_llm_catalog_entry` and
+        :meth:`async_register_llm_catalog_entry`). Everything here is
+        sync — MLflow's tracking client is sync, but its target is a
+        separate service (MLflow server), so it blocks the event loop
+        only briefly and does not self-deadlock.
 
         Returns:
-            The MLflow ``run_id`` — which is also the catalog row's
-            primary key.
-
-        Raises:
-            CogflowModelError: If opening the MLflow run itself fails.
-                Backend POST failures are *not* raised (warn-only).
+            Tuple of ``(run_id, start_time_ms, description,
+            normalized_hf_model_id)``.
         """
         self._warn_if_unhealthy("registering LLM catalog entry")
 
@@ -919,6 +892,7 @@ class ModelManager:
                 served_model_name,
                 hf_model_id,
             )
+            return run_id, start_time_ms, description, hf_model_id
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -927,37 +901,182 @@ class ModelManager:
                 re_raise=True,
             )
 
-        # Best-effort POST to the CogFlow backend — same pattern as
-        # log_model. If the catalog service is unreachable we still want
-        # the deploy to proceed; the warning surfaces in logs.
-        try:
-            resolved_user = user_id or common.get_current_user()
-            model_dict: Dict[str, Any] = {
-                "model_id": common.normalize_uuid(run_id),
-                "model_name": served_model_name,
-                # HF-sourced LLMs aren't MLflow-registered, so there's no
-                # registered-model version number to report. Use 0 as
-                # the sentinel for "unknown registry version" — matches
-                # the fallback ``log_model`` already uses for classical
-                # artifacts when ``model_details.get("model_version")``
-                # is missing or falsy.
-                "model_version": 0,
-                "register_date": datetime.fromtimestamp(
-                    start_time_ms / 1000
-                ).isoformat(),
-                "type": "llm",
-                "description": description,
-                "user_id": resolved_user,
-            }
-            if hf_model_id:
-                # Old catalog schemas (<= the ModelLogBase that predates
-                # this field) ignore unknown keys; newer ones will persist
-                # the hf_model_id column. Forward-compatible.
-                model_dict["hf_model_id"] = hf_model_id
+    def _build_llm_catalog_payload(
+        self,
+        *,
+        run_id: str,
+        start_time_ms: int,
+        served_model_name: str,
+        hf_model_id: Optional[str],
+        description: str,
+        user_id: Optional[str],
+    ):
+        """Shape the ``POST /models/log`` payload for an LLM catalog entry.
 
-            url = f"{config.API_PATH}{config.LOG_MODEL}"
-            headers = {"kubeflow-userid": resolved_user}
+        Returns ``(url, model_dict, headers, resolved_user)`` so both
+        the sync and async registration methods can use the same body
+        without duplicating the resolution + dict-shaping logic.
+        """
+        resolved_user = user_id or common.get_current_user()
+        model_dict: Dict[str, Any] = {
+            "model_id": common.normalize_uuid(run_id),
+            "model_name": served_model_name,
+            # HF-sourced LLMs aren't MLflow-registered, so there's no
+            # registered-model version number to report. Use 0 as
+            # the sentinel for "unknown registry version" — matches
+            # the fallback ``log_model`` already uses for classical
+            # artifacts when ``model_details.get("model_version")``
+            # is missing or falsy.
+            "model_version": 0,
+            "register_date": datetime.fromtimestamp(
+                start_time_ms / 1000
+            ).isoformat(),
+            "type": "llm",
+            "description": description,
+            "user_id": resolved_user,
+        }
+        if hf_model_id:
+            # Old catalog schemas (<= the ModelLogBase that predates
+            # this field) ignore unknown keys; newer ones will persist
+            # the hf_model_id column. Forward-compatible.
+            model_dict["hf_model_id"] = hf_model_id
+
+        url = f"{config.API_PATH}{config.LOG_MODEL}"
+        headers = {"kubeflow-userid": resolved_user}
+        return url, model_dict, headers, resolved_user
+
+    def register_llm_catalog_entry(
+        self,
+        *,
+        served_model_name: str,
+        hf_model_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        extra_tags: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Open a tracking run for an LLM and register its catalog entry.
+
+        HuggingFace-sourced LLMs have no artifact to log; we open a run
+        purely to establish the catalog identity (the catalog row's id
+        is the run id — the same invariant every other registration
+        path respects) and to carry metadata tags.
+
+        Steps:
+
+        - Open and close a tracking run; set ``type=llm``,
+          ``source=huggingface`` when an HF id is given (a fallback
+          source tag is used otherwise; the exact string is preserved
+          for catalog back-compat), ``hf_model_id`` when present, a
+          human description, plus any caller-supplied ``extra_tags``.
+        - Best-effort POST to the catalog service: failures are logged
+          as warnings and do **not** raise, so a transient backend
+          outage can't abort an LLM deploy that otherwise succeeded.
+
+        For callers already inside an async coroutine, prefer
+        :meth:`async_register_llm_catalog_entry` — the backend POST
+        here is synchronous and will deadlock the event loop if the
+        target URL resolves back to the same process.
+
+        Args:
+            served_model_name: Logical model name. Also becomes the
+                catalog row's ``name``.
+            hf_model_id: HuggingFace Hub id (for example
+                ``"Qwen/Qwen2.5-Coder-7B-Instruct"``), or ``None`` for
+                checkpoint-backed LLMs.
+            user_id: Override for the catalog entry's owner. Falls back
+                to :func:`common.get_current_user` — which notebook
+                consumers usually want.
+            extra_tags: Additional tags to set on the tracking run.
+
+        Returns:
+            The tracking ``run_id`` — which is also the catalog row's
+            primary key.
+
+        Raises:
+            CogflowModelError: If opening the tracking run itself fails.
+                Backend POST failures are *not* raised (warn-only).
+        """
+        run_id, start_time_ms, description, hf_model_id = (
+            self._prepare_llm_catalog_run(
+                served_model_name=served_model_name,
+                hf_model_id=hf_model_id,
+                extra_tags=extra_tags,
+            )
+        )
+
+        url, model_dict, headers, _ = self._build_llm_catalog_payload(
+            run_id=run_id,
+            start_time_ms=start_time_ms,
+            served_model_name=served_model_name,
+            hf_model_id=hf_model_id,
+            description=description,
+            user_id=user_id,
+        )
+
+        # Best-effort POST — same pattern as log_model. If the catalog
+        # service is unreachable we still want the deploy to proceed;
+        # the warning surfaces in logs.
+        try:
             network.make_post_request(url=url, data=model_dict, headers=headers)
+            logger.info(
+                "Registered LLM catalog entry via CogFlow backend: %s (run_id=%s)",
+                url,
+                run_id,
+            )
+        except Exception as post_err:
+            logger.warning(
+                "Failed to post LLM catalog entry to CogFlow backend "
+                "(deploy proceeds regardless): %s",
+                str(post_err),
+            )
+
+        return run_id
+
+    async def async_register_llm_catalog_entry(
+        self,
+        *,
+        served_model_name: str,
+        hf_model_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        extra_tags: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Async variant of :meth:`register_llm_catalog_entry`.
+
+        Identical semantics. The backend POST uses an async HTTP
+        client, so the event loop stays free during the call — which
+        is what lets a self-call (the caller being the same service
+        that also hosts the catalog endpoint) terminate. With the
+        synchronous variant, the POST would deadlock the loop and the
+        callback couldn't be accepted.
+
+        The tracking-run open/close step is still synchronous (no
+        async tracking client in the ecosystem yet), so it blocks the
+        loop briefly. That's fine in practice — the tracking service
+        is separate from the caller, so this never deadlocks; it just
+        briefly delays other coroutines on the same process.
+
+        Return value and exception semantics match the sync variant.
+        """
+        run_id, start_time_ms, description, hf_model_id = (
+            self._prepare_llm_catalog_run(
+                served_model_name=served_model_name,
+                hf_model_id=hf_model_id,
+                extra_tags=extra_tags,
+            )
+        )
+
+        url, model_dict, headers, _ = self._build_llm_catalog_payload(
+            run_id=run_id,
+            start_time_ms=start_time_ms,
+            served_model_name=served_model_name,
+            hf_model_id=hf_model_id,
+            description=description,
+            user_id=user_id,
+        )
+
+        try:
+            await network.make_async_post_request(
+                url=url, data=model_dict, headers=headers
+            )
             logger.info(
                 "Registered LLM catalog entry via CogFlow backend: %s (run_id=%s)",
                 url,
