@@ -707,11 +707,17 @@ class AsyncServingManager:
     ) -> Dict[str, Any]:
         """Async variant of :meth:`ServingManager.serve_llm`.
 
-        The catalog-registration step (MLflow run + POST /models/log) is
-        synchronous — MLflow's tracking client and the catalog HTTP call
-        both block — so we keep it sync and only make the ISVC create
-        async via :meth:`deploy_llm`. That preserves the sync/async
-        behavioural parity with the existing ``deploy_llm`` pair.
+        The catalog-registration backend POST uses httpx via
+        :meth:`ModelManager.async_register_llm_catalog_entry`, so the
+        event loop stays free during the ``/models/log`` call. That
+        matters when the caller is an async HTTP endpoint on the same
+        pod that also serves ``/models/log`` — a blocking
+        ``requests.post`` in that position would deadlock (the loop
+        needed to accept the callback is the one blocked waiting on
+        it). The MLflow run-open/close step around it is still sync
+        (no first-party async MLflow), but that only briefly blocks
+        the loop and doesn't self-deadlock because MLflow server is a
+        separate service.
 
         See the sync version's docstring for rules and return shape.
         """
@@ -772,13 +778,18 @@ class AsyncServingManager:
             isvc_name=isvc_name,
         )
 
-        # Step 3: catalog registration — sync, lazy-imported (same
-        # rationale as the sync path). Uses the real submodule path
-        # rather than ``cogflow.models`` (a _LazyLoader attribute that
-        # isn't resolvable via ``from … import …``).
+        # Step 3: catalog registration via the async helper. The
+        # backend POST is httpx-based so the event loop can accept the
+        # /models/log callback while the outer coroutine is awaiting
+        # it — that's what unblocks cog-api -> cogflow -> cog-api
+        # self-calls. MLflow's part stays sync inside the helper; it
+        # doesn't self-deadlock because MLflow server is a separate
+        # service. Lazy-imported against the real submodule path
+        # (``cogflow.models`` is a _LazyLoader attribute that isn't
+        # resolvable via ``from … import …``).
         from cogflow.core import models as cogflow_models
 
-        run_id = cogflow_models.register_llm_catalog_entry(
+        run_id = await cogflow_models.async_register_llm_catalog_entry(
             served_model_name=served_model_name,
             hf_model_id=hf_model_id,
             user_id=user_id,

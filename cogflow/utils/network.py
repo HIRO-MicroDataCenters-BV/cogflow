@@ -6,6 +6,7 @@ validating URIs, handling UUID conversions, and serializing datetime objects.
 """
 
 from typing import List, Optional, Union
+import httpx
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -65,6 +66,59 @@ def make_post_request(
 
     except requests.RequestException as exp:
         logger.exception("Error making POST request to %s: %s", url, exp)
+        raise
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+async def make_async_post_request(
+    url: str,
+    data: Optional[dict] = None,
+    params: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> dict:
+    """Async POST mirror of :func:`make_post_request` (httpx-backed).
+
+    Exists so callers already inside an ``async def`` can POST without
+    blocking the event loop — critical when the target URL resolves back
+    to the same uvicorn worker (``cog-api -> cogflow -> cog-api``). The
+    sync version deadlocks in that loop; this one does not.
+
+    Retries 3x with exponential backoff on :class:`httpx.HTTPError` (the
+    ``tenacity`` ``@retry`` decorator works on async functions since
+    tenacity 6.2).
+
+    Note: no ``files=`` support here — async multipart uploads aren't
+    needed today, and adding them means fiddling with ``httpx`` multipart
+    shape, which we can revisit when a caller wants it.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if data is not None:
+                response = await client.post(
+                    url, json=data, params=params, headers=headers
+                )
+            else:
+                response = await client.post(
+                    url, params=params, headers=headers
+                )
+
+        if response.is_success:
+            logger.info(
+                "POST %s succeeded with status %s", url, response.status_code
+            )
+            return response.json()
+
+        logger.warning(
+            "POST %s failed: %s - %s",
+            url,
+            response.status_code,
+            response.text[:200],
+        )
+        response.raise_for_status()
+
+    except httpx.HTTPError as exp:
+        logger.exception("Error making async POST request to %s: %s", url, exp)
         raise
 
 
