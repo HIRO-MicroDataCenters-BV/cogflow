@@ -309,18 +309,20 @@ async def test_async_deploy_llm_emits_expected_spec(async_serving, fake_async_ap
 async def test_async_serve_llm_registers_and_deploys(
     async_serving, fake_async_api, monkeypatch
 ):
-    """async_serve_llm should register the catalog entry (sync, via
-    register_llm_catalog_entry) and then create the KServe ISVC async.
-    Annotations on the resulting ISVC must include model_id=run_id —
-    the uniform invariant that keeps GET /models/{id} working for LLM
-    rows without any type branching."""
+    """async_serve_llm should register the catalog entry (async, via
+    async_register_llm_catalog_entry — sync version would deadlock the
+    event loop when caller and /models/log share a worker) and then
+    create the KServe ISVC async. Annotations on the resulting ISVC
+    must include model_id=run_id — the uniform invariant that keeps
+    GET /models/{id} working for LLM rows without any type branching.
+    """
     import cogflow.core.models as core_models_module
 
     fake_run_id = "deadbeef0000deadbeef0000deadbeef"
-    register_mock = MagicMock(return_value=fake_run_id)
+    register_mock = AsyncMock(return_value=fake_run_id)
     monkeypatch.setattr(
         core_models_module,
-        "register_llm_catalog_entry",
+        "async_register_llm_catalog_entry",
         register_mock,
         raising=True,
     )
