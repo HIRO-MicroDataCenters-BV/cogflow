@@ -953,48 +953,46 @@ class ModelManager:
         user_id: Optional[str] = None,
         extra_tags: Optional[Dict[str, str]] = None,
     ) -> str:
-        """Create an MLflow run for an LLM and register its catalog entry
-        with the CogFlow backend.
+        """Open a tracking run for an LLM and register its catalog entry.
 
-        HF-sourced LLMs have no MLflow artifact to log; we open a run
-        purely to establish the catalog identity (``model_info.id ==
-        MLflow run_id``, the same invariant every other registration
+        HuggingFace-sourced LLMs have no artifact to log; we open a run
+        purely to establish the catalog identity (the catalog row's id
+        is the run id — the same invariant every other registration
         path respects) and to carry metadata tags.
 
-        Mirrors the ``log_model`` → ``/models/log`` pattern:
+        Steps:
 
-        - Opens and closes an MLflow run; sets ``type=llm``,
-          ``source=huggingface`` (or ``mlflow`` if no HF id is given),
-          ``hf_model_id``, ``mlflow.note.content``, plus any caller-
-          supplied ``extra_tags``.
-        - Best-effort POST to ``{API_PATH}{LOG_MODEL}``: failures are
-          logged as warnings and do **not** raise — matches
-          ``log_model``'s behaviour so a transient CogFlow backend
+        - Open and close a tracking run; set ``type=llm``,
+          ``source=huggingface`` when an HF id is given (a fallback
+          source tag is used otherwise; the exact string is preserved
+          for catalog back-compat), ``hf_model_id`` when present, a
+          human description, plus any caller-supplied ``extra_tags``.
+        - Best-effort POST to the catalog service: failures are logged
+          as warnings and do **not** raise, so a transient backend
           outage can't abort an LLM deploy that otherwise succeeded.
 
         For callers already inside an async coroutine, prefer
-        :meth:`async_register_llm_catalog_entry` — the POST here is
-        blocking ``requests.post`` and will deadlock the event loop if
-        the target URL resolves back to the same uvicorn worker.
+        :meth:`async_register_llm_catalog_entry` — the backend POST
+        here is synchronous and will deadlock the event loop if the
+        target URL resolves back to the same process.
 
         Args:
-            served_model_name: Logical model name (vLLM ``--model_name``).
-                Also becomes the catalog row's ``name``.
-            hf_model_id: HuggingFace Hub id (e.g. ``"Qwen/Qwen2.5-Coder-7B-Instruct"``),
-                or ``None`` for MLflow-backed LLMs.
-            user_id: Override for the ``kubeflow-userid`` / catalog
-                ``register_user_id``. Falls back to
-                ``common.get_current_user()`` (reads the Kubeflow
-                namespace's ``owner`` annotation) which is what notebook
-                consumers want.
-            extra_tags: Additional MLflow tags to set on the run.
+            served_model_name: Logical model name. Also becomes the
+                catalog row's ``name``.
+            hf_model_id: HuggingFace Hub id (for example
+                ``"Qwen/Qwen2.5-Coder-7B-Instruct"``), or ``None`` for
+                checkpoint-backed LLMs.
+            user_id: Override for the catalog entry's owner. Falls back
+                to :func:`common.get_current_user` — which notebook
+                consumers usually want.
+            extra_tags: Additional tags to set on the tracking run.
 
         Returns:
-            The MLflow ``run_id`` — which is also the catalog row's
+            The tracking ``run_id`` — which is also the catalog row's
             primary key.
 
         Raises:
-            CogflowModelError: If opening the MLflow run itself fails.
+            CogflowModelError: If opening the tracking run itself fails.
                 Backend POST failures are *not* raised (warn-only).
         """
         run_id, start_time_ms, description, hf_model_id = (
@@ -1043,20 +1041,18 @@ class ModelManager:
     ) -> str:
         """Async variant of :meth:`register_llm_catalog_entry`.
 
-        Identical semantics, but the backend POST to ``{API_PATH}
-        {LOG_MODEL}`` uses :func:`network.make_async_post_request`
-        (httpx-backed) so the event loop stays free during the call.
-        This is what lets ``cog-api -> cogflow -> cog-api`` self-calls
-        terminate — when the POST target is the same uvicorn worker
-        that's running the outer coroutine, a sync ``requests.post``
-        deadlocks the loop, and the callback can't be accepted.
+        Identical semantics. The backend POST uses an async HTTP
+        client, so the event loop stays free during the call — which
+        is what lets a self-call (the caller being the same service
+        that also hosts the catalog endpoint) terminate. With the
+        synchronous variant, the POST would deadlock the loop and the
+        callback couldn't be accepted.
 
-        MLflow's tracking client is still sync (no first-party async
-        MLflow yet), so the run-open/close step blocks the loop
-        briefly. That's fine in practice: MLflow server is a separate
-        service, so the block never deadlocks — it just delays other
-        coroutines on the same worker for the duration of the run
-        setup/teardown.
+        The tracking-run open/close step is still synchronous (no
+        async tracking client in the ecosystem yet), so it blocks the
+        loop briefly. That's fine in practice — the tracking service
+        is separate from the caller, so this never deadlocks; it just
+        briefly delays other coroutines on the same process.
 
         Return value and exception semantics match the sync variant.
         """

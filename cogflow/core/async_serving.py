@@ -707,17 +707,18 @@ class AsyncServingManager:
     ) -> Dict[str, Any]:
         """Async variant of :meth:`ServingManager.serve_llm`.
 
-        The catalog-registration backend POST uses httpx via
+        Catalog registration uses
         :meth:`ModelManager.async_register_llm_catalog_entry`, so the
-        event loop stays free during the ``/models/log`` call. That
-        matters when the caller is an async HTTP endpoint on the same
-        pod that also serves ``/models/log`` — a blocking
-        ``requests.post`` in that position would deadlock (the loop
-        needed to accept the callback is the one blocked waiting on
-        it). The MLflow run-open/close step around it is still sync
-        (no first-party async MLflow), but that only briefly blocks
-        the loop and doesn't self-deadlock because MLflow server is a
-        separate service.
+        event loop stays free during the backend call. That matters
+        when the caller is an async HTTP endpoint that also hosts the
+        catalog endpoint — a blocking call in that position would
+        deadlock (the loop needed to accept the callback is the one
+        blocked waiting on it).
+
+        The tracking-run setup around the backend call is still
+        synchronous, but that only briefly blocks the loop and doesn't
+        self-deadlock because the tracking service is separate from
+        the caller.
 
         See the sync version's docstring for rules and return shape.
         """

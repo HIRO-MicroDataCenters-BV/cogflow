@@ -90,26 +90,21 @@ async def make_async_post_request(
     headers: Optional[dict] = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> dict:
-    """Async POST mirror of :func:`make_post_request` (httpx-backed).
+    """Async POST mirror of :func:`make_post_request`.
 
     Exists so callers already inside an ``async def`` can POST without
     blocking the event loop — critical when the target URL resolves back
-    to the same uvicorn worker (``cog-api -> cogflow -> cog-api``). The
-    sync version deadlocks in that loop; this one does not.
+    to the same process serving the caller. The sync version deadlocks
+    in that loop; this one does not.
 
-    Retries 3x with exponential backoff on :class:`httpx.HTTPError` (the
-    ``tenacity`` ``@retry`` decorator works on async functions since
-    tenacity 6.2). Other exception types (e.g. ``json.JSONDecodeError``
-    from a malformed response body) are *not* retried — they're logic
+    Retries up to 3 times with exponential backoff on transport-level
+    HTTP errors. Other exception types (for example, a decoding error
+    on a malformed response body) are *not* retried — they're logic
     errors, not transients.
 
     Note: no ``files=`` support here — async multipart uploads aren't
-    needed today, and adding them means fiddling with ``httpx`` multipart
-    shape, which we can revisit when a caller wants it.
-
-    Body selection mirrors the sync version: ``elif data:`` (so an empty
-    dict ``{}`` is treated the same as no body, matching the sync
-    contract).
+    needed today. Body selection matches the sync version: an empty
+    dict ``{}`` is treated the same as no body.
     """
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
