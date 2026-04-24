@@ -164,14 +164,40 @@ jobs:
           echo "Tags: $TAGS"
           echo "Platforms: $PLATFORMS"
 
-      - name: Set up Python
+      # Build context always has a ``dist/`` directory. On the tag-push
+      # path we populate it with the wheel that ``build`` already uploaded
+      # as an artifact — no PyPI round-trip, no CDN race. On the
+      # workflow_dispatch path the ``build`` job was skipped (different
+      # ``if`` gate) so no artifact exists; the Dockerfile falls back to
+      # ``pip install cogflow==$VERSION`` from PyPI and the wait step
+      # below handles any lingering propagation.
+      - name: Prepare wheel directory in build context
+        run: mkdir -p docker_image_variants/latest/dist
+
+      - name: Download cogflow wheel from build artifact (tag-push path)
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@v5
+        with:
+          name: cogflow-${{ needs.build.outputs.version }}
+          path: ./docker_image_variants/latest/dist/
+
+      - name: Set up Python (dispatch-only, for PyPI wait)
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
-      - name: Wait for PyPI simple index to list the version
+      - name: Wait for PyPI simple index (dispatch-only)
+        # Tag-push doesn't hit PyPI at all during the image build — the
+        # wheel comes from the artifact downloaded above — so the wait
+        # is only needed on workflow_dispatch, where we rebuild the
+        # image for a version that's already published on PyPI.
+        # ``workflow_dispatch`` targets stable/long-published versions,
+        # so propagation is usually a non-issue, but keep the poll as
+        # a safety net in case someone triggers it seconds after upload.
+        if: github.event_name == 'workflow_dispatch'
         env:
-          VERSION: ${{ github.event.inputs.version || needs.build.outputs.version }}
+          VERSION: ${{ github.event.inputs.version }}
         run: |
           python3 - <<'PY'
           import os, sys, time
@@ -179,17 +205,7 @@ jobs:
           from urllib.error import URLError
 
           version = os.environ["VERSION"]
-          # Check the SIMPLE index (what pip actually uses during install),
-          # not the JSON metadata API. The two are cached separately and the
-          # simple index lags: a version can appear in JSON minutes before
-          # pip can see it. Confirming against the simple index prevents
-          # the docker build from racing with PyPI CDN propagation.
           url = "https://pypi.org/simple/cogflow/"
-          # Match any distribution file for this exact version:
-          #   - wheels (any tag):  "cogflow-<v>-*.whl"      -> prefix "cogflow-<v>-"
-          #   - sdists:            "cogflow-<v>.tar.gz" / .zip -> prefix "cogflow-<v>."
-          # Matching prefixes (not specific filenames) covers future platform-tagged
-          # wheels without needing workflow changes.
           needles = (f"cogflow-{version}-", f"cogflow-{version}.")
 
           attempts = 12  # ~4 minutes total
