@@ -707,11 +707,14 @@ class AsyncServingManager:
     ) -> Dict[str, Any]:
         """Async variant of :meth:`ServingManager.serve_llm`.
 
-        The catalog-registration step (MLflow run + POST /models/log) is
-        synchronous — MLflow's tracking client and the catalog HTTP call
-        both block — so we keep it sync and only make the ISVC create
-        async via :meth:`deploy_llm`. That preserves the sync/async
-        behavioural parity with the existing ``deploy_llm`` pair.
+        The catalog-registration step (MLflow run + POST /models/log)
+        uses a blocking MLflow client and blocking ``requests.post``;
+        we offload it to a worker thread via ``asyncio.to_thread`` so
+        the event loop stays free. This matters when the caller is an
+        async HTTP endpoint on the same pod that also serves
+        ``POST /models/log`` — without the thread offload, the sync
+        POST would block the loop waiting for a response the loop can
+        no longer accept, deadlocking until the 15s timeout × 3 retries.
 
         See the sync version's docstring for rules and return shape.
         """
@@ -772,13 +775,18 @@ class AsyncServingManager:
             isvc_name=isvc_name,
         )
 
-        # Step 3: catalog registration — sync, lazy-imported (same
-        # rationale as the sync path). Uses the real submodule path
-        # rather than ``cogflow.models`` (a _LazyLoader attribute that
-        # isn't resolvable via ``from … import …``).
+        # Step 3: catalog registration — the underlying helper is sync
+        # (MLflow client + requests.post), so we run it on a worker
+        # thread to keep the event loop free. Without this, when the
+        # caller is cog-api itself, the POST /models/log callback lands
+        # on the same pod whose loop is blocked here, and we deadlock
+        # until the 15s × 3 retries give up. Lazy import against the
+        # real submodule path (``cogflow.models`` is a _LazyLoader
+        # attribute that isn't resolvable via ``from … import …``).
         from cogflow.core import models as cogflow_models
 
-        run_id = cogflow_models.register_llm_catalog_entry(
+        run_id = await asyncio.to_thread(
+            cogflow_models.register_llm_catalog_entry,
             served_model_name=served_model_name,
             hf_model_id=hf_model_id,
             user_id=user_id,
