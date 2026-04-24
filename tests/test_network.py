@@ -82,6 +82,148 @@ def test_make_post_request_failure(mocker):
 
 
 # ============================================================
+# Async POST (httpx-backed mirror of make_post_request)
+# ============================================================
+
+
+class FakeAsyncResponse:
+    """Minimal stand-in for httpx.Response — only the surface
+    make_async_post_request touches.
+    """
+
+    def __init__(
+        self,
+        is_success=True,
+        status_code=200,
+        json_data=None,
+        text="",
+    ):
+        self.is_success = is_success
+        self.status_code = status_code
+        self._json_data = json_data or {}
+        self.text = text
+
+    def json(self):
+        return self._json_data
+
+    def raise_for_status(self):
+        # Mirror what httpx.Response.raise_for_status raises on 4xx/5xx
+        # — make_async_post_request only catches httpx.HTTPError.
+        import httpx as _httpx
+
+        request = _httpx.Request("POST", "http://x")
+        response = _httpx.Response(
+            status_code=self.status_code,
+            request=request,
+        )
+        raise _httpx.HTTPStatusError(
+            f"{self.status_code} error", request=request, response=response
+        )
+
+
+class _FakeAsyncClient:
+    """Lightweight stand-in for httpx.AsyncClient used as an async
+    context manager; tests parametrize what .post() returns or raises.
+    """
+
+    def __init__(self, *, post_return=None, post_raises=None, captured=None):
+        self._post_return = post_return
+        self._post_raises = post_raises
+        self._captured = captured if captured is not None else []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+    async def post(self, url, **kwargs):
+        self._captured.append({"url": url, **kwargs})
+        if self._post_raises is not None:
+            raise self._post_raises
+        return self._post_return
+
+
+@pytest.mark.asyncio
+async def test_make_async_post_request_success_with_json(mocker):
+    captured = []
+    response = FakeAsyncResponse(is_success=True, json_data={"a": 1})
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            post_return=response, captured=captured
+        ),
+    )
+
+    result = await network.make_async_post_request(
+        url="http://x",
+        data={"x": 1},
+    )
+    assert result == {"a": 1}
+    # Match sync semantics: dict body sent as JSON.
+    assert captured[0]["json"] == {"x": 1}
+
+
+@pytest.mark.asyncio
+async def test_make_async_post_request_no_body(mocker):
+    """Empty / None data should send no JSON body — mirrors sync."""
+    captured = []
+    response = FakeAsyncResponse(is_success=True, json_data={})
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            post_return=response, captured=captured
+        ),
+    )
+
+    await network.make_async_post_request(url="http://x")
+    assert "json" not in captured[0]
+
+
+@pytest.mark.asyncio
+async def test_make_async_post_request_retries_then_raises(mocker):
+    """4xx response triggers raise_for_status -> httpx.HTTPError ->
+    tenacity retries up to 3x then re-raises as RetryError."""
+    captured = []
+    response = FakeAsyncResponse(is_success=False, status_code=400, text="bad")
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            post_return=response, captured=captured
+        ),
+    )
+
+    with pytest.raises(RetryError):
+        await network.make_async_post_request(url="http://x")
+    assert len(captured) == 3  # stop_after_attempt(3)
+
+
+@pytest.mark.asyncio
+async def test_make_async_post_request_does_not_retry_logic_errors(mocker):
+    """Non-httpx errors (e.g. JSON decode) should NOT be retried —
+    they're logic errors, not transients. Verifies the
+    retry_if_exception_type(httpx.HTTPError) restriction."""
+    captured = []
+
+    class _BoomResponse(FakeAsyncResponse):
+        def json(self):
+            raise ValueError("not json")
+
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            post_return=_BoomResponse(is_success=True),
+            captured=captured,
+        ),
+    )
+
+    with pytest.raises(ValueError):
+        await network.make_async_post_request(url="http://x", data={"a": 1})
+    # Single attempt — no retry on non-httpx errors.
+    assert len(captured) == 1
+
+
+# ============================================================
 # GET
 # ============================================================
 

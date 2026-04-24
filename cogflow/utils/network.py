@@ -8,7 +8,12 @@ validating URIs, handling UUID conversions, and serializing datetime objects.
 from typing import List, Optional, Union
 import httpx
 import requests
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from .logging import get_logger
 
@@ -69,7 +74,15 @@ def make_post_request(
         raise
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    # Restrict to httpx errors so a JSON decode bug (or similar logic
+    # error in the response body) fails fast instead of being retried
+    # 3x. The sync make_post_request is bare-@retry by historical
+    # accident; we don't change it here to keep the diff scoped.
+    retry=retry_if_exception_type(httpx.HTTPError),
+)
 async def make_async_post_request(
     url: str,
     data: Optional[dict] = None,
@@ -86,15 +99,21 @@ async def make_async_post_request(
 
     Retries 3x with exponential backoff on :class:`httpx.HTTPError` (the
     ``tenacity`` ``@retry`` decorator works on async functions since
-    tenacity 6.2).
+    tenacity 6.2). Other exception types (e.g. ``json.JSONDecodeError``
+    from a malformed response body) are *not* retried — they're logic
+    errors, not transients.
 
     Note: no ``files=`` support here — async multipart uploads aren't
     needed today, and adding them means fiddling with ``httpx`` multipart
     shape, which we can revisit when a caller wants it.
+
+    Body selection mirrors the sync version: ``elif data:`` (so an empty
+    dict ``{}`` is treated the same as no body, matching the sync
+    contract).
     """
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
-            if data is not None:
+            if data:
                 response = await client.post(
                     url, json=data, params=params, headers=headers
                 )

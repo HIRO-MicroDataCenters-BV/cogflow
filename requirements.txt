@@ -6,3 +6,4 @@ pylint==3.2.6
 pycodestyle==2.12.1
 kafka-python==2.0.2
 psutil==5.9.5
+httpx>=0.25,<1
