@@ -19,6 +19,7 @@ Depends ONLY on:
 
 from __future__ import annotations
 
+import asyncio
 import io
 from typing import Mapping, List, Optional
 from uuid import UUID
@@ -33,6 +34,10 @@ from ...utils.network import (
     make_post_request,
     make_patch_request,
     make_get_request_raw,
+    make_async_get_request,
+    make_async_post_request,
+    make_async_patch_request,
+    make_async_get_request_raw,
 )
 from ...utils.exceptions import (
     CogflowErrorHandler,
@@ -237,6 +242,111 @@ def register_component(
     try:
         url = f"{endpoint}?creator={creator}" if creator else endpoint
         resp = make_post_request(url, data=payload, headers=headers, timeout=time_out)
+        return resp.get("data")
+    except Exception as exc:
+        raise CogflowComponentRegistryError(
+            f"Failed creating component '{component_name}'"
+        ) from exc
+
+
+# ============================================================================
+
+
+async def async_register_component(
+    *,
+    name: str = None,
+    yaml_path: str = None,
+    yaml_data: str = None,
+    bucket_name: str = None,
+    category: str = None,
+    creator: str = None,
+    overwrite: bool = False,
+):
+    """Async mirror of :func:`register_component`.
+
+    Same return value, validation, and registry semantics. The
+    registry GET / POST / PATCH calls go through the async network
+    helpers so the event loop stays free during the round-trip. The
+    synchronous prelude — YAML parse + MinIO upload — runs inside
+    ``asyncio.to_thread`` because the MinIO client is sync; that part
+    still consumes a worker thread but doesn't block the event loop.
+    """
+    creator = creator or common.get_current_user()
+    bucket_name = bucket_name or config.COMPONENTS_BUCKET_NAME
+    time_out = config.TIME_OUT
+
+    parsed = parse_component_yaml(yaml_path=yaml_path, yaml_data=yaml_data)
+    component_name = name or parsed["name"]
+    if not component_name:
+        raise CogflowComponentValidationError("Component name missing in YAML.")
+
+    try:
+        if yaml_data:
+            data_bytes = yaml_data.encode("utf-8")
+        else:
+            with open(yaml_path, "rb") as f:
+                data_bytes = f.read()
+    except Exception as exc:
+        raise CogflowComponentValidationError("Failed reading YAML.") from exc
+
+    object_name = f"{component_name.replace(' ', '_')}.yaml"
+
+    # MinIO client is sync — offload the upload to a worker thread.
+    s3_url = await asyncio.to_thread(
+        _upload_yaml_to_minio,
+        bucket_name=bucket_name,
+        object_name=object_name,
+        data_bytes=data_bytes,
+        overwrite=True,
+    )
+
+    base_api = config.API_PATH.rstrip("/")
+    comp = config.COMPONENTS.lstrip("/")
+    endpoint = f"{base_api}/{comp}"
+
+    payload = {
+        "name": component_name,
+        "input_path": parsed["inputs"],
+        "output_path": parsed["outputs"],
+        "component_file": s3_url,
+        "category": category,
+    }
+    headers = {"Content-Type": "application/json"}
+
+    check_url = f"{endpoint}?name={component_name}"
+    try:
+        resp = await make_async_get_request_raw(check_url, timeout=time_out)
+        if resp is None:
+            existing = []
+        else:
+            existing = resp.get("data", [])
+    except Exception:
+        raise CogflowComponentRegistryError(
+            f"Failed checking registry for '{component_name}'"
+        )
+
+    if existing:
+        if not overwrite:
+            raise CogflowComponentValidationError(
+                f"Component '{component_name}' already exists; overwrite=False."
+            )
+
+        try:
+            url = f"{endpoint}?creator={creator}" if creator else endpoint
+            resp = await make_async_patch_request(
+                url, data=payload, headers=headers, timeout=time_out
+            )
+            return resp.get("data")
+        except Exception as exc:
+            raise CogflowComponentRegistryError(
+                f"Failed updating component '{component_name}'"
+            ) from exc
+
+    try:
+        url = f"{endpoint}?creator={creator}" if creator else endpoint
+        resp = await make_async_post_request(
+            url, data=payload, headers=headers, timeout=time_out
+        )
         return resp.get("data")
     except Exception as exc:
         raise CogflowComponentRegistryError(

@@ -346,6 +346,145 @@ class DatasetManager:
         logger.info("Dataset file deleted successfully (dataset_id=%s)", dataset_id)
         return True
 
+    async def async_get_dataset(self, dataset_id: Union[str, UUID]):
+        """Async mirror of :meth:`get_dataset`.
+
+        Same UUID validation, request shape, and response handling as
+        the sync variant. Uses :func:`network.make_async_get_request`
+        so a caller already inside an ``async def`` doesn't block the
+        event loop on the round-trip.
+        """
+        try:
+            dataset_id = common.normalize_uuid(dataset_id)
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Invalid dataset_id '{dataset_id}'",
+                raise_as=CogflowValidationError,
+                re_raise=True,
+            )
+
+        headers = {"kubeflow-userid": common.get_current_user()}
+
+        resp = None
+        try:
+            logger.info("Fetching dataset metadata for ID=%s", dataset_id)
+
+            resp = await network.make_async_get_request(
+                url=self.base_url,
+                path_params=dataset_id,
+                headers=headers,
+            )
+
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Failed to fetch dataset '{dataset_id}'",
+                raise_as=CogflowConnectionError,
+                re_raise=True,
+            )
+
+        if not isinstance(resp, dict):
+            raise CogflowArtifactError(
+                f"Unexpected API response format for dataset '{dataset_id}': {type(resp)}"
+            )
+
+        if "data" not in resp:
+            raise CogflowArtifactError(
+                f"Dataset API returned no 'data' field for dataset '{dataset_id}'"
+            )
+
+        data = resp.get("data")
+
+        if not data:
+            CogflowErrorHandler.log_and_raise(
+                f"Dataset '{dataset_id}' not found or returned empty data",
+                raise_as=CogflowDatasetError,
+            )
+
+        logger.info("Successfully retrieved dataset '%s'", dataset_id)
+        return data
+
+    async def async_get_prometheus_dataset(self, dataset_id: Union[str, UUID]):
+        """Async mirror of :meth:`get_prometheus_dataset`."""
+        try:
+            dataset_id = common.normalize_uuid(dataset_id)
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Invalid dataset_id '{dataset_id}'",
+                raise_as=CogflowArtifactError,
+                re_raise=True,
+            )
+
+        url = f"{self.base_url}/{dataset_id}/prometheus"
+        headers = {"kubeflow-userid": common.get_current_user()}
+
+        resp = None
+        try:
+            logger.info("Fetching Prometheus dataset for ID=%s", dataset_id)
+
+            resp = await network.make_async_get_request(
+                url=url,
+                headers=headers,
+            )
+
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Failed to fetch Prometheus dataset '{dataset_id}'",
+                raise_as=CogflowConnectionError,
+                re_raise=True,
+            )
+
+        if not isinstance(resp, dict):
+            raise CogflowArtifactError(
+                f"Unexpected API response format for Prometheus dataset '{dataset_id}'"
+            )
+
+        if "data" not in resp:
+            raise CogflowArtifactError(
+                f"Prometheus dataset API returned no 'data' field for dataset '{dataset_id}'"
+            )
+
+        data = resp.get("data")
+
+        if not data:
+            CogflowErrorHandler.log_and_raise(
+                f"Prometheus dataset '{dataset_id}' returned empty 'data'",
+                raise_as=CogflowDatasetError,
+            )
+        logger.info("Successfully retrieved Prometheus dataset '%s'", dataset_id)
+        return data
+
+    async def async_delete_dataset(self, dataset_id: Union[str, UUID]) -> bool:
+        """Async mirror of :meth:`delete_dataset`."""
+        try:
+            dataset_id = common.normalize_uuid(dataset_id)
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Invalid dataset_id '{dataset_id}'",
+                raise_as=CogflowValidationError,
+                re_raise=True,
+            )
+
+        url = f"{self.base_url}/{dataset_id}/file"
+        headers = {"kubeflow-userid": common.get_current_user()}
+
+        try:
+            await network.make_async_delete_request(url=url, headers=headers)
+        except Exception as e:
+            CogflowErrorHandler.handle_exception(
+                e,
+                context=f"Failed to delete dataset file '{dataset_id}'",
+                raise_as=CogflowConnectionError,
+                re_raise=True,
+            )
+
+        logger.info("Dataset file deleted successfully (dataset_id=%s)", dataset_id)
+        return True
+
     def download_dataset(
         self,
         dataset_id: Union[str, UUID],
