@@ -3,6 +3,18 @@ CogFlow Network Utilities
 
 Provides standardized helpers for making HTTP/HTTPS API requests,
 validating URIs, handling UUID conversions, and serializing datetime objects.
+
+Two parallel surfaces live here:
+
+- The original sync helpers (``make_post_request``, ``make_get_request``,
+  ``make_delete_request``, ``make_patch_request``, ``make_get_request_stream``,
+  ``make_get_request_raw``, ``make_health_check_request``) use ``requests``.
+- The ``make_async_*`` variants use ``httpx.AsyncClient`` so callers
+  already inside an ``async def`` can issue the same requests without
+  blocking the event loop. Tenacity's ``@retry`` decorator works for
+  both sync and async functions — the async variants are retried
+  asynchronously, with the same backoff parameters as their sync
+  counterparts.
 """
 
 from typing import List, Optional, Union
@@ -113,14 +125,10 @@ async def make_async_post_request(
                     url, json=data, params=params, headers=headers
                 )
             else:
-                response = await client.post(
-                    url, params=params, headers=headers
-                )
+                response = await client.post(url, params=params, headers=headers)
 
         if response.is_success:
-            logger.info(
-                "POST %s succeeded with status %s", url, response.status_code
-            )
+            logger.info("POST %s succeeded with status %s", url, response.status_code)
             return response.json()
 
         logger.warning(
@@ -134,6 +142,226 @@ async def make_async_post_request(
     except httpx.HTTPError as exp:
         logger.exception("Error making async POST request to %s: %s", url, exp)
         raise
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(httpx.HTTPError),
+)
+async def make_async_get_request(
+    url: str,
+    path_params: Optional[str] = None,
+    query_params: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: int = DEFAULT_TIMEOUT,
+    paginate: bool = False,
+) -> Union[dict, List[dict]]:
+    """Async GET mirror of :func:`make_get_request`.
+
+    Same pagination semantics as the sync version. Retries on
+    httpx-level transport errors only (decode bugs in the response
+    body fall through to the caller).
+    """
+    full_url = (
+        f"{url.rstrip('/')}/{str(path_params).lstrip('/')}" if path_params else url
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if not paginate:
+                response = await client.get(
+                    full_url, params=query_params, headers=headers
+                )
+                if response.is_success:
+                    logger.info(
+                        "GET %s succeeded with status %s",
+                        full_url,
+                        response.status_code,
+                    )
+                    return response.json()
+
+                logger.warning(
+                    "GET %s failed: %s - %s",
+                    full_url,
+                    response.status_code,
+                    response.text[:200],
+                )
+                # Match sync version: pagination falls through on a
+                # non-OK first page so the caller can still observe
+                # whatever partial pages do come back.
+
+            # Pagination mode
+            all_data: List[dict] = []
+            page = 1
+            limit = (query_params or {}).get("limit", 10)
+
+            while True:
+                page_params = dict(query_params or {})
+                page_params.update({"page": page, "limit": limit})
+
+                response = await client.get(
+                    full_url, params=page_params, headers=headers
+                )
+                if not response.is_success:
+                    logger.warning("GET pagination failed on page %s", page)
+                    break
+
+                payload = response.json()
+                data = payload.get("data", [])
+                all_data.extend(data)
+
+                pagination = payload.get("pagination", {})
+                total = pagination.get("total_items", len(data))
+
+                if len(all_data) >= total:
+                    break
+                page += 1
+
+        logger.info("GET %s completed with %s total items.", full_url, len(all_data))
+        return all_data
+
+    except httpx.HTTPError as exp:
+        logger.exception("Error making async GET request to %s: %s", url, exp)
+        raise
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(httpx.HTTPError),
+)
+async def make_async_delete_request(
+    url: str,
+    path_params: Optional[str] = None,
+    query_params: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> bool:
+    """Async DELETE mirror of :func:`make_delete_request`.
+
+    Success is determined solely by HTTP status; 204 No Content is
+    treated as success.
+    """
+    full_url = f"{url.rstrip('/')}/{path_params}" if path_params else url
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.delete(
+                full_url, params=query_params, headers=headers
+            )
+
+        if response.status_code in (200, 202, 204):
+            logger.info(
+                "DELETE %s succeeded with status %s",
+                full_url,
+                response.status_code,
+            )
+            return True
+
+        logger.warning(
+            "DELETE %s failed: %s - %s",
+            full_url,
+            response.status_code,
+            response.text[:200],
+        )
+        response.raise_for_status()
+        return False
+
+    except httpx.HTTPError as exp:
+        logger.exception("Error making async DELETE request to %s: %s", url, exp)
+        raise
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(httpx.HTTPError),
+)
+async def make_async_patch_request(
+    url: str,
+    data: Optional[dict] = None,
+    params: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> dict:
+    """Async PATCH mirror of :func:`make_patch_request`."""
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if data:
+                response = await client.patch(
+                    url, json=data, params=params, headers=headers
+                )
+            else:
+                response = await client.patch(url, params=params, headers=headers)
+
+        if response.is_success:
+            logger.info("PATCH %s succeeded with status %s", url, response.status_code)
+            return response.json()
+
+        logger.warning(
+            "PATCH %s failed: %s - %s",
+            url,
+            response.status_code,
+            response.text[:200],
+        )
+        response.raise_for_status()
+
+    except httpx.HTTPError as exp:
+        logger.exception("Error making async PATCH request to %s: %s", url, exp)
+        raise
+
+
+async def make_async_get_request_raw(
+    url: str,
+    params: Optional[dict] = None,
+    headers: Optional[dict] = None,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> Optional[dict]:
+    """Async raw-GET mirror of :func:`make_get_request_raw`.
+
+    Returns the parsed JSON body or ``None`` on transport failure —
+    same behaviour as the sync version (which returns the parsed JSON
+    on success and ``None`` on transport failure, despite the
+    ``Response`` annotation in the original docstring).
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, params=params, headers=headers)
+        return response.json()
+    except httpx.HTTPError as exp:
+        logger.exception("Async raw GET failed for %s: %s", url, exp)
+        return None
+
+
+async def make_async_health_check_request(
+    url: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    headers: Optional[dict] = None,
+) -> bool:
+    """Async health-check mirror of :func:`make_health_check_request`.
+
+    No JSON expected. Treats any 2xx response as success. Doesn't
+    retry — health checks are meant to fail fast.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, headers=headers)
+
+        if 200 <= response.status_code < 300:
+            logger.info("Health check to %s succeeded (%s).", url, response.status_code)
+            return True
+
+        logger.warning(
+            "Health check to %s failed (%s): %s",
+            url,
+            response.status_code,
+            response.text[:200],
+        )
+        return False
+
+    except httpx.HTTPError as exp:
+        logger.exception("Async health check request to %s failed: %s", url, exp)
+        return False
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))

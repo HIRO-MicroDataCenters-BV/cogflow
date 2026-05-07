@@ -123,12 +123,34 @@ class FakeAsyncResponse:
 
 class _FakeAsyncClient:
     """Lightweight stand-in for httpx.AsyncClient used as an async
-    context manager; tests parametrize what .post() returns or raises.
+    context manager. Each verb (.post/.get/.delete/.patch) takes either
+    a return value or an exception to raise; ``.responses`` lets a test
+    return different responses per successive call.
     """
 
-    def __init__(self, *, post_return=None, post_raises=None, captured=None):
+    def __init__(
+        self,
+        *,
+        post_return=None,
+        post_raises=None,
+        get_return=None,
+        get_responses=None,
+        get_raises=None,
+        delete_return=None,
+        delete_raises=None,
+        patch_return=None,
+        patch_raises=None,
+        captured=None,
+    ):
         self._post_return = post_return
         self._post_raises = post_raises
+        self._get_return = get_return
+        self._get_responses = list(get_responses) if get_responses else None
+        self._get_raises = get_raises
+        self._delete_return = delete_return
+        self._delete_raises = delete_raises
+        self._patch_return = patch_return
+        self._patch_raises = patch_raises
         self._captured = captured if captured is not None else []
 
     async def __aenter__(self):
@@ -138,10 +160,30 @@ class _FakeAsyncClient:
         return False
 
     async def post(self, url, **kwargs):
-        self._captured.append({"url": url, **kwargs})
+        self._captured.append({"verb": "post", "url": url, **kwargs})
         if self._post_raises is not None:
             raise self._post_raises
         return self._post_return
+
+    async def get(self, url, **kwargs):
+        self._captured.append({"verb": "get", "url": url, **kwargs})
+        if self._get_raises is not None:
+            raise self._get_raises
+        if self._get_responses:
+            return self._get_responses.pop(0)
+        return self._get_return
+
+    async def delete(self, url, **kwargs):
+        self._captured.append({"verb": "delete", "url": url, **kwargs})
+        if self._delete_raises is not None:
+            raise self._delete_raises
+        return self._delete_return
+
+    async def patch(self, url, **kwargs):
+        self._captured.append({"verb": "patch", "url": url, **kwargs})
+        if self._patch_raises is not None:
+            raise self._patch_raises
+        return self._patch_return
 
 
 @pytest.mark.asyncio
@@ -429,3 +471,177 @@ def test_make_health_check_request_exception(mocker):
     )
 
     assert network.make_health_check_request("http://x") is False
+
+
+# ============================================================
+# Async GET / DELETE / PATCH / raw / health (httpx-backed mirrors)
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_make_async_get_request_success(mocker):
+    captured = []
+    response = FakeAsyncResponse(is_success=True, json_data={"v": 1})
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            get_return=response, captured=captured
+        ),
+    )
+    assert await network.make_async_get_request("http://x") == {"v": 1}
+    assert captured[0]["verb"] == "get"
+
+
+@pytest.mark.asyncio
+async def test_make_async_get_request_with_path_params(mocker):
+    captured = []
+    response = FakeAsyncResponse(is_success=True, json_data={})
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            get_return=response, captured=captured
+        ),
+    )
+    await network.make_async_get_request("http://x", path_params="123")
+    assert captured[0]["url"] == "http://x/123"
+
+
+@pytest.mark.asyncio
+async def test_make_async_get_request_pagination(mocker):
+    """Two pages, second is the final — total_items=2, two items each, stops."""
+    captured = []
+    page1 = FakeAsyncResponse(
+        is_success=True,
+        json_data={
+            "data": [{"id": 1}, {"id": 2}],
+            "pagination": {"total_items": 4},
+        },
+    )
+    page2 = FakeAsyncResponse(
+        is_success=True,
+        json_data={
+            "data": [{"id": 3}, {"id": 4}],
+            "pagination": {"total_items": 4},
+        },
+    )
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            get_responses=[page1, page2], captured=captured
+        ),
+    )
+    result = await network.make_async_get_request(
+        "http://x", query_params={"limit": 2}, paginate=True
+    )
+    assert result == [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
+    # Second request should carry page=2.
+    assert captured[1]["params"]["page"] == 2
+
+
+@pytest.mark.parametrize("status", [200, 202, 204])
+@pytest.mark.asyncio
+async def test_make_async_delete_request_success(mocker, status):
+    captured = []
+    response = FakeAsyncResponse(is_success=True, status_code=status)
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            delete_return=response, captured=captured
+        ),
+    )
+    assert await network.make_async_delete_request("http://x") is True
+
+
+@pytest.mark.asyncio
+async def test_make_async_delete_request_failure(mocker):
+    response = FakeAsyncResponse(is_success=False, status_code=500, text="bad")
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(delete_return=response),
+    )
+    with pytest.raises(RetryError):
+        await network.make_async_delete_request("http://x")
+
+
+@pytest.mark.asyncio
+async def test_make_async_patch_request_success(mocker):
+    captured = []
+    response = FakeAsyncResponse(is_success=True, json_data={"updated": True})
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            patch_return=response, captured=captured
+        ),
+    )
+    result = await network.make_async_patch_request("http://x", data={"a": 1})
+    assert result == {"updated": True}
+    assert captured[0]["json"] == {"a": 1}
+
+
+@pytest.mark.asyncio
+async def test_make_async_patch_request_failure(mocker):
+    response = FakeAsyncResponse(is_success=False, status_code=400, text="bad")
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(patch_return=response),
+    )
+    with pytest.raises(RetryError):
+        await network.make_async_patch_request("http://x", data={})
+
+
+@pytest.mark.asyncio
+async def test_make_async_get_request_raw_success(mocker):
+    response = FakeAsyncResponse(is_success=True, json_data={"raw": True})
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(get_return=response),
+    )
+    assert await network.make_async_get_request_raw("http://x") == {"raw": True}
+
+
+@pytest.mark.asyncio
+async def test_make_async_get_request_raw_failure(mocker):
+    """Same shape as the sync raw helper: transport error → None."""
+    import httpx as _httpx
+
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            get_raises=_httpx.ConnectError("boom")
+        ),
+    )
+    assert await network.make_async_get_request_raw("http://x") is None
+
+
+@pytest.mark.asyncio
+async def test_make_async_health_check_request_success(mocker):
+    response = FakeAsyncResponse(is_success=True, status_code=200)
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(get_return=response),
+    )
+    assert await network.make_async_health_check_request("http://x") is True
+
+
+@pytest.mark.asyncio
+async def test_make_async_health_check_request_non_2xx(mocker):
+    response = FakeAsyncResponse(is_success=False, status_code=500, text="bad")
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(get_return=response),
+    )
+    assert await network.make_async_health_check_request("http://x") is False
+
+
+@pytest.mark.asyncio
+async def test_make_async_health_check_request_exception(mocker):
+    """Health check is meant to fail fast — no retry, just False."""
+    import httpx as _httpx
+
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=lambda **_: _FakeAsyncClient(
+            get_raises=_httpx.ConnectError("boom")
+        ),
+    )
+    assert await network.make_async_health_check_request("http://x") is False
