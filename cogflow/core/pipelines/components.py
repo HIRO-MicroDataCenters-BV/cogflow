@@ -34,7 +34,6 @@ from ...utils.network import (
     make_post_request,
     make_patch_request,
     make_get_request_raw,
-    make_async_get_request,
     make_async_post_request,
     make_async_patch_request,
     make_async_get_request_raw,
@@ -267,9 +266,10 @@ async def async_register_component(
     Same return value, validation, and registry semantics. The
     registry GET / POST / PATCH calls go through the async network
     helpers so the event loop stays free during the round-trip. The
-    synchronous prelude — YAML parse + MinIO upload — runs inside
-    ``asyncio.to_thread`` because the MinIO client is sync; that part
-    still consumes a worker thread but doesn't block the event loop.
+    MinIO upload step runs sync inside ``asyncio.to_thread`` because
+    the MinIO client has no async API; the rest of the sync prelude
+    (YAML parse + reading bytes from disk when ``yaml_path`` is given)
+    stays on the event loop because it's CPU-cheap and short.
     """
     creator = creator or common.get_current_user()
     bucket_name = bucket_name or config.COMPONENTS_BUCKET_NAME
@@ -316,14 +316,21 @@ async def async_register_component(
     check_url = f"{endpoint}?name={component_name}"
     try:
         resp = await make_async_get_request_raw(check_url, timeout=time_out)
-        if resp is None:
-            existing = []
-        else:
-            existing = resp.get("data", [])
     except Exception:
         raise CogflowComponentRegistryError(
             f"Failed checking registry for '{component_name}'"
         )
+
+    # make_async_get_request_raw returns None on transport failure;
+    # don't silently treat that as "no existing component", or an
+    # intermittent registry outage could re-create a record that
+    # already exists when overwrite=True.
+    if resp is None:
+        raise CogflowComponentRegistryError(
+            f"Failed checking registry for '{component_name}'"
+        )
+
+    existing = resp.get("data", [])
 
     if existing:
         if not overwrite:

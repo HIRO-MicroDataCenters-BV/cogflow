@@ -97,8 +97,14 @@ class FakeAsyncResponse:
         status_code=200,
         json_data=None,
         text="",
+        is_error=None,
     ):
         self.is_success = is_success
+        # Mirror httpx.Response: is_error is True for 4xx/5xx, False
+        # for 1xx/2xx/3xx. Default to the inverse of is_success so
+        # existing test fixtures keep working; explicit override lets
+        # tests cover 3xx-style cases where neither flag is set.
+        self.is_error = (not is_success) if is_error is None else is_error
         self.status_code = status_code
         self._json_data = json_data or {}
         self.text = text
@@ -645,3 +651,43 @@ async def test_make_async_health_check_request_exception(mocker):
         ),
     )
     assert await network.make_async_health_check_request("http://x") is False
+
+
+@pytest.mark.asyncio
+async def test_async_clients_follow_redirects(mocker):
+    """All async helpers must instantiate httpx.AsyncClient with
+    follow_redirects=True so 3xx responses are followed transparently,
+    matching the sync `requests` default. Without this the async path
+    diverges silently on any HTTP→HTTPS hop or trailing-slash redirect.
+    """
+    captured_kwargs = []
+
+    response = FakeAsyncResponse(is_success=True, json_data={"ok": True})
+
+    def _client_factory(**kwargs):
+        captured_kwargs.append(kwargs)
+        return _FakeAsyncClient(
+            post_return=response,
+            get_return=response,
+            delete_return=FakeAsyncResponse(is_success=True, status_code=204),
+            patch_return=response,
+        )
+
+    mocker.patch(
+        "cogflow.utils.network.httpx.AsyncClient",
+        side_effect=_client_factory,
+    )
+
+    await network.make_async_post_request(url="http://x", data={"a": 1})
+    await network.make_async_get_request(url="http://x")
+    await network.make_async_delete_request(url="http://x", path_params="1")
+    await network.make_async_patch_request(url="http://x", data={"a": 1})
+    await network.make_async_get_request_raw(url="http://x")
+    await network.make_async_health_check_request(url="http://x")
+
+    assert len(captured_kwargs) == 6
+    for kw in captured_kwargs:
+        assert kw.get("follow_redirects") is True, (
+            "AsyncClient must be instantiated with follow_redirects=True "
+            "to match sync requests default; got: " + repr(kw)
+        )

@@ -119,7 +119,7 @@ async def make_async_post_request(
     dict ``{}`` is treated the same as no body.
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             if data:
                 response = await client.post(
                     url, json=data, params=params, headers=headers
@@ -127,7 +127,7 @@ async def make_async_post_request(
             else:
                 response = await client.post(url, params=params, headers=headers)
 
-        if response.is_success:
+        if not response.is_error:
             logger.info("POST %s succeeded with status %s", url, response.status_code)
             return response.json()
 
@@ -168,12 +168,12 @@ async def make_async_get_request(
     )
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             if not paginate:
                 response = await client.get(
                     full_url, params=query_params, headers=headers
                 )
-                if response.is_success:
+                if not response.is_error:
                     logger.info(
                         "GET %s succeeded with status %s",
                         full_url,
@@ -203,7 +203,7 @@ async def make_async_get_request(
                 response = await client.get(
                     full_url, params=page_params, headers=headers
                 )
-                if not response.is_success:
+                if response.is_error:
                     logger.warning("GET pagination failed on page %s", page)
                     break
 
@@ -245,7 +245,7 @@ async def make_async_delete_request(
     """
     full_url = f"{url.rstrip('/')}/{path_params}" if path_params else url
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await client.delete(
                 full_url, params=query_params, headers=headers
             )
@@ -286,7 +286,7 @@ async def make_async_patch_request(
 ) -> dict:
     """Async PATCH mirror of :func:`make_patch_request`."""
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             if data:
                 response = await client.patch(
                     url, json=data, params=params, headers=headers
@@ -294,7 +294,7 @@ async def make_async_patch_request(
             else:
                 response = await client.patch(url, params=params, headers=headers)
 
-        if response.is_success:
+        if not response.is_error:
             logger.info("PATCH %s succeeded with status %s", url, response.status_code)
             return response.json()
 
@@ -325,7 +325,7 @@ async def make_async_get_request_raw(
     ``Response`` annotation in the original docstring).
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await client.get(url, params=params, headers=headers)
         return response.json()
     except httpx.HTTPError as exp:
@@ -344,7 +344,7 @@ async def make_async_health_check_request(
     retry — health checks are meant to fail fast.
     """
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             response = await client.get(url, headers=headers)
 
         if 200 <= response.status_code < 300:
