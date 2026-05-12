@@ -208,3 +208,79 @@ def test_download_dataset_network_error(mocker, manager):
 
     with pytest.raises(CogflowConnectionError):
         manager.download_dataset("uuid")
+
+
+# ============================================================
+# Async dataset operations
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_async_get_dataset_success(mocker, manager):
+    mocker.patch("cogflow.utils.common.normalize_uuid", return_value="uuid")
+    mocker.patch("cogflow.utils.common.get_current_user", return_value="user")
+
+    async def fake(*_a, **_kw):
+        return {"data": {"id": "uuid"}}
+
+    mocker.patch("cogflow.utils.network.make_async_get_request", side_effect=fake)
+    result = await manager.async_get_dataset("uuid")
+    assert result["id"] == "uuid"
+
+
+@pytest.mark.asyncio
+async def test_async_get_dataset_network_error(mocker, manager):
+    mocker.patch("cogflow.utils.common.normalize_uuid", return_value="uuid")
+
+    async def fake(*_a, **_kw):
+        raise Exception("network")
+
+    mocker.patch("cogflow.utils.network.make_async_get_request", side_effect=fake)
+    with pytest.raises(CogflowConnectionError):
+        await manager.async_get_dataset("uuid")
+
+
+@pytest.mark.asyncio
+async def test_async_get_prometheus_dataset_success(mocker, manager):
+    mocker.patch("cogflow.utils.common.normalize_uuid", return_value="uuid")
+    mocker.patch("cogflow.utils.common.get_current_user", return_value="user")
+
+    async def fake(*_a, **_kw):
+        return {"data": {"metric": 42}}
+
+    mocker.patch("cogflow.utils.network.make_async_get_request", side_effect=fake)
+    result = await manager.async_get_prometheus_dataset("uuid")
+    assert result["metric"] == 42
+
+
+@pytest.mark.asyncio
+async def test_async_get_prometheus_dataset_empty_data(mocker, manager):
+    mocker.patch("cogflow.utils.common.normalize_uuid", return_value="uuid")
+
+    async def fake(*_a, **_kw):
+        return {"data": None}
+
+    mocker.patch("cogflow.utils.network.make_async_get_request", side_effect=fake)
+    with pytest.raises(CogflowDatasetError):
+        await manager.async_get_prometheus_dataset("uuid")
+
+
+@pytest.mark.asyncio
+async def test_async_delete_dataset_success(mocker, manager):
+    mocker.patch("cogflow.utils.common.normalize_uuid", return_value="uuid")
+
+    async def fake(*_a, **_kw):
+        return True
+
+    mocker.patch("cogflow.utils.network.make_async_delete_request", side_effect=fake)
+    assert await manager.async_delete_dataset("uuid") is True
+
+
+@pytest.mark.asyncio
+async def test_async_delete_dataset_invalid_uuid(mocker, manager):
+    mocker.patch(
+        "cogflow.utils.common.normalize_uuid",
+        side_effect=ValueError("bad uuid"),
+    )
+    with pytest.raises(CogflowValidationError):
+        await manager.async_delete_dataset("bad")

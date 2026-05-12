@@ -226,3 +226,129 @@ def test_download_yaml_from_minio_failure(mocker):
 
     with pytest.raises(CogflowComponentStorageError):
         download_yaml_from_minio("bucket", "file.yaml", "/tmp/file.yaml")
+
+
+# ============================================================
+# async_register_component
+# ============================================================
+
+
+@pytest.mark.asyncio
+async def test_async_register_component_create(mocker):
+    mocker.patch(
+        "cogflow.core.pipelines.components.parse_component_yaml",
+        return_value={"name": "comp", "inputs": [], "outputs": []},
+    )
+    mocker.patch(
+        "cogflow.core.pipelines.components._upload_yaml_to_minio",
+        return_value="s3://bucket/comp.yaml",
+    )
+
+    async def fake_get_raw(*_a, **_kw):
+        return {"data": []}
+
+    async def fake_post(*_a, **_kw):
+        return {"data": {"id": "123"}}
+
+    mocker.patch(
+        "cogflow.core.pipelines.components.make_async_get_request_raw",
+        side_effect=fake_get_raw,
+    )
+    mocker.patch(
+        "cogflow.core.pipelines.components.make_async_post_request",
+        side_effect=fake_post,
+    )
+    mocker.patch("builtins.open", mocker.mock_open(read_data=b"yaml"))
+
+    from cogflow.core.pipelines.components import async_register_component
+
+    result = await async_register_component(yaml_data="name: comp")
+    assert result["id"] == "123"
+
+
+@pytest.mark.asyncio
+async def test_async_register_component_existing_no_overwrite(mocker):
+    mocker.patch(
+        "cogflow.core.pipelines.components.parse_component_yaml",
+        return_value={"name": "comp", "inputs": [], "outputs": []},
+    )
+    mocker.patch(
+        "cogflow.core.pipelines.components._upload_yaml_to_minio",
+        return_value="s3://bucket/comp.yaml",
+    )
+
+    async def fake_get_raw(*_a, **_kw):
+        return {"data": [{"id": "existing"}]}
+
+    mocker.patch(
+        "cogflow.core.pipelines.components.make_async_get_request_raw",
+        side_effect=fake_get_raw,
+    )
+    mocker.patch("builtins.open", mocker.mock_open(read_data=b"yaml"))
+
+    from cogflow.core.pipelines.components import async_register_component
+
+    with pytest.raises(CogflowComponentValidationError):
+        await async_register_component(yaml_data="name: comp", overwrite=False)
+
+
+@pytest.mark.asyncio
+async def test_async_register_component_existing_with_overwrite(mocker):
+    """Overwrite=True path should PATCH and return the registry's data."""
+    mocker.patch(
+        "cogflow.core.pipelines.components.parse_component_yaml",
+        return_value={"name": "comp", "inputs": [], "outputs": []},
+    )
+    mocker.patch(
+        "cogflow.core.pipelines.components._upload_yaml_to_minio",
+        return_value="s3://bucket/comp.yaml",
+    )
+
+    async def fake_get_raw(*_a, **_kw):
+        return {"data": [{"id": "existing"}]}
+
+    async def fake_patch(*_a, **_kw):
+        return {"data": {"id": "existing", "updated": True}}
+
+    mocker.patch(
+        "cogflow.core.pipelines.components.make_async_get_request_raw",
+        side_effect=fake_get_raw,
+    )
+    mocker.patch(
+        "cogflow.core.pipelines.components.make_async_patch_request",
+        side_effect=fake_patch,
+    )
+    mocker.patch("builtins.open", mocker.mock_open(read_data=b"yaml"))
+
+    from cogflow.core.pipelines.components import async_register_component
+
+    result = await async_register_component(yaml_data="name: comp", overwrite=True)
+    assert result["updated"] is True
+
+
+@pytest.mark.asyncio
+async def test_async_register_component_registry_unreachable(mocker):
+    """When the registry check returns None (transport failure) we must
+    NOT silently treat it as 'no existing component'; raise instead."""
+    mocker.patch(
+        "cogflow.core.pipelines.components.parse_component_yaml",
+        return_value={"name": "comp", "inputs": [], "outputs": []},
+    )
+    mocker.patch(
+        "cogflow.core.pipelines.components._upload_yaml_to_minio",
+        return_value="s3://bucket/comp.yaml",
+    )
+
+    async def fake_get_raw(*_a, **_kw):
+        return None
+
+    mocker.patch(
+        "cogflow.core.pipelines.components.make_async_get_request_raw",
+        side_effect=fake_get_raw,
+    )
+    mocker.patch("builtins.open", mocker.mock_open(read_data=b"yaml"))
+
+    from cogflow.core.pipelines.components import async_register_component
+
+    with pytest.raises(CogflowComponentRegistryError):
+        await async_register_component(yaml_data="name: comp")
