@@ -622,11 +622,14 @@ class AsyncServingManager:
             max_replicas=max_replicas,
             hf_secret_name=hf_secret_name,
         )
+        predictor_spec, effective_annotations = (
+            sync_manager_cls._apply_raw_deployment_defaults(predictor_spec, annotations)
+        )
 
         metadata = async_client.V1ObjectMeta(
             name=isvc_name,
             namespace=namespace,
-            annotations=annotations or {},
+            annotations=effective_annotations,
         )
         body = {
             "apiVersion": f"{self.GROUP}/{self.VERSION}",

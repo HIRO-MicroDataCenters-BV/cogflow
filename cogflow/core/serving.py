@@ -862,6 +862,41 @@ class ServingManager:
 
         return predictor
 
+    _DEPLOYMENT_MODE_ANNOTATION = "serving.kserve.io/deploymentMode"
+
+    @staticmethod
+    def _apply_raw_deployment_defaults(
+        predictor: Dict[str, Any],
+        annotations: Optional[Dict[str, str]],
+    ) -> tuple[Dict[str, Any], Dict[str, str]]:
+        """Default LLM ISVCs to RawDeployment + Recreate strategy.
+
+        LLM pods are large, GPU-pinned, and almost always run as a single
+        replica. Knative/Serverless mode requires the new revision to be
+        Ready before the old one is torn down — but on a one-GPU node the
+        new pod can never schedule, so the rollout deadlocks. Defaulting
+        to RawDeployment with ``strategy.type: Recreate`` makes the old
+        pod terminate first, freeing the GPU for the new one. Callers can
+        opt out by passing ``serving.kserve.io/deploymentMode`` themselves
+        in ``annotations`` — caller wins.
+
+        Returns the (possibly augmented) predictor and the merged
+        annotations dict that should land on ``metadata.annotations``.
+        """
+        effective_annotations: Dict[str, Any] = {
+            ServingManager._DEPLOYMENT_MODE_ANNOTATION: "RawDeployment",
+            **(annotations or {}),
+        }
+        # ``deploymentStrategy`` is rejected by the KServe webhook for
+        # Serverless ISVCs, so only inject it when the resolved mode is
+        # RawDeployment.
+        if (
+            effective_annotations.get(ServingManager._DEPLOYMENT_MODE_ANNOTATION)
+            == "RawDeployment"
+        ):
+            predictor = {**predictor, "deploymentStrategy": {"type": "Recreate"}}
+        return predictor, effective_annotations
+
     def deploy_llm(
         self,
         *,
@@ -942,12 +977,15 @@ class ServingManager:
             max_replicas=max_replicas,
             hf_secret_name=hf_secret_name,
         )
+        predictor_spec, effective_annotations = (
+            ServingManager._apply_raw_deployment_defaults(predictor_spec, annotations)
+        )
 
         try:
             metadata = client.V1ObjectMeta(
                 name=isvc_name,
                 namespace=namespace,
-                annotations=annotations or {},
+                annotations=effective_annotations,
             )
             body = {
                 "apiVersion": f"{self.GROUP}/{self.VERSION}",
