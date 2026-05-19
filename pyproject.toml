@@ -77,6 +77,21 @@ docs = [
   "pdoc3>=0.11.0"
 ]
 
+agent = [
+  "langgraph >=0.2,<0.5",
+  "langchain-core >=0.3,<0.4"
+]
+
+agent-langsmith = [
+  "cogflow[agent]",
+  "langsmith>=0.1.0"
+]
+
+agent-otel = [
+  "cogflow[agent]",
+  "openinference-instrumentation-langchain>=0.1.0"
+]
+
 [project.urls]
 Homepage = "https://github.com/HIRO-MicroDataCenters-BV/cogflow"
 Issues = "https://github.com/HIRO-MicroDataCenters-BV/cogflow/issues"
@@ -105,7 +120,21 @@ license-files = ["LICENSE.md", "NOTICE", "kfp/LICENSE"]
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --cov=cogflow --cov-report=term-missing"
-testpaths = ["tests"]
+testpaths = ["tests", "cogflow/agent/tests"]
+
+[tool.ruff]
+# Scoped to the agent submodule only; the rest of cogflow keeps black+autopep8+pylint.
+extend-exclude = ["kfp", "build", "dist"]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+per-file-ignores = { "cogflow/agent/tests/*" = ["B011"] }
+
+[tool.ruff.format]
+quote-style = "double"
 
 [tool.setuptools.dynamic]
 version = {attr = "cogflow.__version__"}

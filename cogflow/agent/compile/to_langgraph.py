@@ -1,0 +1,127 @@
+"""IR -> langgraph.graph.CompiledStateGraph.
+
+Sticky-note nodes are skipped at compile time. Condition / Condition-Agent
+nodes are folded into a ``add_conditional_edges`` registration; their runtime
+callable still runs (so users can read ``_condition_branch`` from state),
+but routing comes from the IR edge fan-out.
+
+For nodes loaded from JSON we don't have a factory instance carrying live
+references to a model or tool callable. Such nodes get a passthrough body —
+useful for structure / round-trip tests. Pass ``factories={node_id: factory}``
+to ``to_langgraph`` to inject live runtime objects.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Callable, Mapping
+
+from langgraph.graph import END, START, StateGraph
+
+from ..ir.model import IRGraph, IRNode
+from ..ir.validate import validate
+from ..nodes import FACTORY_BY_IR_TYPE, NodeFactory
+from ..state import introspect_state, synthesize_typeddict
+from .topo import edges_from
+
+
+_SKIP_TYPES = {"sticky_note"}
+_CONDITION_TYPES = {"condition", "condition_agent"}
+
+
+def _passthrough(_state: Any) -> dict[str, Any]:
+    return {}
+
+
+def _callable_for(node: IRNode, factories: Mapping[str, NodeFactory] | None) -> Callable[..., Any]:
+    if factories and node.id in factories:
+        return factories[node.id].to_callable(node)
+    factory_cls = FACTORY_BY_IR_TYPE.get(node.type)
+    if factory_cls is None:
+        return _passthrough
+    # Instantiate without the kwargs-validating __init__ so JSON-loaded nodes
+    # can supply their (Flowise-shaped) config dict directly.
+    bare = factory_cls.__new__(factory_cls)
+    bare.config = dict(node.config)  # type: ignore[attr-defined]
+    bare._model = None  # type: ignore[attr-defined]
+    bare._tools = []  # type: ignore[attr-defined]
+    bare._fn = None  # type: ignore[attr-defined]
+    bare._rules = node.config.get("conditionItems") or []  # type: ignore[attr-defined]
+    bare._scenarios = node.config.get("conditionAgentScenarios") or []  # type: ignore[attr-defined]
+    return bare.to_callable(node)
+
+
+def _state_schema(graph: IRGraph) -> type:
+    if graph.state:
+        return synthesize_typeddict(graph.state)
+    # Fall back to a TypedDict carrying ``messages`` only.
+    from .. import state as _state_mod  # type: ignore  # noqa: F401
+    return synthesize_typeddict(introspect_state(_state_mod.MessagesState))
+
+
+def to_langgraph(
+    graph: IRGraph,
+    *,
+    factories: Mapping[str, NodeFactory] | None = None,
+    state_schema: type | None = None,
+    checkpointer: Any = None,
+    interrupt_before: list[str] | None = None,
+    interrupt_after: list[str] | None = None,
+):
+    """Compile an IRGraph into a ``CompiledStateGraph``."""
+    validate(graph)
+
+    schema = state_schema or _state_schema(graph)
+    builder = StateGraph(schema)
+
+    runtime_nodes = [n for n in graph.nodes if n.type not in _SKIP_TYPES and n.type != "start"]
+    runtime_ids = {n.id for n in runtime_nodes}
+
+    for node in runtime_nodes:
+        builder.add_node(node.id, _callable_for(node, factories))
+
+    # Entry edge: from START to whatever the start node fans out to (skip the
+    # IR Start node itself; it has no runtime body).
+    start_id = graph.entry
+    if start_id is not None:
+        for e in edges_from(graph, start_id):
+            if e.target in runtime_ids:
+                builder.add_edge(START, e.target)
+
+    # Runtime edges. Condition nodes use add_conditional_edges; everything else
+    # is a plain add_edge.
+    for node in runtime_nodes:
+        outs = [e for e in edges_from(graph, node.id) if e.target in runtime_ids or e.target == start_id]
+        if not outs:
+            builder.add_edge(node.id, END)
+            continue
+
+        if node.type in _CONDITION_TYPES and len(outs) > 1:
+            branch_to_target: dict[str, str] = {}
+            for e in outs:
+                key = e.label or e.target_handle or e.target
+                branch_to_target[key] = e.target
+
+            def router(state: dict[str, Any], _mapping: dict[str, str] = branch_to_target) -> str:
+                branch = state.get("_condition_branch")
+                if isinstance(branch, str) and branch in _mapping:
+                    return _mapping[branch]
+                return next(iter(_mapping.values()))
+
+            builder.add_conditional_edges(node.id, router)
+        else:
+            for e in outs:
+                builder.add_edge(node.id, e.target)
+
+    # Any runtime node with no outgoing edge to a runtime node goes to END.
+    for node in runtime_nodes:
+        if not edges_from(graph, node.id):
+            builder.add_edge(node.id, END)
+
+    return builder.compile(
+        checkpointer=checkpointer,
+        interrupt_before=interrupt_before or [],
+        interrupt_after=interrupt_after or [],
+    )
+
+
+__all__ = ["to_langgraph"]

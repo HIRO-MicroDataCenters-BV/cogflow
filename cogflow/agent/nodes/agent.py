@@ -1,0 +1,59 @@
+"""Agent node — ReAct-style agent loop wrapped as a single node."""
+
+from __future__ import annotations
+
+from typing import Any, Callable, Mapping
+
+from langchain_core.messages import AIMessage, BaseMessage
+
+from ..ir.model import IRNode
+from .base import NodeFactory
+
+
+class AgentFactory(NodeFactory):
+    ir_type = "agent"
+
+    def __init__(
+        self,
+        *,
+        model: Any = None,
+        tools: list[Any] | None = None,
+        messages: list[dict[str, str]] | None = None,
+        enable_memory: bool = True,
+        memory_type: str = "allMessages",
+        return_response_as: str = "userMessage",
+        update_state: list[dict[str, str]] | None = None,
+        **extra: Any,
+    ) -> None:
+        super().__init__(
+            agentModel=model if isinstance(model, str) else "chatOpenAI",
+            agentMessages=messages or "",
+            agentTools="",
+            agentEnableMemory=enable_memory,
+            agentMemoryType=memory_type,
+            agentReturnResponseAs=return_response_as,
+            agentUpdateState=update_state or "",
+            **extra,
+        )
+        self._model = model
+        self._tools = tools or []
+
+    def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
+        model = self._model if not isinstance(self._model, str) else None
+        tools = list(self._tools)
+
+        def agent_node(state: dict[str, Any]) -> dict[str, Any]:
+            if model is None:
+                return {}
+            messages = list(state.get("messages") or [])
+            bound = model.bind_tools(tools) if tools and hasattr(model, "bind_tools") else model
+            response = bound.invoke(messages)
+            if not isinstance(response, BaseMessage):
+                response = AIMessage(content=str(response))
+            return {"messages": [response]}
+
+        return agent_node
+
+
+def agent(**kwargs: Any) -> AgentFactory:
+    return AgentFactory(**kwargs)
