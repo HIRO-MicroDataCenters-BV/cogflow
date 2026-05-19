@@ -89,13 +89,27 @@ def _edge_to_dict(edge: IREdge, graph: IRGraph) -> dict[str, Any]:
     raw = (edge.flowise_provenance or {}).get("edge") if edge.flowise_provenance else None
     if isinstance(raw, dict):
         result = copy.deepcopy(raw)
+        original_source = raw.get("source")
+        original_target = raw.get("target")
         result["id"] = edge.id
         result["source"] = edge.source
         result["target"] = edge.target
+
+        # When source / target were retargeted in IR, the provenance handles
+        # would otherwise point at the old node's anchors. Rebuild them from
+        # the current source / target so the emitted JSON stays internally
+        # consistent (Flowise rejects edges whose handle id doesn't exist on
+        # the referenced node).
         if edge.source_handle is not None:
             result["sourceHandle"] = edge.source_handle
+        elif edge.source != original_source:
+            result["sourceHandle"] = _default_output_handle(graph, edge.source)
+
         if edge.target_handle is not None:
             result["targetHandle"] = edge.target_handle
+        elif edge.target != original_target:
+            result["targetHandle"] = _default_target_handle(edge.target)
+
         # Overlay is_human_input + edgeLabel onto data so IR-side mutations
         # survive re-emission of provenance-carrying edges.
         data = result.setdefault("data", {})
