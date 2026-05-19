@@ -38,13 +38,22 @@ def _synthesize_start_node(graph: IRGraph) -> IRNode:
     for n in graph.nodes:
         if n.type == "start":
             return n
+    # Pick a collision-free id. ``__start__`` is the obvious choice but a user
+    # may already have added a node with that name; probe upward until free.
+    existing_ids = {n.id for n in graph.nodes}
+    candidate = "__start__"
+    suffix = 0
+    while candidate in existing_ids:
+        suffix += 1
+        candidate = f"__start_{suffix}__"
+
     node = IRNode(
-        id="__start__",
+        id=candidate,
         type="start",
         label="Start",
         outputs=[
             IRPort(
-                id="__start__-output-startAgentflow",
+                id=f"{candidate}-output-startAgentflow",
                 name="startAgentflow",
                 label="Start",
                 type="start",

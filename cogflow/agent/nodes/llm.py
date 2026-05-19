@@ -47,10 +47,12 @@ class LLMFactory(NodeFactory):
         return_response_as: str = "assistantMessage",
         **extra: Any,
     ) -> None:
+        # Preserve explicit empty lists. Flowise treats "" (unset) and [] (declared
+        # empty) as different shapes; coercing one to the other breaks round-trip.
         super().__init__(
             llmModel=model if isinstance(model, str) else "chatOpenAI",
-            llmMessages=messages or "",
-            llmUpdateState=update_state or "",
+            llmMessages=messages if messages is not None else "",
+            llmUpdateState=update_state if update_state is not None else "",
             llmReturnResponseAs=return_response_as,
             **extra,
         )

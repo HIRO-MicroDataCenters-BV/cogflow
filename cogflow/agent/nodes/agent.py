@@ -26,14 +26,16 @@ class AgentFactory(NodeFactory):
         update_state: list[dict[str, str]] | None = None,
         **extra: Any,
     ) -> None:
+        # Preserve explicit empty lists. Flowise treats "" (unset) and [] (declared
+        # empty) as different shapes; coercing one to the other breaks round-trip.
         super().__init__(
             agentModel=model if isinstance(model, str) else "chatOpenAI",
-            agentMessages=messages or "",
+            agentMessages=messages if messages is not None else "",
             agentTools="",
             agentEnableMemory=enable_memory,
             agentMemoryType=memory_type,
             agentReturnResponseAs=return_response_as,
-            agentUpdateState=update_state or "",
+            agentUpdateState=update_state if update_state is not None else "",
             **extra,
         )
         self._model = model

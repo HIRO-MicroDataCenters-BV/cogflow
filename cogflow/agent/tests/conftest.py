@@ -14,8 +14,11 @@ from pathlib import Path
 
 import pytest
 
-# Ensure agent SDK deps are available before collecting any tests in this dir.
+# Ensure the full agent SDK dep set is available before collecting any tests
+# in this dir. Both deps come from the ``agent`` extra; skip if either is
+# missing so the suite can never half-collect on a partial install.
 pytest.importorskip("langgraph", reason="cogflow.agent tests require `pip install cogflow[agent]`")
+pytest.importorskip("langchain_core", reason="cogflow.agent tests require `pip install cogflow[agent]`")
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
