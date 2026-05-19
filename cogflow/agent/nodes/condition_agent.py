@@ -49,10 +49,17 @@ class ConditionAgentFactory(NodeFactory):
                 HumanMessage(content="Reply with only the scenario name."),
             ]
             response = model.invoke(prompt)
-            choice = (getattr(response, "content", "") or "").strip()
-            names = [s.get("name", s.get("output")) for s in scenarios]
+            choice = (getattr(response, "content", "") or "").strip().casefold()
+            names = [s.get("name", s.get("output")) for s in scenarios if s.get("name", s.get("output"))]
+            # Prefer an exact match (case-insensitive) on the model's reply so
+            # overlapping scenario names like "approve" / "approved" don't
+            # silently route to the shorter prefix.
             for name in names:
-                if name and name in choice:
+                if name.casefold() == choice:
+                    return {"_condition_branch": name}
+            # Fall back to whole-word containment, then to the first scenario.
+            for name in names:
+                if name.casefold() in choice.split():
                     return {"_condition_branch": name}
             return {"_condition_branch": names[0] if names else "default"}
 

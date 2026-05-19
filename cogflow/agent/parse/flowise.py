@@ -128,6 +128,11 @@ def from_dict(raw: dict[str, Any]) -> IRGraph:
                 target=raw_edge.get("target", ""),
                 source_handle=raw_edge.get("sourceHandle"),
                 target_handle=raw_edge.get("targetHandle"),
+                # ``edgeLabel`` carries the Condition / ConditionAgent branch
+                # name. ``compile.to_langgraph`` reads ``edge.label`` to build
+                # ``add_conditional_edges`` routing, so dropping this would
+                # silently mis-route imported conditional flows.
+                label=data.get("edgeLabel"),
                 is_human_input=bool(data.get("isHumanInput")),
                 flowise_provenance={"edge": raw_edge},
             )
