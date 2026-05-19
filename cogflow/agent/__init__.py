@@ -1,8 +1,8 @@
 """Cognitive Framework Agent SDK.
 
 A LangGraph-shaped Python API whose graphs round-trip to Flowise V2 AgentFlow
-JSON. See ``cogflow/cogflow/agent/__init__.py`` callers for the full mapping
-table in the architecture plan.
+JSON. See ``cogflow/agent/__init__.py`` callers for the full mapping table in
+the architecture plan.
 
 Drop-in import migration (see plan §3a):
 

@@ -31,7 +31,7 @@ class MLflowAdapter(TracingAdapter):
         uri = tracking_uri
         if uri is None:
             try:
-                from cogflow import config as _cfg  # type: ignore  # noqa: WPS433
+                from cogflow.config import config as _cfg  # type: ignore  # noqa: WPS433
 
                 uri = getattr(_cfg, "MLFLOW_TRACKING_URI", None)
             except Exception:

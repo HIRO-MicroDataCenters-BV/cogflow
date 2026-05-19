@@ -36,7 +36,7 @@ def test_simple_rag_roundtrips_losslessly(simple_rag_path: Path):
         assert emitted.get("usecases") == original["usecases"]
 
 
-@pytest.mark.parametrize("filename", ["Structured Output.json", "Translator.json"])
+@pytest.mark.parametrize("filename", ["structured_output.json", "translator.json"])
 def test_other_mvp7_fixtures_roundtrip(marketplace_dir: Path, filename: str):
     path = marketplace_dir / filename
     if not path.exists():

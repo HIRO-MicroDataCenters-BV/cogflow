@@ -22,7 +22,7 @@ class OTelAdapter(TracingAdapter):
         except ImportError as exc:  # pragma: no cover - optional dep
             raise RuntimeError(
                 "OTel tracing requires `openinference-instrumentation-langchain`; "
-                "install with `pip install cogflow[agent]`."
+                "install with `pip install cogflow[agent-otel]`."
             ) from exc
 
         if endpoint:
