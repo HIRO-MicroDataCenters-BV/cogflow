@@ -131,7 +131,11 @@ addopts = "-ra -q --cov=cogflow --cov-report=term-missing"
 testpaths = ["tests", "cogflow/agent/tests"]
 
 [tool.ruff]
-# Scoped to the agent submodule only; the rest of cogflow keeps black+autopep8+pylint.
+# Restrict Ruff to the agent submodule so a bare ``ruff check`` doesn't try to
+# lint the rest of cogflow (which is on black+autopep8+pylint). To lint /
+# format only this submodule, run ``ruff check cogflow/agent`` or
+# ``ruff format cogflow/agent``.
+include = ["cogflow/agent/**/*.py"]
 extend-exclude = ["kfp", "build", "dist"]
 line-length = 120
 target-version = "py310"

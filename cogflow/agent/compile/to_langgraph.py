@@ -84,14 +84,29 @@ def to_langgraph(
     #     override" case ``ir.validate`` allows when no Start node is
     #     present): wire START directly to it so its body runs.
     start_id = graph.entry
+    start_wired = False
     if start_id is not None:
         entry_node = graph.node_by_id(start_id)
         if entry_node is not None and entry_node.type == "start":
             for e in edges_from(graph, start_id):
                 if e.target in runtime_ids:
                     builder.add_edge(START, e.target)
+                    start_wired = True
         elif start_id in runtime_ids:
             builder.add_edge(START, start_id)
+            start_wired = True
+
+    # Degenerate case: a Start node with no runtime targets (e.g., a Flowise
+    # import containing only a Start node, or Start fanning into nodes we
+    # skip at compile). LangGraph would refuse to compile without any START
+    # edge, so wire a safe START → END so the graph still produces a valid
+    # CompiledStateGraph that immediately terminates.
+    if not start_wired and not runtime_nodes:
+        builder.add_edge(START, END)
+    elif not start_wired and runtime_nodes:
+        # Fallback for malformed graphs whose entry doesn't reach any runtime
+        # node: enter the first declared runtime node so something runs.
+        builder.add_edge(START, runtime_nodes[0].id)
 
     # Runtime edges. Condition nodes use add_conditional_edges; everything else
     # is a plain add_edge.
