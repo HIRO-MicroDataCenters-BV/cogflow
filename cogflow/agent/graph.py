@@ -23,7 +23,6 @@ from langgraph.graph import END, START
 from langgraph.graph import StateGraph as _LangGraphStateGraph
 
 from .ir import (
-    IREdge,
     IRGraph,
     IRNode,
     IRPort,
