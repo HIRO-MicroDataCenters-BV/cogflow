@@ -95,6 +95,9 @@ def to_langgraph(
 
     # Runtime edges. Condition nodes use add_conditional_edges; everything else
     # is a plain add_edge.
+    finish_ids = {fid for fid in graph.finish if fid in runtime_ids}
+    end_edged: set[str] = set()  # nodes already wired to END (avoid duplicates)
+
     for node in runtime_nodes:
         # Only route to nodes actually registered with the builder. Edges that
         # target the Start (or skipped) node are dropped — looping back to
@@ -103,6 +106,7 @@ def to_langgraph(
         outs = [e for e in edges_from(graph, node.id) if e.target in runtime_ids]
         if not outs:
             builder.add_edge(node.id, END)
+            end_edged.add(node.id)
             continue
 
         if node.type in _CONDITION_TYPES and len(outs) > 1:
@@ -121,6 +125,12 @@ def to_langgraph(
         else:
             for e in outs:
                 builder.add_edge(node.id, e.target)
+
+    # Explicit finish points (``IRGraph.finish``) — wire them to END unless we
+    # already did so via the leaf-node path above. A node can be both a finish
+    # point AND have outgoing edges; in that case it needs an explicit END edge.
+    for fid in finish_ids - end_edged:
+        builder.add_edge(fid, END)
 
     return builder.compile(
         checkpointer=checkpointer,

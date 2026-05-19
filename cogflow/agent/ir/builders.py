@@ -2,16 +2,17 @@
 
 from __future__ import annotations
 
-import itertools
-
 from .model import IREdge, IRGraph, IRNode
 
 
-_counter = itertools.count()
+def fresh_edge_id(graph: IRGraph, source: str, target: str, source_handle: str | None) -> str:
+    """Generate an edge id that's deterministic *within* one graph.
 
-
-def fresh_edge_id(source: str, target: str, source_handle: str | None) -> str:
-    suffix = next(_counter)
+    The suffix advances a per-graph counter on ``IRGraph`` so two processes
+    building the same graph in the same order produce identical ids — which
+    matters for diffing exported Flowise JSON.
+    """
+    suffix = graph.next_edge_seq()
     sh = source_handle or f"{source}-output"
     return f"{source}-{sh}-{target}-{suffix}"
 
@@ -34,7 +35,7 @@ def add_edge(
     is_human_input: bool = False,
 ) -> IREdge:
     edge = IREdge(
-        id=fresh_edge_id(source, target, source_handle),
+        id=fresh_edge_id(graph, source, target, source_handle),
         source=source,
         target=target,
         source_handle=source_handle,

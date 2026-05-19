@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 IRNodeType = Literal[
     "start",
@@ -114,6 +114,14 @@ class IRGraph(BaseModel):
     finish: list[str] = Field(default_factory=list)
     viewport: dict[str, float] | None = None
     flowise_provenance: dict[str, Any] | None = None
+
+    # Per-graph edge counter for deterministic id generation. Excluded from
+    # serialization so JSON dumps remain stable across processes.
+    _edge_counter: int = PrivateAttr(default=0)
+
+    def next_edge_seq(self) -> int:
+        self._edge_counter += 1
+        return self._edge_counter
 
     def node_by_id(self, node_id: str) -> IRNode | None:
         for n in self.nodes:

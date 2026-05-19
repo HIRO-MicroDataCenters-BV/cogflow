@@ -113,7 +113,16 @@ class StateGraph(_LangGraphStateGraph):
     # edges
     # ------------------------------------------------------------------
     def add_edge(self, start_key: str, end_key: str) -> "StateGraph":  # type: ignore[override]
-        if start_key == START:
+        # Order matters: check END first so ``add_edge(START, END)`` doesn't
+        # try to record an IR edge whose ``target`` is the LangGraph END
+        # sentinel rather than a real node id.
+        if end_key == END:
+            if start_key == START:
+                start_node = _synthesize_start_node(self.ir)
+                self.ir.finish.append(start_node.id)
+            else:
+                self.ir.finish.append(start_key)
+        elif start_key == START:
             start_node = _synthesize_start_node(self.ir)
             _ir_add_edge(
                 self.ir,
@@ -121,8 +130,6 @@ class StateGraph(_LangGraphStateGraph):
                 target=end_key,
                 source_handle=f"{start_node.id}-output-startAgentflow",
             )
-        elif end_key == END:
-            self.ir.finish.append(start_key)
         else:
             _ir_add_edge(self.ir, source=start_key, target=end_key)
         return super().add_edge(start_key, end_key)  # type: ignore[no-any-return]
