@@ -13,13 +13,17 @@ Drop-in import migration (see plan §3a):
 
 from __future__ import annotations
 
-# Defer the heavy import behind a helpful message so users who pip-installed
-# bare ``cogflow`` see actionable text instead of a raw ModuleNotFoundError.
+# Defer the heavy imports behind a single helpful message so users who pip-
+# installed bare ``cogflow`` see actionable text instead of a raw
+# ``ModuleNotFoundError`` from langgraph OR langchain_core (both are required
+# at import time because submodules below depend on each).
 try:
+    import langchain_core  # noqa: F401 — verified-then-used by submodules
     from langgraph.graph import END, START
 except ModuleNotFoundError as _exc:  # pragma: no cover - install-time guard
     raise ModuleNotFoundError(
-        "cogflow.agent requires LangGraph. Install with `pip install cogflow[agent]`."
+        f"cogflow.agent requires `{_exc.name}`. "
+        "Install with `pip install cogflow[agent]`."
     ) from _exc
 
 try:

@@ -25,8 +25,11 @@ def _node_to_dict(node: IRNode) -> dict[str, Any]:
     if isinstance(raw, dict):
         result = copy.deepcopy(raw)
         result["id"] = node.id
-        result["position"] = {"x": node.position.x, "y": node.position.y}
-        result.setdefault("positionAbsolute", {"x": node.position.x, "y": node.position.y})
+        pos = {"x": node.position.x, "y": node.position.y}
+        result["position"] = pos
+        # Flowise reads both ``position`` and ``positionAbsolute`` — keep them
+        # in sync so a mutated IR position doesn't leave the canvas inconsistent.
+        result["positionAbsolute"] = dict(pos)
         data = result.setdefault("data", {})
         data["id"] = node.id
         data["label"] = node.label

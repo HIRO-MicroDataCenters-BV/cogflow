@@ -112,11 +112,6 @@ def to_langgraph(
             for e in outs:
                 builder.add_edge(node.id, e.target)
 
-    # Any runtime node with no outgoing edge to a runtime node goes to END.
-    for node in runtime_nodes:
-        if not edges_from(graph, node.id):
-            builder.add_edge(node.id, END)
-
     return builder.compile(
         checkpointer=checkpointer,
         interrupt_before=interrupt_before or [],
