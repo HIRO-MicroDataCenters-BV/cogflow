@@ -23,6 +23,11 @@ IR_TYPE_TO_FLOWISE_NAME: dict[str, str] = {
     "human_input": "humanInputAgentflow",
     "execute_flow": "executeFlowAgentflow",
     "sticky_note": "stickyNoteAgentflow",
+    # Sentinel for Flowise node discriminators we don't recognize. Real
+    # imports always carry full provenance, so emit() re-uses the raw node
+    # dict and this fallback name only surfaces for Python-built unknown
+    # nodes (a deliberately broken case).
+    "unknown": "unknownAgentflow",
 }
 
 FLOWISE_NAME_TO_IR_TYPE: dict[str, str] = {v: k for k, v in IR_TYPE_TO_FLOWISE_NAME.items()}
@@ -44,6 +49,7 @@ IR_TYPE_TO_FLOWISE_CATEGORY: dict[str, str] = {
     "human_input": "HumanInput",
     "execute_flow": "ExecuteFlow",
     "sticky_note": "StickyNote",
+    "unknown": "Unknown",
 }
 
 __all__ = [

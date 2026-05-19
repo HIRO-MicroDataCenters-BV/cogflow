@@ -47,7 +47,9 @@ def _node_to_dict(node: IRNode) -> dict[str, Any]:
         data = result.setdefault("data", {})
         data["id"] = node.id
         data["label"] = node.label
-        data["inputs"] = node.config if node.config else data.get("inputs", "")
+        # Always overlay node.config onto data.inputs (including ``{}``) so
+        # IR-side mutations — including intentional clears — survive export.
+        data["inputs"] = dict(node.config)
         return result
 
     flowise_name = IR_TYPE_TO_FLOWISE_NAME[node.type]
