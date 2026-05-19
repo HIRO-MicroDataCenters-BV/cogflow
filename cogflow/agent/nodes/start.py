@@ -20,11 +20,14 @@ class StartFactory(NodeFactory):
         state: list[dict[str, Any]] | None = None,
         **extra: Any,
     ) -> None:
+        # Flowise represents an unset ``startState`` as an empty string but an
+        # explicitly empty array as ``[]``. Only fall back to "" when the user
+        # didn't pass anything; preserve the empty-list shape when they did.
         super().__init__(
             startInputType=input_type,
             startEphemeralMemory=ephemeral_memory,
             startPersistState=persist_state,
-            startState=state or "",
+            startState=state if state is not None else "",
             **extra,
         )
 

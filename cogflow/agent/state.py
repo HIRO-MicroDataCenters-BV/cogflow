@@ -92,9 +92,14 @@ def introspect_state(state_schema: type | None) -> list[IRStateField]:
         else:
             type_ir = _python_type_to_ir(hint)
 
-        if key == "messages" and reducer_name is None:
-            reducer_name = "add_messages"
+        # Always normalize the ``messages`` channel: type=messages and the
+        # ``add_messages`` reducer. Mirrors ``parse.flowise._state_from_start``
+        # so introspect(TypedDict) ↔ Flowise startState round-trips through
+        # IR with a single canonical shape.
+        if key == "messages":
             type_ir = "messages"
+            if reducer_name is None:
+                reducer_name = "add_messages"
         out.append(IRStateField(key=key, type=type_ir, reducer=reducer_name))
     return out
 

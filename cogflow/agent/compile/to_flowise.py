@@ -112,6 +112,13 @@ def _edge_to_dict(edge: IREdge, graph: IRGraph) -> dict[str, Any]:
     }
 
 
+def _start_state_payload(graph: IRGraph) -> list[dict[str, Any]]:
+    """``data.inputs.startState`` shape Flowise expects, derived from IR state."""
+    return [
+        {"key": f.key, "value": "" if f.default is None else f.default} for f in graph.state
+    ]
+
+
 def to_dict(graph: IRGraph, *, analytics: dict[str, Any] | None = None) -> dict[str, Any]:
     """Serialize an IRGraph to a Flowise V2 AgentFlow JSON dict."""
     provenance = graph.flowise_provenance or {}
@@ -124,6 +131,25 @@ def to_dict(graph: IRGraph, *, analytics: dict[str, Any] | None = None) -> dict[
 
     out["nodes"] = [_node_to_dict(n) for n in graph.nodes]
     out["edges"] = [_edge_to_dict(e, graph) for e in graph.edges]
+
+    # Direction B: when the Start node has no Flowise provenance (i.e. the
+    # graph was authored in Python), populate its ``data.inputs.startState``
+    # from ``graph.state`` so the exported canvas reflects the declared
+    # schema. Provenance-backed Start nodes are left untouched to preserve
+    # lossless round-trip on JSON-imported graphs.
+    if graph.state:
+        for ir_node, emitted in zip(graph.nodes, out["nodes"]):
+            if ir_node.type != "start":
+                continue
+            if ir_node.flowise_provenance and "node" in ir_node.flowise_provenance:
+                continue
+            data = emitted.setdefault("data", {})
+            inputs = data.get("inputs")
+            if not isinstance(inputs, dict):
+                inputs = {}
+                data["inputs"] = inputs
+            inputs["startState"] = _start_state_payload(graph)
+            break
 
     if graph.viewport is not None:
         out["viewport"] = graph.viewport

@@ -76,13 +76,22 @@ def to_langgraph(
     for node in runtime_nodes:
         builder.add_node(node.id, _callable_for(node, factories))
 
-    # Entry edge: from START to whatever the start node fans out to (skip the
-    # IR Start node itself; it has no runtime body).
+    # Entry edge from LangGraph's START sentinel. Two cases:
+    #   - ``graph.entry`` points at a Start IR node (the common case from a
+    #     Flowise import): the Start node has no runtime body, so we fan out
+    #     to whatever it links to.
+    #   - ``graph.entry`` points at a regular runtime node (the "entry
+    #     override" case ``ir.validate`` allows when no Start node is
+    #     present): wire START directly to it so its body runs.
     start_id = graph.entry
     if start_id is not None:
-        for e in edges_from(graph, start_id):
-            if e.target in runtime_ids:
-                builder.add_edge(START, e.target)
+        entry_node = graph.node_by_id(start_id)
+        if entry_node is not None and entry_node.type == "start":
+            for e in edges_from(graph, start_id):
+                if e.target in runtime_ids:
+                    builder.add_edge(START, e.target)
+        elif start_id in runtime_ids:
+            builder.add_edge(START, start_id)
 
     # Runtime edges. Condition nodes use add_conditional_edges; everything else
     # is a plain add_edge.
