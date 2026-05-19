@@ -26,8 +26,13 @@ _ADAPTERS: dict[str, TracingAdapter] = {
 
 
 def configure_tracing(backend: str | None = "mlflow", **kwargs: Any) -> TracingAdapter | None:
-    """Enable (or disable) a tracing backend. Backends are stackable —
-    successive calls with different backends compose."""
+    """Enable (or disable) a tracing backend.
+
+    Successive calls with *different* backends compose (mlflow + otel can both
+    be on). Successive calls with the *same* backend are idempotent: the
+    adapter is first disabled (restoring any saved state) then re-enabled with
+    the new kwargs, so callbacks/instrumentors never stack.
+    """
     if backend is None:
         for adapter in _ADAPTERS.values():
             adapter.disable()
@@ -35,6 +40,7 @@ def configure_tracing(backend: str | None = "mlflow", **kwargs: Any) -> TracingA
     if backend not in _ADAPTERS:
         raise ValueError(f"unknown tracing backend {backend!r}; one of {sorted(_ADAPTERS)}")
     adapter = _ADAPTERS[backend]
+    adapter.disable()  # idempotent — no-op when not currently enabled
     adapter.enable(**kwargs)
     return adapter
 

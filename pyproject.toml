@@ -117,6 +117,12 @@ include = ["cogflow", "cogflow*", "kfp", "kfp*"]
 [tool.setuptools]
 license-files = ["LICENSE.md", "NOTICE", "kfp/LICENSE"]
 
+# Note: ``pytest.ini`` is the active config file for this repo — pytest prefers
+# it over ``[tool.pytest.ini_options]`` here. Agent-test discovery is driven
+# from ``pytest.ini`` (testpaths) so a plain ``pytest`` run picks them up
+# locally. Wiring the suite into CI (``.github/workflows/ci.yml`` currently
+# runs ``pytest tests/`` with only ``[dev]`` installed) is intentionally left
+# for a separate, explicitly-reviewed change.
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --cov=cogflow --cov-report=term-missing"

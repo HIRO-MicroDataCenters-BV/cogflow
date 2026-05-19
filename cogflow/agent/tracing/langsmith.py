@@ -21,6 +21,8 @@ class LangSmithAdapter(TracingAdapter):
         self._restore: dict[str, str | None] = {}
 
     def enable(self, *, project: str | None = None, api_key: str | None = None, **kwargs: Any) -> None:
+        if self._enabled:
+            return
         self._restore = {var: os.environ.get(var) for var in _MANAGED_ENV_VARS}
 
         os.environ["LANGCHAIN_TRACING_V2"] = "true"

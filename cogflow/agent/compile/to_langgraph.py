@@ -90,7 +90,11 @@ def to_langgraph(
     # Runtime edges. Condition nodes use add_conditional_edges; everything else
     # is a plain add_edge.
     for node in runtime_nodes:
-        outs = [e for e in edges_from(graph, node.id) if e.target in runtime_ids or e.target == start_id]
+        # Only route to nodes actually registered with the builder. Edges that
+        # target the Start (or skipped) node are dropped — looping back to
+        # entry would require routing to LangGraph's ``START`` sentinel, which
+        # is not what an edge to a removed Start node means.
+        outs = [e for e in edges_from(graph, node.id) if e.target in runtime_ids]
         if not outs:
             builder.add_edge(node.id, END)
             continue

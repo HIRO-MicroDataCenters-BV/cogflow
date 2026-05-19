@@ -25,6 +25,8 @@ class MLflowAdapter(TracingAdapter):
         tracking_uri: str | None = None,
         **kwargs: Any,
     ) -> None:
+        if self._enabled:
+            return
         import mlflow
         import mlflow.langchain
 

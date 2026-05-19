@@ -8,6 +8,7 @@ from langchain_core.messages import AIMessage, BaseMessage
 
 from ..ir.model import IRNode
 from .base import NodeFactory
+from .llm import _coerce_messages
 
 
 class AgentFactory(NodeFactory):
@@ -41,13 +42,17 @@ class AgentFactory(NodeFactory):
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
         model = self._model if not isinstance(self._model, str) else None
         tools = list(self._tools)
+        # Mirror LLMFactory: surface the configured prompt (Flowise
+        # ``agentMessages``) as a prefix on every invocation so system/dev
+        # prompts apply to both Python-first and JSON-loaded graphs.
+        prompts = _coerce_messages(self.config.get("agentMessages"))
 
         def agent_node(state: dict[str, Any]) -> dict[str, Any]:
             if model is None:
                 return {}
-            messages = list(state.get("messages") or [])
+            history = list(state.get("messages") or [])
             bound = model.bind_tools(tools) if tools and hasattr(model, "bind_tools") else model
-            response = bound.invoke(messages)
+            response = bound.invoke(prompts + history)
             if not isinstance(response, BaseMessage):
                 response = AIMessage(content=str(response))
             return {"messages": [response]}

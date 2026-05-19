@@ -15,6 +15,8 @@ class OTelAdapter(TracingAdapter):
         self._instrumentor: Any = None
 
     def enable(self, *, endpoint: str | None = None, **kwargs: Any) -> None:
+        if self._enabled:
+            return
         try:
             from openinference.instrumentation.langchain import (  # type: ignore[import-not-found]
                 LangChainInstrumentor,
@@ -49,4 +51,5 @@ class OTelAdapter(TracingAdapter):
     def disable(self) -> None:
         if self._enabled and self._instrumentor is not None:
             self._instrumentor.uninstrument()
+        self._instrumentor = None
         self._enabled = False

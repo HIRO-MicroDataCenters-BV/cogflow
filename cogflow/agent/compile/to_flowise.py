@@ -79,6 +79,10 @@ def _edge_to_dict(edge: IREdge) -> dict[str, Any]:
             result["sourceHandle"] = edge.source_handle
         if edge.target_handle is not None:
             result["targetHandle"] = edge.target_handle
+        # Overlay is_human_input onto data.isHumanInput so IR-side mutations
+        # survive re-emission of provenance-carrying edges.
+        data = result.setdefault("data", {})
+        data["isHumanInput"] = edge.is_human_input
         return result
 
     return {

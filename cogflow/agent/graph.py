@@ -68,9 +68,17 @@ class StateGraph(_LangGraphStateGraph):
     # ------------------------------------------------------------------
     # add_node
     # ------------------------------------------------------------------
-    def add_node(self, name: str, node: Any = None, **kwargs: Any) -> "StateGraph":  # type: ignore[override]
+    def add_node(self, name: Any, node: Any = None, **kwargs: Any) -> "StateGraph":  # type: ignore[override]
+        # LangGraph supports ``add_node(fn)`` (name inferred from the callable).
+        # Normalize that form here so IR capture works for both signatures.
+        if node is None and callable(name) and not isinstance(name, NodeFactory):
+            fn = name
+            name = getattr(fn, "__name__", f"node_{next(self._node_counter)}")
+            node = fn
+
         if node is None:
-            # langgraph's add_node(fn) form — name omitted
+            # Some advanced langgraph forms (e.g. metadata-only updates) fall
+            # through here. Pass to the parent unchanged; no IR row recorded.
             return super().add_node(name, **kwargs)  # type: ignore[no-any-return]
 
         if isinstance(node, NodeFactory):
