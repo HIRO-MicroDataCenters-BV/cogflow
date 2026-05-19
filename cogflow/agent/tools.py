@@ -17,15 +17,18 @@ except ModuleNotFoundError as _exc:  # pragma: no cover - belt-and-braces
 try:
     from langgraph.prebuilt import ToolNode
 except ModuleNotFoundError as _exc:  # pragma: no cover
-    # Distinguish "langgraph not installed at all" from "langgraph installed
-    # without the prebuilt submodule". The former is a user-actionable error;
-    # the latter (older langgraph) gracefully falls back to ToolNode=None.
-    if _exc.name == "langgraph" or (_exc.name or "").startswith("langgraph."):
-        if _exc.name == "langgraph":
-            raise ModuleNotFoundError(
-                "cogflow.agent.tools requires `langgraph`. "
-                "Install with `pip install cogflow[agent]`."
-            ) from _exc
+    # Only swallow when the missing module is langgraph-related; anything else
+    # (e.g. a missing transitive dep, a broken installation) should bubble up
+    # with its original message so users can act on it.
+    _name = _exc.name or ""
+    if _name == "langgraph":
+        raise ModuleNotFoundError(
+            "cogflow.agent.tools requires `langgraph`. "
+            "Install with `pip install cogflow[agent]`."
+        ) from _exc
+    if not _name.startswith("langgraph."):
+        raise
+    # Older langgraph without the ``prebuilt`` submodule — graceful fallback.
     ToolNode = None  # type: ignore[assignment]
 
 __all__ = ["ToolNode", "tool"]

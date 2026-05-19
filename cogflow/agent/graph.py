@@ -104,6 +104,16 @@ class StateGraph(_LangGraphStateGraph):
             type="custom_function",
             label=kwargs.pop("label", name),
             config={"customFunctionPython": getattr(node, "__name__", f"node_{idx}")},
+            # Default Flowise output anchor so emitted edges reference an id
+            # that actually exists on this node (matches ``NodeFactory.default_outputs``).
+            outputs=[
+                IRPort(
+                    id=f"{name}-output-customFunctionAgentflow",
+                    name="customFunctionAgentflow",
+                    label="CustomFunction",
+                    type="custom_function",
+                )
+            ],
         )
         _ir_add_node(self.ir, ir_node)
         super().add_node(name, node, **kwargs)

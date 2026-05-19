@@ -7,9 +7,13 @@ to Flowise JSON is delegated to ``compile.to_flowise``, which reads
 ``IRNode.flowise_provenance`` when present (lossless) and falls back to
 ``flowise_template`` (Python-first nodes).
 
-For Phase 1 the runtime callables for nodes that wrap chat models return their
-state unchanged when ``model`` is None. Real LLM wiring is exercised in tests
-via ``langchain_core.language_models.fake.FakeListChatModel``.
+For Phase 1 the runtime callables for nodes that wrap chat models return an
+empty state update when ``model`` is None. Live-LLM behaviour is verified by
+``test_compile_langgraph.test_simple_graph_invokes`` (plain Python callable
+node) and by ``test_marketplace_simple_rag`` (JSON-loaded Agent node with
+the model left unwired). Wiring against a real ``FakeListChatModel`` /
+``FakeMessagesListChatModel`` for the model-bearing factories is deferred
+to Phase 2.
 """
 
 from __future__ import annotations
