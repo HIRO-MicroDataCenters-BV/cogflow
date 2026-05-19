@@ -52,6 +52,18 @@ def test_checkpoint_re_exports():
 def test_interrupt_and_command():
     import cogflow.agent as cg
 
-    # Newer langgraph exposes these; assert they at least resolve to something.
-    assert cg.interrupt is not None
-    assert cg.Command is not None
+    # ``cogflow.agent.__init__`` sets these to ``None`` on older langgraph
+    # builds that don't expose ``langgraph.types.{interrupt,Command}``. Treat
+    # both states as acceptable so the supported version range stays
+    # consistent with ``ToolNode``'s fallback contract. The agent extra pins
+    # langgraph>=0.2,<0.5 — in that range these symbols exist, so a None here
+    # signals an unexpectedly-older langgraph that callers should update.
+    if cg.interrupt is None or cg.Command is None:
+        import langgraph
+
+        # Diagnostic: surface the installed version in the failure message.
+        version = getattr(langgraph, "__version__", "<unknown>")
+        raise AssertionError(
+            f"Expected langgraph.types.interrupt / Command to be importable; "
+            f"got None — installed langgraph version: {version!r}"
+        )
