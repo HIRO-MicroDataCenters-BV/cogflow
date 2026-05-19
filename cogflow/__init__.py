@@ -21,6 +21,7 @@ _LAZY_SUBMODULES = [
     "network",  # resolves to cogflow.utils.network
     "config",  # resolves to cogflow.config
     "pipelines",  # resolves to cogflow.pipelines
+    "agent",  # resolves to cogflow.agent (Cognitive Framework Agent SDK)
 ]
 
 # Create lazy module and copy current attributes

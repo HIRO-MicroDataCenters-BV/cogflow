@@ -77,6 +77,23 @@ docs = [
   "pdoc3>=0.11.0"
 ]
 
+agent = [
+  "langgraph >=0.2,<0.5",
+  "langchain-core >=0.3,<0.4"
+]
+
+agent-langsmith = [
+  "cogflow[agent]",
+  "langsmith>=0.1.0"
+]
+
+agent-otel = [
+  "cogflow[agent]",
+  "openinference-instrumentation-langchain>=0.1.0",
+  "opentelemetry-sdk>=1.20.0",
+  "opentelemetry-exporter-otlp>=1.20.0"
+]
+
 [project.urls]
 Homepage = "https://github.com/HIRO-MicroDataCenters-BV/cogflow"
 Issues = "https://github.com/HIRO-MicroDataCenters-BV/cogflow/issues"
@@ -102,10 +119,34 @@ include = ["cogflow", "cogflow*", "kfp", "kfp*"]
 [tool.setuptools]
 license-files = ["LICENSE.md", "NOTICE", "kfp/LICENSE"]
 
+# Note: ``pytest.ini`` is the active config file for this repo — pytest prefers
+# it over ``[tool.pytest.ini_options]`` here. Agent-test discovery is driven
+# from ``pytest.ini`` (testpaths) so a plain ``pytest`` run picks them up
+# locally. Wiring the suite into CI (``.github/workflows/ci.yml`` currently
+# runs ``pytest tests/`` with only ``[dev]`` installed) is intentionally left
+# for a separate, explicitly-reviewed change.
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-ra -q --cov=cogflow --cov-report=term-missing"
-testpaths = ["tests"]
+testpaths = ["tests", "cogflow/agent/tests"]
+
+[tool.ruff]
+# Restrict Ruff to the agent submodule so a bare ``ruff check`` doesn't try to
+# lint the rest of cogflow (which is on black+autopep8+pylint). To lint /
+# format only this submodule, run ``ruff check cogflow/agent`` or
+# ``ruff format cogflow/agent``.
+include = ["cogflow/agent/**/*.py"]
+extend-exclude = ["kfp", "build", "dist"]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
+per-file-ignores = { "cogflow/agent/tests/*" = ["B011"] }
+
+[tool.ruff.format]
+quote-style = "double"
 
 [tool.setuptools.dynamic]
 version = {attr = "cogflow.__version__"}
