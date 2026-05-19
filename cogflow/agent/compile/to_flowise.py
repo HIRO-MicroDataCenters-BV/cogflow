@@ -17,6 +17,7 @@ from ..constants import (
     IR_TYPE_TO_FLOWISE_CATEGORY,
     IR_TYPE_TO_FLOWISE_NAME,
 )
+from ..ir import END_SENTINEL
 from ..ir.model import IREdge, IRGraph, IRNode
 
 
@@ -140,7 +141,12 @@ def to_dict(graph: IRGraph, *, analytics: dict[str, Any] | None = None) -> dict[
         out["usecases"] = usecases
 
     out["nodes"] = [_node_to_dict(n) for n in graph.nodes]
-    out["edges"] = [_edge_to_dict(e, graph) for e in graph.edges]
+    # Skip edges that target the LangGraph END sentinel — they're a runtime
+    # concept (recorded by ``StateGraph.add_conditional_edges`` when a branch
+    # routes to ``END``) and have no Flowise canvas representation. Emitting
+    # them verbatim would produce ``"target": "__end__"``, an invalid id that
+    # Flowise rejects on import.
+    out["edges"] = [_edge_to_dict(e, graph) for e in graph.edges if e.target != END_SENTINEL]
 
     # Direction B: when the Start node has no Flowise provenance (i.e. the
     # graph was authored in Python), populate its ``data.inputs.startState``

@@ -73,3 +73,28 @@ def test_conditional_branch_to_end_does_not_force_other_branches():
     # unconditional END edge and a conditional router).
     app = g.compile()
     assert app is not None
+
+
+def test_conditional_end_branch_does_not_leak_into_flowise_json():
+    """Regression: END_SENTINEL edges must not be serialized as Flowise edges."""
+    from cogflow.agent.compile.to_flowise import to_dict as ir_to_flowise
+
+    def _route(state: _State) -> str:
+        return "go"
+
+    def _other(state: _State) -> dict:
+        return {"messages": [AIMessage(content="other")]}
+
+    g = StateGraph(_State)
+    g.add_node("router", _greet)
+    g.add_node("other", _other)
+    g.add_edge(START, "router")
+    g.add_conditional_edges("router", _route, {"stop": END, "go": "other"})
+    g.add_edge("other", END)
+
+    flow = ir_to_flowise(g.ir)
+    # No edge should point at "__end__" — Flowise would reject such an id.
+    targets = [e["target"] for e in flow["edges"]]
+    assert "__end__" not in targets
+    # The non-END branch must survive into the exported canvas.
+    assert "other" in targets
