@@ -35,7 +35,13 @@ class HumanInputFactory(NodeFactory):
         )
 
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
-        prompt = self.config.get("humanInputPrompt") or ""
+        # Accept either our Python-first ``humanInputPrompt`` key or Flowise's
+        # native ``humanInputDescription`` so JSON-loaded nodes work too.
+        prompt = (
+            self.config.get("humanInputPrompt")
+            or self.config.get("humanInputDescription")
+            or ""
+        )
         output_key = self.config.get("humanInputOutputKey") or "human_input"
 
         def human_input_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -44,7 +50,12 @@ class HumanInputFactory(NodeFactory):
             except ImportError:
                 # Older langgraph without interrupts: degrade to passthrough.
                 return {}
-            rendered = prompt.format(**state) if prompt else ""
+            rendered = prompt
+            if prompt:
+                try:
+                    rendered = prompt.format(**state)
+                except (KeyError, IndexError):
+                    rendered = prompt
             reply = interrupt({"prompt": rendered, "node": node.id})
             return {output_key: reply}
 

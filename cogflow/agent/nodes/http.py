@@ -50,7 +50,14 @@ class HTTPFactory(NodeFactory):
                 import httpx  # noqa: WPS433
 
                 client = httpx
-            rendered_url = url.format(**state) if url else ""
+            # Missing template keys must not crash the graph — fall back to
+            # the unrendered URL so the user can see what was attempted.
+            rendered_url = url
+            if url:
+                try:
+                    rendered_url = url.format(**state)
+                except (KeyError, IndexError):
+                    rendered_url = url
             kwargs: dict[str, Any] = {"headers": headers, "timeout": timeout}
             if body not in (None, ""):
                 kwargs["json"] = body

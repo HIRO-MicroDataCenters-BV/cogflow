@@ -47,6 +47,23 @@ _RESTRICTED_BUILTINS: dict[str, Any] = {
 class CustomFunctionFactory(NodeFactory):
     ir_type = "custom_function"
 
+    @classmethod
+    def from_ir(cls, node: IRNode) -> "NodeFactory":
+        # Mirror ``__init__`` validation: JSON-loaded nodes carrying a JS body
+        # must be rejected here, otherwise the JS would slip through and try
+        # to execute under ``allow_custom_code=True``.
+        language = (node.config.get("customFunctionLanguage") or "python").lower()
+        if language not in ("python", "py", ""):
+            raise UnsupportedNodeError(
+                f"CustomFunction node {node.id!r} carries an unsupported "
+                f"language={language!r}; only Python bodies are executable."
+            )
+        instance = cls.__new__(cls)
+        instance.config = dict(node.config)
+        instance._fn = None
+        instance._body = node.config.get("customFunctionPython")
+        return instance
+
     def __init__(
         self,
         *,

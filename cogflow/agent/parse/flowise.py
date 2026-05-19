@@ -81,6 +81,22 @@ def _state_from_start(inputs: dict[str, Any]) -> list[IRStateField]:
     return out
 
 
+def _index_iteration_children(raw_nodes: list[dict[str, Any]]) -> dict[str, list[str]]:
+    """Map an iteration node id -> list of child node ids (via ``parentNode``).
+
+    Flowise represents iteration bodies as nodes carrying a ``parentNode``
+    field pointing at the iteration container. We capture that here so the
+    parser can stamp ``iterationBody`` onto the iteration node's config.
+    """
+    children: dict[str, list[str]] = {}
+    for n in raw_nodes:
+        parent = n.get("parentNode")
+        if not parent:
+            continue
+        children.setdefault(parent, []).append(n.get("id") or "")
+    return children
+
+
 def from_dict(raw: dict[str, Any]) -> IRGraph:
     """Parse a Flowise V2 AgentFlow JSON dict into an IRGraph."""
     graph = IRGraph(
@@ -93,8 +109,11 @@ def from_dict(raw: dict[str, Any]) -> IRGraph:
         },
     )
 
+    raw_nodes = raw.get("nodes") or []
+    iter_children = _index_iteration_children(raw_nodes)
+
     state_set = False
-    for raw_node in raw.get("nodes") or []:
+    for raw_node in raw_nodes:
         data = raw_node.get("data") or {}
         name = data.get("name") or ""
         ir_type = _ir_type_for(name)
@@ -105,6 +124,16 @@ def from_dict(raw: dict[str, Any]) -> IRGraph:
             graph.state = _state_from_start(inputs)
             state_set = True
 
+        # Derived metadata (e.g. the iteration body id resolved via
+        # ``parentNode``) goes into ``flowise_provenance`` so it doesn't
+        # leak into ``data.inputs`` on emit and break round-trip.
+        provenance: dict[str, Any] = {"node": raw_node}
+        if ir_type == "iteration":
+            child_ids = iter_children.get(raw_node.get("id") or "", [])
+            if child_ids:
+                provenance["iteration_body_id"] = child_ids[0]
+                provenance["iteration_child_ids"] = child_ids
+
         node = IRNode(
             id=raw_node.get("id") or data.get("id") or "",
             type=ir_type,
@@ -113,7 +142,7 @@ def from_dict(raw: dict[str, Any]) -> IRGraph:
             inputs=_ports(data.get("inputAnchors")),
             outputs=_ports(data.get("outputAnchors")),
             position=IRPosition(x=position.get("x", 0.0), y=position.get("y", 0.0)),
-            flowise_provenance={"node": raw_node},
+            flowise_provenance=provenance,
         )
         graph.nodes.append(node)
         if ir_type == "start" and graph.entry is None:

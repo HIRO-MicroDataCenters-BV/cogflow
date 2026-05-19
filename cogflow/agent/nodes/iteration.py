@@ -12,10 +12,37 @@ malformed flows don't crash.
 
 from __future__ import annotations
 
+import json
+import re
 from typing import Any, Callable, Iterable, Mapping
 
 from ..ir.model import IRNode
 from .base import NodeFactory
+
+
+_HTML_TAG = re.compile(r"<[^>]+>")
+
+
+def _coerce_literal_source(source: Any) -> list[Any]:
+    """Best-effort coerce a Flowise ``iterationInput`` value to a Python list.
+
+    Flowise stores the field as rich-text HTML around a JSON string. We strip
+    the tags then try JSON; on any failure fall back to a single-item list.
+    """
+    if isinstance(source, (list, tuple)):
+        return list(source)
+    if not isinstance(source, str):
+        return [source]
+    stripped = _HTML_TAG.sub("", source).strip()
+    if not stripped:
+        return []
+    try:
+        parsed = json.loads(stripped)
+    except (ValueError, TypeError):
+        return [stripped]
+    if isinstance(parsed, list):
+        return parsed
+    return [parsed]
 
 
 class IterationFactory(NodeFactory):
@@ -44,19 +71,34 @@ class IterationFactory(NodeFactory):
             Send = None  # type: ignore[assignment]
 
         over_key = self.config.get("iterationOver", "items") or "items"
-        body_node_id = self.config.get("iterationBody") or None
+        # Resolve the body node id: explicit Python-first ``iterationBody``
+        # config wins; otherwise fall back to the value the parser stashed
+        # in ``flowise_provenance.iteration_body_id`` (derived from
+        # ``parentNode`` references at import time).
+        body_node_id = (
+            self.config.get("iterationBody")
+            or (node.flowise_provenance or {}).get("iteration_body_id")
+            or None
+        )
+        # ``iterationInput`` is Flowise's literal-source field — a stringified
+        # JSON array (or rich-text). Used when no state key is supplied;
+        # parsed best-effort as JSON, otherwise treated as a single-item list.
+        literal_source = self.config.get("iterationInput")
+
+        def _items_from_state(state: dict[str, Any]) -> Iterable[Any]:
+            raw = state.get(over_key)
+            if callable(raw):
+                return raw(state)
+            if isinstance(raw, (list, tuple)):
+                return raw
+            if raw is None and literal_source:
+                return _coerce_literal_source(literal_source)
+            return []
 
         def iteration_node(state: dict[str, Any]) -> Any:
             if Send is None or not body_node_id:
                 return {}
-            raw = state.get(over_key)
-            items: Iterable[Any]
-            if callable(raw):
-                items = raw(state)
-            elif isinstance(raw, (list, tuple)):
-                items = raw
-            else:
-                items = []
+            items = _items_from_state(state)
             return [Send(body_node_id, {**state, "_iteration_item": item}) for item in items]
 
         return iteration_node

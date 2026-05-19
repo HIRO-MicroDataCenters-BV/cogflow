@@ -262,11 +262,17 @@ def test_execute_flow_invokes_supplied_graph():
 
 
 def test_execute_flow_resolves_from_ctx_when_factory_is_bare():
+    """JSON-loaded ExecuteFlow nodes pick up their compiled child from ctx."""
     stub = _StubCompiledGraph()
     bare = ExecuteFlowFactory.from_ir(_ir("ef_1", "execute_flow", {"executeFlowId": "child"}))
-    fn = bare.to_callable(_ir("ef_1", "execute_flow", bare.config), ctx={"flows": {"child": stub}})
-    fn({"x": 1})
-    assert stub.calls == [{"x": 1, "executeFlowId": "child", "executeFlowInputKeys": "", "executeFlowOutputKey": "subflow_result"}] or len(stub.calls) == 1
+    result = bare.to_callable(_ir("ef_1", "execute_flow", bare.config), ctx={"flows": {"child": stub}})({"x": 1})
+
+    # With no explicit ``executeFlowInputKeys`` filter, the child sees the
+    # whole state dict (including the IR-config fields the base factory
+    # carries) and returns the echo-with-x payload.
+    assert len(stub.calls) == 1
+    assert stub.calls[0].get("x") == 1
+    assert result == {"subflow_result": {"echoed": 1}}
 
 
 def test_execute_flow_no_live_graph_is_passthrough():
@@ -289,6 +295,54 @@ def test_factory_registry_has_all_15_node_types():
         "custom_function", "human_input", "execute_flow", "sticky_note",
     }
     assert set(FACTORY_BY_IR_TYPE.keys()) == expected
+
+
+def test_custom_function_from_ir_rejects_js_body():
+    """JSON-loaded CustomFunction with language=javascript must be refused."""
+    from cogflow.agent.nodes import CustomFunctionFactory, UnsupportedNodeError
+
+    ir_node = _ir("cf_js", "custom_function", {"customFunctionLanguage": "javascript"})
+    with pytest.raises(UnsupportedNodeError):
+        CustomFunctionFactory.from_ir(ir_node)
+
+
+def test_human_input_reads_flowise_description_key():
+    """JSON-loaded HumanInput uses ``humanInputDescription``, not ``humanInputPrompt``."""
+    from cogflow.agent.nodes import HumanInputFactory
+
+    pytest.importorskip("langgraph.types")
+    bare = HumanInputFactory.from_ir(
+        _ir("hi_flowise", "human_input", {"humanInputDescription": "Approve?"})
+    )
+    fn = bare.to_callable(_ir("hi_flowise", "human_input", bare.config))
+    # interrupt() raises GraphInterrupt — exercising via the runtime is heavy.
+    # Cheap sanity check: the bound prompt isn't empty.
+    import langgraph.types as lgt
+
+    captured: dict[str, Any] = {}
+    lgt.interrupt = lambda payload: captured.setdefault("payload", payload) or "ok"  # type: ignore[assignment]
+    fn({})
+    assert captured["payload"]["prompt"] == "Approve?"
+
+
+def test_http_url_format_falls_back_on_missing_state_key():
+    stub = _StubHttpx(_StubResponse(200, {}))
+    factory = http(method="GET", url="https://example.test/{missing}")
+    fn = factory.to_callable(_ir("http_fb", "http", factory.config), ctx={"httpx": stub})
+    fn({})  # No 'missing' key — must not raise
+    assert stub.calls[0][1] == "https://example.test/{missing}"
+
+
+def test_human_input_prompt_format_falls_back_on_missing_state_key(monkeypatch):
+    pytest.importorskip("langgraph.types")
+    import langgraph.types as lgt
+
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr(lgt, "interrupt", lambda p: captured.setdefault("p", p) or "x")
+    factory = human_input(prompt="Hello {who}")
+    fn = factory.to_callable(_ir("hi_fb", "human_input", factory.config))
+    fn({})  # missing 'who'
+    assert captured["p"]["prompt"] == "Hello {who}"
 
 
 def test_from_ir_hydration_works_for_all_phase2_factories():
