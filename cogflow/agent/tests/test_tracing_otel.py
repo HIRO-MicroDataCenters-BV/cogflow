@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import types
 
 import pytest
 
@@ -29,9 +30,20 @@ _SKIP_NO_OPENINFERENCE = pytest.mark.skipif(
 
 
 def test_missing_openinference_raises_with_install_hint(monkeypatch):
-    """Without openinference installed, enable() must raise a clear hint."""
-    # Hide the real openinference module if it's installed locally.
-    monkeypatch.setitem(sys.modules, "openinference.instrumentation.langchain", None)
+    """Without openinference installed, enable() must raise a clear hint.
+
+    We shadow the top-level ``openinference`` package with a plain (non-
+    package) module so any ``from openinference.instrumentation.langchain ...``
+    deterministically fails with ModuleNotFoundError — independent of whether
+    the real package is installed in this environment.
+    """
+    fake_root = types.ModuleType("openinference")  # no __path__ → not a package
+    monkeypatch.setitem(sys.modules, "openinference", fake_root)
+    # Also drop any cached subpackages so import resolution doesn't reuse them.
+    for name in list(sys.modules):
+        if name == "openinference" or name.startswith("openinference."):
+            if name != "openinference":
+                monkeypatch.delitem(sys.modules, name, raising=False)
 
     adapter = OTelAdapter()
     with pytest.raises(RuntimeError, match=r"cogflow\[agent-otel\]"):

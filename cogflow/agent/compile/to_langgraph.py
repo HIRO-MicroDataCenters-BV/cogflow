@@ -18,7 +18,7 @@ from typing import Any, Callable, Mapping
 from langgraph.graph import END, START, StateGraph
 
 from ..ir.model import IRGraph, IRNode
-from ..ir.validate import validate
+from ..ir.validate import END_SENTINEL, validate
 from ..nodes import FACTORY_BY_IR_TYPE, NodeFactory
 from ..state import introspect_state, synthesize_typeddict
 from .topo import edges_from
@@ -114,23 +114,30 @@ def to_langgraph(
     end_edged: set[str] = set()  # nodes already wired to END (avoid duplicates)
 
     for node in runtime_nodes:
-        # Only route to nodes actually registered with the builder. Edges that
-        # target the Start (or skipped) node are dropped — looping back to
-        # entry would require routing to LangGraph's ``START`` sentinel, which
-        # is not what an edge to a removed Start node means.
-        outs = [e for e in edges_from(graph, node.id) if e.target in runtime_ids]
+        # Only route to nodes actually registered with the builder, plus the
+        # END sentinel for branches that terminate. Edges that target the
+        # Start (or skipped) node are dropped — looping back to entry would
+        # require routing to LangGraph's ``START`` sentinel, which is not what
+        # an edge to a removed Start node means.
+        outs = [
+            e
+            for e in edges_from(graph, node.id)
+            if e.target in runtime_ids or e.target == END_SENTINEL
+        ]
         if not outs:
             builder.add_edge(node.id, END)
             end_edged.add(node.id)
             continue
 
         if node.type in _CONDITION_TYPES and len(outs) > 1:
-            branch_to_target: dict[str, str] = {}
+            branch_to_target: dict[str, Any] = {}
             for e in outs:
                 key = e.label or e.target_handle or e.target
-                branch_to_target[key] = e.target
+                # Translate the IR END sentinel back to LangGraph's END object
+                # so only this specific branch terminates (not the whole node).
+                branch_to_target[key] = END if e.target == END_SENTINEL else e.target
 
-            def router(state: dict[str, Any], _mapping: dict[str, str] = branch_to_target) -> str:
+            def router(state: dict[str, Any], _mapping: dict[str, Any] = branch_to_target) -> Any:
                 branch = state.get("_condition_branch")
                 if isinstance(branch, str) and branch in _mapping:
                     return _mapping[branch]
@@ -139,7 +146,10 @@ def to_langgraph(
             builder.add_conditional_edges(node.id, router)
         else:
             for e in outs:
-                builder.add_edge(node.id, e.target)
+                target = END if e.target == END_SENTINEL else e.target
+                builder.add_edge(node.id, target)
+                if target == END:
+                    end_edged.add(node.id)
 
     # Explicit finish points (``IRGraph.finish``) — wire them to END unless we
     # already did so via the leaf-node path above. A node can be both a finish

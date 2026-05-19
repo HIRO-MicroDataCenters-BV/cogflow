@@ -23,6 +23,7 @@ from langgraph.graph import END, START
 from langgraph.graph import StateGraph as _LangGraphStateGraph
 
 from .ir import (
+    END_SENTINEL,
     IRGraph,
     IRNode,
     IRPort,
@@ -144,12 +145,18 @@ class StateGraph(_LangGraphStateGraph):
         if isinstance(mapping, list):
             mapping = {k: k for k in mapping}
         for branch, target in mapping.items():
-            if target == END:
-                self.ir.finish.append(source)
-                continue
-            edge = _ir_add_edge(self.ir, source=source, target=target, label=str(branch))
-            edge.target_handle = target
-        return super().add_conditional_edges(source, path, path_map, then)  # type: ignore[no-any-return]
+            # Branch-level termination: a single branch routing to END must NOT
+            # force every other branch to terminate too (the prior behavior
+            # incorrectly added ``source`` to ``ir.finish``). Record the
+            # END sentinel as the edge target so ``to_langgraph`` translates
+            # only this branch to LangGraph's END.
+            real_target = END_SENTINEL if target == END else target
+            edge = _ir_add_edge(self.ir, source=source, target=real_target, label=str(branch))
+            edge.target_handle = None if real_target == END_SENTINEL else target
+        # ``then`` was added in newer langgraph; pass through only when set.
+        if then is None:
+            return super().add_conditional_edges(source, path, path_map)  # type: ignore[no-any-return]
+        return super().add_conditional_edges(source, path, path_map, then=then)  # type: ignore[no-any-return]
 
     def set_entry_point(self, key: str) -> "StateGraph":  # type: ignore[override]
         start_node = _synthesize_start_node(self.ir)

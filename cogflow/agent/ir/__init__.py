@@ -11,9 +11,10 @@ from .model import (
     IRStateField,
     IRStateType,
 )
-from .validate import IRValidationError, validate
+from .validate import END_SENTINEL, IRValidationError, validate
 
 __all__ = [
+    "END_SENTINEL",
     "IREdge",
     "IRGraph",
     "IRNode",

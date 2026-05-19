@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from .model import IRGraph
 
+# Sentinel target for edges that terminate the graph. Matches LangGraph's
+# ``END`` (``"__end__"``) so the compile path can translate without a lookup.
+END_SENTINEL = "__end__"
+
 
 class IRValidationError(ValueError):
     """Raised when an IRGraph fails topology validation."""
@@ -37,5 +41,7 @@ def validate(graph: IRGraph) -> None:
         edge_ids.add(e.id)
         if e.source not in node_ids:
             raise IRValidationError(f"edge {e.id!r} source {e.source!r} missing")
-        if e.target not in node_ids:
+        # The END sentinel is a legitimate edge target for conditional branches
+        # that terminate; it doesn't correspond to a node.
+        if e.target != END_SENTINEL and e.target not in node_ids:
             raise IRValidationError(f"edge {e.id!r} target {e.target!r} missing")
