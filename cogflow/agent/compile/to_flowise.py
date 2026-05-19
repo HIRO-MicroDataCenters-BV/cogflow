@@ -20,6 +20,20 @@ from ..constants import (
 from ..ir.model import IREdge, IRGraph, IRNode
 
 
+def _default_output_handle(graph: IRGraph, node_id: str) -> str:
+    """The canonical sourceHandle id Flowise expects on the source node."""
+    node = graph.node_by_id(node_id)
+    if node is not None and node.outputs:
+        return node.outputs[0].id
+    flowise_name = IR_TYPE_TO_FLOWISE_NAME.get(node.type, "output") if node else "output"
+    return f"{node_id}-output-{flowise_name}"
+
+
+def _default_target_handle(node_id: str) -> str:
+    """Flowise targetHandle defaults to the bare node id."""
+    return node_id
+
+
 def _node_to_dict(node: IRNode) -> dict[str, Any]:
     raw = (node.flowise_provenance or {}).get("node") if node.flowise_provenance else None
     if isinstance(raw, dict):
@@ -68,7 +82,7 @@ def _node_to_dict(node: IRNode) -> dict[str, Any]:
     }
 
 
-def _edge_to_dict(edge: IREdge) -> dict[str, Any]:
+def _edge_to_dict(edge: IREdge, graph: IRGraph) -> dict[str, Any]:
     raw = (edge.flowise_provenance or {}).get("edge") if edge.flowise_provenance else None
     if isinstance(raw, dict):
         result = copy.deepcopy(raw)
@@ -88,9 +102,11 @@ def _edge_to_dict(edge: IREdge) -> dict[str, Any]:
     return {
         "id": edge.id,
         "source": edge.source,
-        "sourceHandle": edge.source_handle or f"{edge.source}-output",
+        # Default handles derived from actual node anchors so synthesized edges
+        # round-trip cleanly through Flowise (the canvas matches by handle id).
+        "sourceHandle": edge.source_handle or _default_output_handle(graph, edge.source),
         "target": edge.target,
-        "targetHandle": edge.target_handle or edge.target,
+        "targetHandle": edge.target_handle or _default_target_handle(edge.target),
         "type": "agentFlow",
         "data": {"isHumanInput": edge.is_human_input},
     }
@@ -107,7 +123,7 @@ def to_dict(graph: IRGraph, *, analytics: dict[str, Any] | None = None) -> dict[
         out["usecases"] = usecases
 
     out["nodes"] = [_node_to_dict(n) for n in graph.nodes]
-    out["edges"] = [_edge_to_dict(e) for e in graph.edges]
+    out["edges"] = [_edge_to_dict(e, graph) for e in graph.edges]
 
     if graph.viewport is not None:
         out["viewport"] = graph.viewport

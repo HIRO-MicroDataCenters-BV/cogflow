@@ -9,16 +9,41 @@ from typing import Any, Callable, Mapping
 from ..ir.model import IRNode
 from .base import NodeFactory
 
+
+def _as_str(value: Any) -> str:
+    """Coerce any value to a string for string-shaped operators."""
+    if value is None:
+        return ""
+    return value if isinstance(value, str) else str(value)
+
+
+def _regex_match(a: Any, b: Any) -> bool:
+    try:
+        return bool(re.search(_as_str(b), _as_str(a)))
+    except re.error:
+        return False
+
+
+def _safe_cmp(op: Callable[[Any, Any], bool]) -> Callable[[Any, Any], bool]:
+    def cmp(a: Any, b: Any) -> bool:
+        try:
+            return op(a, b)
+        except TypeError:
+            return False
+
+    return cmp
+
+
 _OPS: dict[str, Callable[[Any, Any], bool]] = {
     "Equal": _op.eq,
     "NotEqual": _op.ne,
-    "Contains": lambda a, b: b in (a or ""),
-    "NotContains": lambda a, b: b not in (a or ""),
-    "StartsWith": lambda a, b: isinstance(a, str) and a.startswith(b),
-    "EndsWith": lambda a, b: isinstance(a, str) and a.endswith(b),
-    "RegexMatch": lambda a, b: bool(re.search(b, a or "")),
-    "Greater": _op.gt,
-    "Less": _op.lt,
+    "Contains": lambda a, b: _as_str(b) in _as_str(a),
+    "NotContains": lambda a, b: _as_str(b) not in _as_str(a),
+    "StartsWith": lambda a, b: _as_str(a).startswith(_as_str(b)),
+    "EndsWith": lambda a, b: _as_str(a).endswith(_as_str(b)),
+    "RegexMatch": _regex_match,
+    "Greater": _safe_cmp(_op.gt),
+    "Less": _safe_cmp(_op.lt),
 }
 
 

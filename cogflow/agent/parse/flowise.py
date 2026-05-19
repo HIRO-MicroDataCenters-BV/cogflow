@@ -59,19 +59,24 @@ def _ports(raw: list[Any] | None) -> list[IRPort]:
 def _state_from_start(inputs: dict[str, Any]) -> list[IRStateField]:
     raw = inputs.get("startState")
     out: list[IRStateField] = []
-    if not isinstance(raw, list):
-        return out
-    for entry in raw:
-        if not isinstance(entry, dict):
-            continue
-        key = entry.get("key")
-        if not key:
-            continue
-        out.append(IRStateField(key=key, default=entry.get("value")))
-    # always ensure ``messages`` exists with the add_messages reducer so chat
-    # semantics work regardless of whether the user explicitly declared it.
-    if not any(f.key == "messages" for f in out):
+    if isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            key = entry.get("key")
+            if not key:
+                continue
+            out.append(IRStateField(key=key, default=entry.get("value")))
+
+    # Always normalize the ``messages`` field to type=messages + add_messages.
+    # Whether the user declared it explicitly or not, LangGraph needs the
+    # reducer to preserve chat semantics across nodes.
+    existing = next((f for f in out if f.key == "messages"), None)
+    if existing is None:
         out.append(IRStateField(key="messages", type="messages", reducer="add_messages"))
+    else:
+        existing.type_ = "messages"
+        existing.reducer = "add_messages"
     return out
 
 

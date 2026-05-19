@@ -89,7 +89,9 @@ agent-langsmith = [
 
 agent-otel = [
   "cogflow[agent]",
-  "openinference-instrumentation-langchain>=0.1.0"
+  "openinference-instrumentation-langchain>=0.1.0",
+  "opentelemetry-sdk>=1.20.0",
+  "opentelemetry-exporter-otlp>=1.20.0"
 ]
 
 [project.urls]

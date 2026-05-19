@@ -23,7 +23,10 @@ def _coerce_messages(items: Any) -> list[BaseMessage]:
         if isinstance(entry, Mapping):
             role = entry.get("role", "user")
             content = entry.get("content", "")
-            if role == "system":
+            # Flowise's message UI exposes a ``developer`` role alongside
+            # system/assistant/user. Map it to SystemMessage so prompt intent
+            # survives import (LangChain has no first-class developer message).
+            if role in ("system", "developer"):
                 out.append(SystemMessage(content=content))
             elif role == "assistant":
                 out.append(AIMessage(content=content))

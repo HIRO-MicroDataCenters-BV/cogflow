@@ -41,8 +41,17 @@ class OTelAdapter(TracingAdapter):
                 provider = TracerProvider()
                 provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
                 trace.set_tracer_provider(provider)
-            except ImportError:  # pragma: no cover
-                pass
+            except ImportError as exporter_exc:
+                # Loud failure: tracing would otherwise appear enabled but
+                # nothing would actually reach the endpoint. Raise so the user
+                # learns to install the SDK + exporter explicitly.
+                raise RuntimeError(
+                    f"OTel endpoint={endpoint!r} was provided, but the OpenTelemetry SDK and OTLP "
+                    "exporter packages are not installed. Install with "
+                    "`pip install cogflow[agent-otel]` (which now pulls in opentelemetry-sdk and "
+                    "opentelemetry-exporter-otlp), or set `endpoint=None` to keep the LangChain "
+                    "instrumentor active without span export."
+                ) from exporter_exc
 
         self._instrumentor = LangChainInstrumentor()
         self._instrumentor.instrument()
