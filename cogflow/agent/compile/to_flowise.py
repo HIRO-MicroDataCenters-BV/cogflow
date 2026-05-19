@@ -95,11 +95,19 @@ def _edge_to_dict(edge: IREdge, graph: IRGraph) -> dict[str, Any]:
             result["sourceHandle"] = edge.source_handle
         if edge.target_handle is not None:
             result["targetHandle"] = edge.target_handle
-        # Overlay is_human_input onto data.isHumanInput so IR-side mutations
+        # Overlay is_human_input + edgeLabel onto data so IR-side mutations
         # survive re-emission of provenance-carrying edges.
         data = result.setdefault("data", {})
         data["isHumanInput"] = edge.is_human_input
+        if edge.label is not None:
+            data["edgeLabel"] = edge.label
         return result
+
+    edge_data: dict[str, Any] = {"isHumanInput": edge.is_human_input}
+    if edge.label is not None:
+        # Conditional / ConditionAgent branches carry their selector value here;
+        # Flowise renders it on the canvas and re-imports it via ``data.edgeLabel``.
+        edge_data["edgeLabel"] = edge.label
 
     return {
         "id": edge.id,
@@ -110,7 +118,7 @@ def _edge_to_dict(edge: IREdge, graph: IRGraph) -> dict[str, Any]:
         "target": edge.target,
         "targetHandle": edge.target_handle or _default_target_handle(edge.target),
         "type": "agentFlow",
-        "data": {"isHumanInput": edge.is_human_input},
+        "data": edge_data,
     }
 
 
