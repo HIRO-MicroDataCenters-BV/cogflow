@@ -32,11 +32,14 @@ class MLflowAdapter(TracingAdapter):
 
         uri = tracking_uri
         if uri is None:
+            # Only swallow the "config not importable" or "attribute missing"
+            # cases. A runtime error inside ``cogflow.config`` (e.g., bad
+            # settings evaluation) should bubble up — silently falling back
+            # to ``uri=None`` would mask real config bugs.
             try:
                 from cogflow.config import config as _cfg  # type: ignore  # noqa: WPS433
-
                 uri = getattr(_cfg, "MLFLOW_TRACKING_URI", None)
-            except Exception:
+            except (ImportError, AttributeError):
                 uri = None
 
         if uri:
