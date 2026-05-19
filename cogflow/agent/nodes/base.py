@@ -58,6 +58,24 @@ class NodeFactory(ABC):
         """The ``data.inputs`` block emitted when there's no provenance to copy."""
         return dict(node.config)
 
+    # ------------------------------------------------------------------
+    # JSON-loaded hydration
+    # ------------------------------------------------------------------
+    @classmethod
+    def from_ir(cls, node: IRNode) -> "NodeFactory":
+        """Construct a factory instance from an IR row.
+
+        Used by ``compile.to_langgraph`` when no live factory was registered
+        for the node (i.e. the graph came from a Flowise JSON import). The
+        default implementation skips ``__init__`` so subclasses with strict
+        keyword args don't break, and seeds only the common attributes that
+        every factory's ``to_callable`` consults. Subclasses with additional
+        runtime state should override this method.
+        """
+        instance = cls.__new__(cls)
+        instance.config = dict(node.config)
+        return instance
+
 
 def passthrough(state: Any) -> dict[str, Any]:
     """Returns an empty update; useful for nodes whose runtime is stubbed."""

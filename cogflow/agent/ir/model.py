@@ -33,6 +33,10 @@ IRNodeType = Literal[
     "human_input",
     "execute_flow",
     "sticky_note",
+    # Catch-all for Flowise node names we don't recognize. Lossless via
+    # provenance on export; compiles to a passthrough runtime node so the
+    # surrounding edges keep routing.
+    "unknown",
 ]
 
 IRStateType = Literal["str", "int", "float", "bool", "list", "dict", "messages"]

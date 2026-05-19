@@ -60,7 +60,9 @@ class ConditionFactory(NodeFactory):
         self._rules = rules or []
 
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
-        rules = list(self._rules)
+        # Fall back to the IR-stored ``conditionItems`` config when hydrated
+        # from JSON (no ``_rules`` attribute set).
+        rules = list(getattr(self, "_rules", None) or self.config.get("conditionItems") or [])
 
         def condition_node(state: dict[str, Any]) -> dict[str, Any]:
             for rule in rules:

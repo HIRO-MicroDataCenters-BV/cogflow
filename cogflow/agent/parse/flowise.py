@@ -26,9 +26,10 @@ from ..ir.model import (
 
 def _ir_type_for(name: str) -> str:
     if name not in FLOWISE_NAME_TO_IR_TYPE:
-        # Unknown node names default to sticky_note (no-op at compile) so we
-        # don't lose the JSON; provenance still round-trips exactly.
-        return "sticky_note"
+        # Unknown node names map to ``unknown`` so the compiler treats them as
+        # passthrough runtime nodes (keeps surrounding edges flowing) while
+        # ``flowise_provenance`` preserves the original JSON for round-trip.
+        return "unknown"
     return FLOWISE_NAME_TO_IR_TYPE[name]
 
 

@@ -38,16 +38,13 @@ def _callable_for(node: IRNode, factories: Mapping[str, NodeFactory] | None) -> 
     factory_cls = FACTORY_BY_IR_TYPE.get(node.type)
     if factory_cls is None:
         return _passthrough
-    # Instantiate without the kwargs-validating __init__ so JSON-loaded nodes
-    # can supply their (Flowise-shaped) config dict directly.
-    bare = factory_cls.__new__(factory_cls)
-    bare.config = dict(node.config)  # type: ignore[attr-defined]
-    bare._model = None  # type: ignore[attr-defined]
-    bare._tools = []  # type: ignore[attr-defined]
-    bare._fn = None  # type: ignore[attr-defined]
-    bare._rules = node.config.get("conditionItems") or []  # type: ignore[attr-defined]
-    bare._scenarios = node.config.get("conditionAgentScenarios") or []  # type: ignore[attr-defined]
-    return bare.to_callable(node)
+    # Hydrate via the stable factory API rather than reaching into private
+    # attributes. Each factory's ``to_callable`` reads its runtime state
+    # through ``getattr(self, "_attr", default)`` so a hydrated-from-IR
+    # instance behaves as a safe passthrough until a live model/tool is
+    # injected via the ``factories=`` parameter.
+    instance = factory_cls.from_ir(node)
+    return instance.to_callable(node)
 
 
 def _state_schema(graph: IRGraph) -> type:

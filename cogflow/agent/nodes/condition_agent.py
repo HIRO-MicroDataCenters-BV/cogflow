@@ -31,8 +31,9 @@ class ConditionAgentFactory(NodeFactory):
         self._scenarios = scenarios or []
 
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
-        model = self._model if not isinstance(self._model, str) else None
-        scenarios = list(self._scenarios)
+        raw_model = getattr(self, "_model", None)
+        model = raw_model if not isinstance(raw_model, str) else None
+        scenarios = list(getattr(self, "_scenarios", None) or self.config.get("conditionAgentScenarios") or [])
         instructions = self.config.get("conditionAgentInstructions", "") or ""
 
         def condition_agent_node(state: dict[str, Any]) -> dict[str, Any]:

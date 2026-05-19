@@ -57,7 +57,10 @@ class LLMFactory(NodeFactory):
         self._model = model
 
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
-        model = self._model if not isinstance(self._model, str) else None
+        # ``_model`` may be absent on instances hydrated via ``from_ir``;
+        # fall back to None so JSON-loaded nodes become passthroughs.
+        raw_model = getattr(self, "_model", None)
+        model = raw_model if not isinstance(raw_model, str) else None
         prompts = _coerce_messages(self.config.get("llmMessages"))
 
         def llm_node(state: dict[str, Any]) -> dict[str, Any]:

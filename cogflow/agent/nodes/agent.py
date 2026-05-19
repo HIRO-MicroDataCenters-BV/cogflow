@@ -40,8 +40,9 @@ class AgentFactory(NodeFactory):
         self._tools = tools or []
 
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
-        model = self._model if not isinstance(self._model, str) else None
-        tools = list(self._tools)
+        raw_model = getattr(self, "_model", None)
+        model = raw_model if not isinstance(raw_model, str) else None
+        tools = list(getattr(self, "_tools", []) or [])
         # Mirror LLMFactory: surface the configured prompt (Flowise
         # ``agentMessages``) as a prefix on every invocation so system/dev
         # prompts apply to both Python-first and JSON-loaded graphs.

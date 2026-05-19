@@ -27,7 +27,7 @@ class ToolFactory(NodeFactory):
         self._fn = fn
 
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
-        fn = self._fn
+        fn = getattr(self, "_fn", None)
 
         def tool_node(state: dict[str, Any]) -> dict[str, Any]:
             if fn is None:
