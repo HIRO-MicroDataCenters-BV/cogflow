@@ -137,8 +137,23 @@ def to_langgraph(
 
     for node in runtime_nodes:
         if node.type == "loop":
-            target = node.config.get("loopTarget") or ""
-            max_iters = int(node.config.get("loopMaxIterations") or 5)
+            # Accept both Python-first keys (loopTarget / loopMaxIterations)
+            # and Flowise-native ones (loopBackToNode / maxLoopCount). The
+            # Flowise value encodes ``{node_id}-{label}``; strip the label
+            # suffix so the routing actually finds the runtime node.
+            raw_target = (
+                node.config.get("loopTarget")
+                or node.config.get("loopBackToNode")
+                or ""
+            )
+            if raw_target and "-" in raw_target and raw_target not in runtime_ids:
+                raw_target = raw_target.split("-", 1)[0]
+            target = raw_target
+            max_iters = int(
+                node.config.get("loopMaxIterations")
+                or node.config.get("maxLoopCount")
+                or 5
+            )
             counter_key = f"_loop_count__{node.id}"
             # Follow the loop's normal outgoing edge (if any) when the cap is hit.
             exit_target: Any = END

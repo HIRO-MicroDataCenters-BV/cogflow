@@ -44,13 +44,22 @@ def _node_to_dict(node: IRNode) -> dict[str, Any]:
         result["position"] = pos
         # ``positionAbsolute`` is *not* always equal to ``position`` — Flowise
         # uses absolute coords for nodes inside an Iteration sub-canvas
-        # (positionAbsolute = parent + position). Preserve the provenance
-        # value when ``position`` wasn't mutated relative to its origin;
-        # only overwrite when the IR position diverged so the canvas stays
-        # consistent for mutated nodes.
+        # (positionAbsolute = parent + position). When the IR position is
+        # unmutated, preserve the original absolute. When it *was* moved,
+        # apply the same delta to the original absolute so the parent offset
+        # is preserved; fall back to ``pos`` only if the provenance lacks an
+        # absolute (i.e. top-level node).
         original_pos = raw.get("position") or {}
+        original_abs = raw.get("positionAbsolute")
         if (original_pos.get("x"), original_pos.get("y")) == (pos["x"], pos["y"]):
             result.setdefault("positionAbsolute", dict(pos))
+        elif isinstance(original_abs, dict):
+            dx = pos["x"] - float(original_pos.get("x", 0.0))
+            dy = pos["y"] - float(original_pos.get("y", 0.0))
+            result["positionAbsolute"] = {
+                "x": float(original_abs.get("x", 0.0)) + dx,
+                "y": float(original_abs.get("y", 0.0)) + dy,
+            }
         else:
             result["positionAbsolute"] = dict(pos)
         data = result.setdefault("data", {})

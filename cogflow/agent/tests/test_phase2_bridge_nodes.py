@@ -306,7 +306,7 @@ def test_custom_function_from_ir_rejects_js_body():
         CustomFunctionFactory.from_ir(ir_node)
 
 
-def test_human_input_reads_flowise_description_key():
+def test_human_input_reads_flowise_description_key(monkeypatch):
     """JSON-loaded HumanInput uses ``humanInputDescription``, not ``humanInputPrompt``."""
     from cogflow.agent.nodes import HumanInputFactory
 
@@ -315,12 +315,18 @@ def test_human_input_reads_flowise_description_key():
         _ir("hi_flowise", "human_input", {"humanInputDescription": "Approve?"})
     )
     fn = bare.to_callable(_ir("hi_flowise", "human_input", bare.config))
-    # interrupt() raises GraphInterrupt — exercising via the runtime is heavy.
-    # Cheap sanity check: the bound prompt isn't empty.
+
+    # Use monkeypatch so the patch is undone after the test — direct
+    # assignment to lgt.interrupt would leak across tests and could cause
+    # order-dependent failures in test_human_input_calls_interrupt et al.
     import langgraph.types as lgt
 
     captured: dict[str, Any] = {}
-    lgt.interrupt = lambda payload: captured.setdefault("payload", payload) or "ok"  # type: ignore[assignment]
+    monkeypatch.setattr(
+        lgt,
+        "interrupt",
+        lambda payload: captured.setdefault("payload", payload) or "ok",
+    )
     fn({})
     assert captured["payload"]["prompt"] == "Approve?"
 

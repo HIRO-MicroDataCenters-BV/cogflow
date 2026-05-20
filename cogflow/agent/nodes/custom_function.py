@@ -10,6 +10,7 @@ security sandbox. Don't execute untrusted flows.
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Callable, Mapping
 
 from ..ir.model import IRNode
@@ -91,12 +92,24 @@ class CustomFunctionFactory(NodeFactory):
         output_key = self.config.get("customFunctionOutputKey") or "custom_output"
         allow_exec = bool((ctx or {}).get("allow_custom_code", False)) if ctx else False
 
+        # Decide once how to call ``fn`` based on its signature so a real
+        # TypeError raised inside the user body bubbles up unchanged. The
+        # earlier bare ``except TypeError`` matched ToolFactory's old bug —
+        # it swallowed user errors and could call the body twice.
+        if fn is not None:
+            try:
+                _sig = inspect.signature(fn)
+                _params = _sig.parameters
+                _no_args = len(_params) == 0
+            except (TypeError, ValueError):
+                # Builtins / C callables: assume ``fn(state)`` works.
+                _no_args = False
+        else:
+            _no_args = False
+
         def custom_fn_node(state: dict[str, Any]) -> dict[str, Any]:
             if fn is not None:
-                try:
-                    result = fn(state)
-                except TypeError:
-                    result = fn()
+                result = fn() if _no_args else fn(state)
                 return {output_key: result}
 
             # String body path is gated — refuse to exec without explicit opt-in.

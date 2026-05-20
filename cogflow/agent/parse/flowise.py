@@ -85,15 +85,21 @@ def _index_iteration_children(raw_nodes: list[dict[str, Any]]) -> dict[str, list
     """Map an iteration node id -> list of child node ids (via ``parentNode``).
 
     Flowise represents iteration bodies as nodes carrying a ``parentNode``
-    field pointing at the iteration container. We capture that here so the
-    parser can stamp ``iterationBody`` onto the iteration node's config.
+    field pointing at the iteration container. We capture that here and
+    stash the resolved body id under ``flowise_provenance.iteration_body_id``
+    (NOT in ``config``, so the iteration node round-trips byte-identically).
     """
     children: dict[str, list[str]] = {}
     for n in raw_nodes:
         parent = n.get("parentNode")
         if not parent:
             continue
-        children.setdefault(parent, []).append(n.get("id") or "")
+        child_id = n.get("id")
+        if not child_id:
+            # Skip malformed entries — appending an empty string would
+            # propagate a bogus body reference into provenance.
+            continue
+        children.setdefault(parent, []).append(child_id)
     return children
 
 
