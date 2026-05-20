@@ -4,9 +4,14 @@ Usage:
 
     from cogflow.agent.tracing import configure_tracing
     configure_tracing(backend="mlflow", experiment="agentflow")  # default
-    configure_tracing(backend="langsmith", project="agentflow")  # opt-in
     configure_tracing(backend="otel", endpoint="http://collector:4318")
     configure_tracing(backend=None)                              # disable all
+
+Note: LangSmith is not shipped as a built-in adapter — its hosted service
+requires a separate commercial license that Cognitive Framework does not
+bundle. If a user wants LangSmith tracing they can set
+``LANGCHAIN_TRACING_V2=true`` + ``LANGCHAIN_API_KEY`` themselves; LangChain
+will pick it up at runtime without any CF-side wiring.
 """
 
 from __future__ import annotations
@@ -14,13 +19,11 @@ from __future__ import annotations
 from typing import Any
 
 from .base import TracingAdapter
-from .langsmith import LangSmithAdapter
 from .mlflow import MLflowAdapter
 from .otel import OTelAdapter
 
 _ADAPTERS: dict[str, TracingAdapter] = {
     "mlflow": MLflowAdapter(),
-    "langsmith": LangSmithAdapter(),
     "otel": OTelAdapter(),
 }
 
@@ -46,7 +49,6 @@ def configure_tracing(backend: str | None = "mlflow", **kwargs: Any) -> TracingA
 
 
 __all__ = [
-    "LangSmithAdapter",
     "MLflowAdapter",
     "OTelAdapter",
     "TracingAdapter",

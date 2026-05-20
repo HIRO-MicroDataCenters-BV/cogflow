@@ -42,3 +42,13 @@ def structured_output_path(marketplace_dir: Path) -> Path:
 @pytest.fixture(scope="session")
 def translator_path(marketplace_dir: Path) -> Path:
     return marketplace_dir / "translator.json"
+
+
+@pytest.fixture(scope="session")
+def iterations_path(marketplace_dir: Path) -> Path:
+    return marketplace_dir / "iterations.json"
+
+
+@pytest.fixture(scope="session")
+def human_in_the_loop_path(marketplace_dir: Path) -> Path:
+    return marketplace_dir / "human_in_the_loop.json"

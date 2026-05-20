@@ -6,9 +6,17 @@ callable still runs (so users can read ``_condition_branch`` from state),
 but routing comes from the IR edge fan-out.
 
 For nodes loaded from JSON we don't have a factory instance carrying live
-references to a model or tool callable. Such nodes get a passthrough body —
-useful for structure / round-trip tests. Pass ``factories={node_id: factory}``
-to ``to_langgraph`` to inject live runtime objects.
+references to a model or tool callable. Two injection points cover that:
+
+  - ``factories={node_id: factory_instance}`` — per-node, used when you want
+    one specific node in an imported graph to have a live model/tool.
+  - ``ctx={...}`` — shared by every node, threaded through to every
+    factory's ``to_callable(node, ctx=ctx)``. Bridge-node factories use it
+    for runtime objects they can't capture at construction time (httpx
+    stub, retriever store, allow_custom_code gate, etc.).
+
+Loop nodes additionally rewrite themselves into a conditional back-edge
+(target → loop body → … → loop) bounded by ``loopMaxIterations``.
 """
 
 from __future__ import annotations
@@ -32,19 +40,23 @@ def _passthrough(_state: Any) -> dict[str, Any]:
     return {}
 
 
-def _callable_for(node: IRNode, factories: Mapping[str, NodeFactory] | None) -> Callable[..., Any]:
+def _callable_for(
+    node: IRNode,
+    factories: Mapping[str, NodeFactory] | None,
+    ctx: Mapping[str, Any] | None = None,
+) -> Callable[..., Any]:
     if factories and node.id in factories:
-        return factories[node.id].to_callable(node)
+        return factories[node.id].to_callable(node, ctx=ctx)
     factory_cls = FACTORY_BY_IR_TYPE.get(node.type)
     if factory_cls is None:
         return _passthrough
     # Hydrate via the stable factory API rather than reaching into private
     # attributes. Each factory's ``to_callable`` reads its runtime state
     # through ``getattr(self, "_attr", default)`` so a hydrated-from-IR
-    # instance behaves as a safe passthrough until a live model/tool is
-    # injected via the ``factories=`` parameter.
+    # instance behaves as a safe passthrough until a live runtime object is
+    # injected via either ``factories=`` (per-node) or ``ctx=`` (shared).
     instance = factory_cls.from_ir(node)
-    return instance.to_callable(node)
+    return instance.to_callable(node, ctx=ctx)
 
 
 def _state_schema(graph: IRGraph) -> type:
@@ -59,12 +71,20 @@ def to_langgraph(
     graph: IRGraph,
     *,
     factories: Mapping[str, NodeFactory] | None = None,
+    ctx: Mapping[str, Any] | None = None,
     state_schema: type | None = None,
     checkpointer: Any = None,
     interrupt_before: list[str] | None = None,
     interrupt_after: list[str] | None = None,
 ):
-    """Compile an IRGraph into a ``CompiledStateGraph``."""
+    """Compile an IRGraph into a ``CompiledStateGraph``.
+
+    ``ctx`` is a shared mapping threaded through every node's ``to_callable``.
+    Bridge-node factories use it to resolve runtime objects they couldn't
+    capture at construction time — e.g., ``ctx={"httpx": stub_client,
+    "flows": {flow_id: compiled_graph}, "retriever": store,
+    "allow_custom_code": True}``.
+    """
     validate(graph)
 
     schema = state_schema or _state_schema(graph)
@@ -73,8 +93,14 @@ def to_langgraph(
     runtime_nodes = [n for n in graph.nodes if n.type not in _SKIP_TYPES and n.type != "start"]
     runtime_ids = {n.id for n in runtime_nodes}
 
+    # Inject the runtime node set into ``ctx`` so bridge factories (e.g.
+    # Iteration) can validate cross-node references at runtime instead of
+    # emitting Send/goto to a node the compiler skipped.
+    enriched_ctx = dict(ctx or {})
+    enriched_ctx.setdefault("runtime_node_ids", runtime_ids)
+
     for node in runtime_nodes:
-        builder.add_node(node.id, _callable_for(node, factories))
+        builder.add_node(node.id, _callable_for(node, factories, enriched_ctx))
 
     # Entry edge from LangGraph's START sentinel. Two cases:
     #   - ``graph.entry`` points at a Start IR node (the common case from a
@@ -108,12 +134,66 @@ def to_langgraph(
         # node: enter the first declared runtime node so something runs.
         builder.add_edge(START, runtime_nodes[0].id)
 
-    # Runtime edges. Condition nodes use add_conditional_edges; everything else
-    # is a plain add_edge.
+    # Runtime edges. Condition nodes use add_conditional_edges; loop nodes
+    # use a conditional back-edge bounded by their max-iterations counter;
+    # everything else is a plain add_edge.
     finish_ids = {fid for fid in graph.finish if fid in runtime_ids}
     end_edged: set[str] = set()  # nodes already wired to END (avoid duplicates)
+    routed_via_router: set[str] = set()  # nodes that already have a conditional router
 
     for node in runtime_nodes:
+        if node.type == "loop":
+            # Accept both Python-first keys (loopTarget / loopMaxIterations)
+            # and Flowise-native ones (loopBackToNode / maxLoopCount). The
+            # Flowise value encodes ``{node_id}-{label}``; strip the label
+            # suffix so the routing actually finds the runtime node.
+            raw_target = (
+                node.config.get("loopTarget")
+                or node.config.get("loopBackToNode")
+                or ""
+            )
+            if raw_target and "-" in raw_target and raw_target not in runtime_ids:
+                raw_target = raw_target.split("-", 1)[0]
+            target = raw_target
+            max_iters = int(
+                node.config.get("loopMaxIterations")
+                or node.config.get("maxLoopCount")
+                or 5
+            )
+            counter_key = f"_loop_count__{node.id}"
+            # If the target couldn't be resolved to a registered runtime node
+            # (typo, dangling reference after a node deletion, unsupported
+            # naming) we drop it so the router doesn't return an unknown id
+            # that LangGraph would error on at runtime.
+            if target and target not in runtime_ids:
+                target = ""
+
+            # Follow the loop's normal outgoing edge (if any) when the cap is hit.
+            exit_target: Any = END
+            for e in edges_from(graph, node.id):
+                if e.target in runtime_ids and e.target != target:
+                    exit_target = e.target
+                    break
+                if e.target == END_SENTINEL:
+                    exit_target = END
+                    break
+
+            def _loop_router(
+                state: dict[str, Any],
+                _counter_key: str = counter_key,
+                _max: int = max_iters,
+                _target: str = target,
+                _exit: Any = exit_target,
+            ) -> Any:
+                if _target and int(state.get(_counter_key, 0) or 0) < _max:
+                    return _target
+                return _exit
+
+            builder.add_conditional_edges(node.id, _loop_router)
+            routed_via_router.add(node.id)
+            if exit_target == END:
+                end_edged.add(node.id)
+            continue
         # Only route to nodes actually registered with the builder, plus the
         # END sentinel for branches that terminate. Edges that target the
         # Start (or skipped) node are dropped — looping back to entry would
@@ -144,6 +224,7 @@ def to_langgraph(
                 return next(iter(_mapping.values()))
 
             builder.add_conditional_edges(node.id, router)
+            routed_via_router.add(node.id)
         else:
             for e in outs:
                 target = END if e.target == END_SENTINEL else e.target
@@ -154,7 +235,9 @@ def to_langgraph(
     # Explicit finish points (``IRGraph.finish``) — wire them to END unless we
     # already did so via the leaf-node path above. A node can be both a finish
     # point AND have outgoing edges; in that case it needs an explicit END edge.
-    for fid in finish_ids - end_edged:
+    # Skip any node that already has a conditional router — LangGraph forbids
+    # mixing an unconditional and conditional outgoing edge on the same node.
+    for fid in finish_ids - end_edged - routed_via_router:
         builder.add_edge(fid, END)
 
     return builder.compile(

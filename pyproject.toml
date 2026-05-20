@@ -82,10 +82,9 @@ agent = [
   "langchain-core >=0.3,<0.4"
 ]
 
-agent-langsmith = [
-  "cogflow[agent]",
-  "langsmith>=0.1.0"
-]
+# Note: a LangSmith adapter was intentionally NOT shipped. LangSmith is a
+# commercially-licensed hosted service; users who want it can simply set
+# LANGCHAIN_TRACING_V2=true + LANGCHAIN_API_KEY in their own environment.
 
 agent-otel = [
   "cogflow[agent]",
