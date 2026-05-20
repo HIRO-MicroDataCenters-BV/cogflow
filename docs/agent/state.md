@@ -46,9 +46,10 @@ A Flowise Start node's `startState` is a list of `{key, value}` entries:
 ```
 
 `parse.flowise.from_file` reads that into a list of `IRStateField`s.
-`compile.to_langgraph` then calls `state.synthesize_typeddict(fields)`
-which builds an actual `TypedDict` class at runtime, reattaching any
-known reducers (`add_messages`, `operator.add`).
+`compile.to_langgraph` then calls
+`cogflow.agent.state.synthesize_typeddict(fields)` which builds an
+actual `TypedDict` class at runtime, reattaching any known reducers
+(`add_messages`, `operator.add`).
 
 The `messages` field is always upgraded to `type="messages" + reducer="add_messages"`
 even if the user didn't declare it in `startState`, so chat semantics
