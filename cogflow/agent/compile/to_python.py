@@ -16,7 +16,10 @@ Agent, Tool, Condition, ConditionAgent, DirectReply) plus Loop and
 HumanInput, which have clean LangGraph mappings. Bridge nodes with
 opaque runtime semantics (HTTP, Retriever, CustomFunction body, ExecuteFlow,
 Iteration) emit a clearly-marked TODO stub so the user knows where to
-wire their own implementation. StickyNote / Unknown nodes are skipped.
+wire their own implementation. StickyNote nodes are skipped entirely.
+Unknown nodes compile as passthrough runtime nodes so surrounding edges
+keep flowing — same contract as ``compile.to_langgraph`` and documented
+on the IR.
 
 Public entry points:
 
@@ -90,7 +93,11 @@ def _render_passthrough(node: IRNode) -> str:
 
 
 def _render_direct_reply(node: IRNode) -> str:
-    message = node.config.get("directReplyMessage", "")
+    # Coerce to ``str`` — partially-populated IRs (or imported flows with
+    # an explicit ``null``) can carry ``directReplyMessage: None``, and the
+    # emitted code would otherwise call ``None.format(...)`` and crash.
+    raw = node.config.get("directReplyMessage")
+    message = raw if isinstance(raw, str) else ""
     # Catch ValueError too — str.format raises it for malformed templates
     # (unmatched braces, replacement-field syntax errors), which happens
     # whenever the user's reply text legitimately contains a ``{`` or ``}``.
@@ -195,8 +202,20 @@ _RENDERERS: dict[str, Callable[[IRNode], str]] = {
 
 
 def _node_fn(node_id: str) -> str:
-    """Convert an IR node id to a valid Python identifier."""
+    """Convert an IR node id to a valid Python identifier.
+
+    Naive char-replacement collides on ids like ``a-b`` vs ``a_b`` (both
+    become ``node_a_b``). Append a short deterministic hash of the raw id
+    whenever sanitization changes anything, so distinct ids always produce
+    distinct function names.
+    """
     sanitized = "".join(c if c.isalnum() or c == "_" else "_" for c in node_id)
+    if sanitized != node_id:
+        # Use blake2b for a short, stable, dependency-free suffix.
+        import hashlib
+
+        suffix = hashlib.blake2b(node_id.encode("utf-8"), digest_size=4).hexdigest()
+        sanitized = f"{sanitized}__{suffix}"
     if sanitized and sanitized[0].isdigit():
         sanitized = "n_" + sanitized
     return f"node_{sanitized}"
@@ -355,8 +374,18 @@ TOOLS: list[Any] = []
 '''
 
 
+import keyword as _kw
+
+
 def to_source(graph: IRGraph, *, app_var: str = "app") -> str:
     """Render an IRGraph as a self-contained Python module string."""
+    # ``app_var`` is interpolated verbatim into the emitted source; refuse
+    # anything that isn't a bare identifier so the contract ("output is
+    # always valid Python") holds even if the caller passes a hostile value.
+    if not isinstance(app_var, str) or not app_var.isidentifier() or _kw.iskeyword(app_var):
+        raise ValueError(
+            f"app_var must be a valid non-keyword Python identifier; got {app_var!r}"
+        )
     validate(graph)
 
     runtime_nodes = [n for n in graph.nodes if n.type not in _SKIP_TYPES]

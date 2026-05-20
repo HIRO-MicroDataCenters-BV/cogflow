@@ -22,14 +22,41 @@ from cogflow.agent.parse.flowise import from_file
 _FAKE_MODULE_COUNTER = 0
 
 
-def _exec_module(source: str) -> dict[str, Any]:
-    """Compile + exec the rendered source in a fresh module-style namespace.
+@pytest.fixture
+def exec_module():
+    """Compile + exec rendered source in a fresh module; auto-clean sys.modules.
 
     LangGraph's ``get_type_hints`` resolves forward refs through the class's
-    ``__module__``, so a bare ``exec(src, {})`` fails to find ``Annotated``
-    even when it's imported in the source. We register the namespace as a
-    fake module in ``sys.modules`` so name resolution works.
+    ``__module__``, so a bare ``exec(src, {})`` fails to find ``Annotated``.
+    We register a real module so name resolution works, and tear it down in
+    the fixture's finalizer so the suite doesn't leak modules.
     """
+    import sys
+    import types
+
+    created: list[str] = []
+
+    def _run(source: str) -> dict[str, Any]:
+        global _FAKE_MODULE_COUNTER
+        _FAKE_MODULE_COUNTER += 1
+        mod_name = f"_cogflow_to_python_emitted_{_FAKE_MODULE_COUNTER}"
+        module = types.ModuleType(mod_name)
+        sys.modules[mod_name] = module
+        created.append(mod_name)
+        code = compile(source, mod_name, "exec")
+        exec(code, module.__dict__)
+        return module.__dict__
+
+    yield _run
+
+    for name in created:
+        sys.modules.pop(name, None)
+
+
+# Backwards-compat shim for tests that still call _exec_module directly; uses
+# the fixture's body but does no cleanup (used only in tests where the exec'd
+# module is short-lived and the caller doesn't keep a reference).
+def _exec_module(source: str) -> dict[str, Any]:
     import sys
     import types
 
@@ -38,9 +65,15 @@ def _exec_module(source: str) -> dict[str, Any]:
     mod_name = f"_cogflow_to_python_emitted_{_FAKE_MODULE_COUNTER}"
     module = types.ModuleType(mod_name)
     sys.modules[mod_name] = module
-    code = compile(source, mod_name, "exec")
-    exec(code, module.__dict__)
-    return module.__dict__
+    try:
+        code = compile(source, mod_name, "exec")
+        exec(code, module.__dict__)
+        return module.__dict__
+    finally:
+        # Pop from sys.modules so the test suite doesn't accumulate fake
+        # modules; the returned dict still holds the live references the
+        # caller needs.
+        sys.modules.pop(mod_name, None)
 
 
 def _basic_graph() -> IRGraph:
@@ -187,6 +220,58 @@ def test_conditional_branch_to_end_emits_END_in_mapping():
     # Confirm the emitted source still parses + execs cleanly.
     ns = _exec_module(src)
     assert hasattr(ns["app"], "invoke")
+
+
+def test_direct_reply_with_none_message_does_not_crash():
+    """Partially-populated IRs can carry ``directReplyMessage=None``."""
+    start = IRNode(id="s0", type="start", label="Start")
+    reply = IRNode(id="r0", type="direct_reply", label="Reply", config={"directReplyMessage": None})
+    graph = IRGraph(
+        nodes=[start, reply],
+        edges=[IREdge(id="e0", source="s0", target="r0")],
+        entry="s0",
+    )
+    src = to_python.to_source(graph)
+    ast.parse(src)
+    ns = _exec_module(src)
+    # No message → no AIMessage emitted; just an empty state update.
+    assert ns["app"].invoke({"messages": []}).get("messages", []) == []
+
+
+def test_node_fn_avoids_collisions_on_different_special_char_ids():
+    """``a-b`` and ``a_b`` must not collapse to the same emitted function."""
+    start = IRNode(id="s0", type="start", label="Start")
+    a = IRNode(id="a-b", type="direct_reply", label="A", config={"directReplyMessage": "A"})
+    b = IRNode(id="a_b", type="direct_reply", label="B", config={"directReplyMessage": "B"})
+    graph = IRGraph(
+        nodes=[start, a, b],
+        edges=[
+            IREdge(id="e0", source="s0", target="a-b"),
+            IREdge(id="e1", source="a-b", target="a_b"),
+        ],
+        entry="s0",
+    )
+    src = to_python.to_source(graph)
+    ast.parse(src)
+    # ``a-b`` gets a hash-suffixed identifier; ``a_b`` keeps its bare form.
+    # No matter what, the two ``def node_*`` lines must be distinct.
+    fn_defs = [line for line in src.splitlines() if line.startswith("def node_")]
+    assert len(fn_defs) == len(set(fn_defs)), f"function name collision: {fn_defs}"
+
+
+def test_to_source_rejects_invalid_app_var():
+    """``app_var`` must be a Python identifier (not a keyword, not arbitrary code)."""
+    g = _basic_graph()
+    for bad in ("not an identifier", "1nope", "app; print('hi')", "class", ""):
+        with pytest.raises(ValueError, match="app_var"):
+            to_python.to_source(g, app_var=bad)
+
+
+def test_to_source_accepts_custom_valid_app_var():
+    g = _basic_graph()
+    src = to_python.to_source(g, app_var="my_agent")
+    assert "my_agent = builder.compile()" in src
+    ast.parse(src)
 
 
 def test_node_id_with_special_chars_is_sanitized():
