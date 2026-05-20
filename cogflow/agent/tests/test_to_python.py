@@ -53,9 +53,10 @@ def exec_module():
         sys.modules.pop(name, None)
 
 
-# Backwards-compat shim for tests that still call _exec_module directly; uses
-# the fixture's body but does no cleanup (used only in tests where the exec'd
-# module is short-lived and the caller doesn't keep a reference).
+# Same behaviour as the ``exec_module`` fixture above, but callable directly
+# from tests that don't take a fixture argument. The fake module is popped
+# from ``sys.modules`` in a ``finally`` block so the suite never accumulates
+# stale entries — only the returned namespace dict keeps the live refs.
 def _exec_module(source: str) -> dict[str, Any]:
     import sys
     import types
@@ -135,6 +136,34 @@ def test_to_file_writes_to_disk(tmp_path: Path):
 def test_state_synthesis_emits_add_messages_reducer():
     src = to_python.to_source(_basic_graph())
     assert "Annotated[list, add_messages]" in src
+
+
+def test_state_keys_with_non_identifier_chars_emit_valid_python():
+    """Flowise ``startState`` keys can be arbitrary strings (``foo bar``, ``foo-bar``).
+
+    The class-syntax TypedDict would have produced a SyntaxError; the
+    functional form (``TypedDict('FlowState', {...}, total=False)``) handles
+    arbitrary string keys cleanly.
+    """
+    start = IRNode(id="s0", type="start", label="Start")
+    reply = IRNode(id="r0", type="direct_reply", label="Reply", config={"directReplyMessage": "ok"})
+    graph = IRGraph(
+        state=[
+            IRStateField(key="user id", type="str"),
+            IRStateField(key="step-count", type="int"),
+            IRStateField(key="messages", type="messages", reducer="add_messages"),
+        ],
+        nodes=[start, reply],
+        edges=[IREdge(id="e0", source="s0", target="r0")],
+        entry="s0",
+    )
+    src = to_python.to_source(graph)
+    ast.parse(src)
+    # The functional form preserves the literal keys as dict keys.
+    assert "'user id'" in src
+    assert "'step-count'" in src
+    ns = _exec_module(src)
+    assert hasattr(ns["app"], "invoke")
 
 
 def test_simple_rag_fixture_compiles_to_python(simple_rag_path: Path):

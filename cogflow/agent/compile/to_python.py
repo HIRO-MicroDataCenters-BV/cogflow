@@ -53,35 +53,46 @@ _PY_TYPE_FOR_STATE: dict[str, str] = {
 }
 
 
+def _state_field_annotation(f: IRStateField) -> str:
+    py = _PY_TYPE_FOR_STATE.get(f.type_, "Any")
+    if f.reducer == "add_messages" or f.type_ == "messages":
+        return "Annotated[list, add_messages]"
+    if f.reducer == "operator.add":
+        return f"Annotated[{py}, operator.add]"
+    return py
+
+
 def _state_typeddict(fields: list[IRStateField]) -> str:
-    """Render the IR state as a TypedDict class definition."""
+    """Render the IR state as a TypedDict.
+
+    Uses the **functional** ``TypedDict('FlowState', {...}, total=False)``
+    form so keys can be arbitrary strings — Flowise's ``startState`` JSON
+    permits keys like ``"user id"`` or ``"foo-bar"`` that would otherwise
+    produce invalid Python with the class syntax.
+    """
     if not fields:
         return (
-            "class FlowState(TypedDict, total=False):\n"
-            "    messages: Annotated[list, add_messages]\n"
+            'FlowState = TypedDict(\n'
+            '    "FlowState",\n'
+            '    {"messages": Annotated[list, add_messages]},\n'
+            '    total=False,\n'
+            ')\n'
         )
-    lines = ["class FlowState(TypedDict, total=False):"]
-    for f in fields:
-        py = _PY_TYPE_FOR_STATE.get(f.type_, "Any")
-        if f.reducer == "add_messages" or f.type_ == "messages":
-            lines.append(f"    {f.key}: Annotated[list, add_messages]")
-        elif f.reducer == "operator.add":
-            lines.append(f"    {f.key}: Annotated[{py}, operator.add]")
-        else:
-            lines.append(f"    {f.key}: {py}")
-    return "\n".join(lines) + "\n"
+    items = ",\n".join(f'        {f.key!r}: {_state_field_annotation(f)}' for f in fields)
+    return (
+        'FlowState = TypedDict(\n'
+        '    "FlowState",\n'
+        '    {\n'
+        f'{items},\n'
+        '    },\n'
+        '    total=False,\n'
+        ')\n'
+    )
 
 
 # ---------------------------------------------------------------------------
 # Per-node-type body renderers
 # ---------------------------------------------------------------------------
-
-
-def _py_literal(value: Any) -> str:
-    """Best-effort repr for emitting into source. Falls back to repr()."""
-    if value is None or isinstance(value, (bool, int, float, str)):
-        return repr(value)
-    return repr(value)
 
 
 def _render_passthrough(node: IRNode) -> str:
@@ -234,8 +245,9 @@ _SKIP_TYPES = {"sticky_note", "start"}
 _CONDITION_TYPES = {"condition", "condition_agent"}
 
 
-def _render_edges(graph: IRGraph, runtime_ids: set[str]) -> list[str]:
+def _render_edges(graph: IRGraph, runtime_nodes: list[IRNode]) -> list[str]:
     lines: list[str] = []
+    runtime_ids = {n.id for n in runtime_nodes}
 
     # Entry edge from START.
     start_id = graph.entry
@@ -251,11 +263,13 @@ def _render_edges(graph: IRGraph, runtime_ids: set[str]) -> list[str]:
             lines.append(f"builder.add_edge(START, {start_id!r})")
             start_wired = True
 
-    if not start_wired and not runtime_ids:
+    if not start_wired and not runtime_nodes:
         lines.append("builder.add_edge(START, END)")
-    elif not start_wired and runtime_ids:
-        first = sorted(runtime_ids)[0]
-        lines.append(f"builder.add_edge(START, {first!r})")
+    elif not start_wired and runtime_nodes:
+        # Mirror ``compile.to_langgraph``: use declaration order (the first
+        # runtime node in ``graph.nodes``), not alphabetical sort. The two
+        # emit paths should agree on entry behaviour for malformed graphs.
+        lines.append(f"builder.add_edge(START, {runtime_nodes[0].id!r})")
 
     routed: set[str] = set()
     ended: set[str] = set()
@@ -389,7 +403,6 @@ def to_source(graph: IRGraph, *, app_var: str = "app") -> str:
     validate(graph)
 
     runtime_nodes = [n for n in graph.nodes if n.type not in _SKIP_TYPES]
-    runtime_ids = {n.id for n in runtime_nodes}
 
     parts: list[str] = [_HEADER, _state_typeddict(graph.state), "\n"]
 
@@ -403,7 +416,7 @@ def to_source(graph: IRGraph, *, app_var: str = "app") -> str:
         parts.append(f"builder.add_node({node.id!r}, {_node_fn(node.id)})\n")
     parts.append("\n")
 
-    edge_lines = _render_edges(graph, runtime_ids)
+    edge_lines = _render_edges(graph, runtime_nodes)
     for line in edge_lines:
         parts.append(line + "\n")
     parts.append("\n")
