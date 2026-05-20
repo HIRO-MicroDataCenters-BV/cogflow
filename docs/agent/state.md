@@ -72,8 +72,14 @@ Registered reducers (declared once, reusable across graphs):
 | `add_messages` | `langgraph.graph.add_messages` (intelligent message-list merger) |
 | `operator.add` | `operator.add` (list/int concatenation) |
 
-Register a custom one with `state.register_reducer("name", fn)` and it
-becomes available to both directions of state synthesis.
+Register a custom one and it becomes available to both directions of
+state synthesis:
+
+```python
+from cogflow.agent.state import register_reducer
+
+register_reducer("my_reducer", my_reducer_fn)
+```
 
 ## What survives Flowise round-trip
 

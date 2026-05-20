@@ -145,9 +145,15 @@ falls back to the first scenario.
 
 ### `direct_reply`
 
-Terminal node — writes an `AIMessage` and routes to `END`. The message
-is `.format(**state)`-templated and falls back to the raw template when
-a referenced key is missing (catches `KeyError` / `IndexError`).
+Writes an `AIMessage` into state and returns. Termination is governed
+by graph edges: when a `direct_reply` node has no outgoing edge to a
+runtime node, `compile.to_langgraph` auto-wires it to `END`. If you
+add explicit outgoing edges it will continue to those instead — the
+factory itself doesn't enforce termination.
+
+The message is `.format(**state)`-templated and falls back to the raw
+template when a referenced key is missing (catches `KeyError` /
+`IndexError`).
 
 ```python
 g.add_node("reply", direct_reply(message="Hi {user_name}, here's your summary."))

@@ -87,8 +87,17 @@ catches:
 - Nested dict values: `httpHeaders.x-api-key`, `headers.Authorization`
 - List elements with secret-keyed siblings
 
-Non-secret config (URL, method, output key, model name) stays visible
-so the TODO stub is still informative.
+Non-secret config (URL, method, model name, etc.) stays visible so the
+TODO stub is still informative.
+
+!!! note "Conservative over-redaction"
+
+    Matching is by **substring**, so any config key containing
+    `key`/`token`/`secret`/`password`/`auth`/… is redacted — including
+    legitimately non-sensitive fields like `httpOutputKey` or
+    `customFunctionOutputKey`. This is intentional: leaking a token is
+    worse than hiding an output-key. If you need an over-redacted value
+    in the emitted TODO stub, recover it from the original Flowise JSON.
 
 ## What this doesn't do
 
