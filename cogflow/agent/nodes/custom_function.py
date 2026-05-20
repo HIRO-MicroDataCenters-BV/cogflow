@@ -78,8 +78,14 @@ class CustomFunctionFactory(NodeFactory):
             raise UnsupportedNodeError(
                 f"CustomFunction node only supports Python bodies; got language={language!r}"
             )
+        # ``customFunctionPython`` is treated as **executable code** on re-import
+        # (from_ir copies it into ``_body``), so we must never stash a non-code
+        # string like ``fn.__name__`` here. When ``fn=`` is supplied without an
+        # explicit ``body``, leave the code field empty and put the function's
+        # display name in a separate config key for the Flowise canvas.
         super().__init__(
-            customFunctionPython=body or (getattr(fn, "__name__", "") if fn else ""),
+            customFunctionPython=body or "",
+            customFunctionName=getattr(fn, "__name__", "") if fn else "",
             customFunctionOutputKey=output_key,
             **extra,
         )

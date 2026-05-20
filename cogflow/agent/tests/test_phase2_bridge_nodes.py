@@ -190,6 +190,30 @@ def test_custom_function_python_fn_runs():
     assert fn({"x": 5}) == {"out": 10}
 
 
+def test_custom_function_fn_does_not_leak_name_into_python_body():
+    """Regression: passing ``fn=`` must not stash fn.__name__ into the code field.
+
+    Previously ``customFunctionPython`` was set to the function's name, which
+    then got copied into ``_body`` on re-import. With ``allow_custom_code=True``
+    that would ``exec`` the bare identifier and raise NameError (or worse,
+    silently execute it).
+    """
+    def my_named_function(state):
+        return state["x"] + 1
+
+    factory = custom_function(fn=my_named_function)
+    # Config must not carry the function name as executable code.
+    assert factory.config.get("customFunctionPython") == ""
+    assert factory.config.get("customFunctionName") == "my_named_function"
+
+    # Re-hydrate via from_ir as if loaded from JSON, then verify the gated
+    # exec path doesn't accidentally try to run the function name.
+    bare = CustomFunctionFactory.from_ir(_ir("cf_name", "custom_function", dict(factory.config)))
+    fn = bare.to_callable(_ir("cf_name", "custom_function", bare.config), ctx={"allow_custom_code": True})
+    # Empty body + no live fn -> passthrough, NOT NameError.
+    assert fn({"x": 5}) == {}
+
+
 def test_custom_function_javascript_body_rejected():
     with pytest.raises(UnsupportedNodeError):
         custom_function(body="return 1", language="javascript")
