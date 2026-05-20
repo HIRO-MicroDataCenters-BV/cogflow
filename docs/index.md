@@ -21,8 +21,8 @@ site later.
 The agent SDK ships as an optional extra of cogflow:
 
 ```bash
-pip install "cogflow[agent]"          # core: langgraph + langchain-core
-pip install "cogflow[agent,agent-otel]"   # add OpenTelemetry tracing
+pip install "cogflow[agent]"        # core: langgraph + langchain-core
+pip install "cogflow[agent-otel]"   # adds OpenTelemetry tracing (agent-otel already depends on agent)
 ```
 
 Plain `pip install cogflow` works too — the agent submodule just refuses
