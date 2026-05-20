@@ -91,12 +91,15 @@ def _render_passthrough(node: IRNode) -> str:
 
 def _render_direct_reply(node: IRNode) -> str:
     message = node.config.get("directReplyMessage", "")
+    # Catch ValueError too — str.format raises it for malformed templates
+    # (unmatched braces, replacement-field syntax errors), which happens
+    # whenever the user's reply text legitimately contains a ``{`` or ``}``.
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
         f"    rendered = {message!r}\n"
         f"    try:\n"
         f"        rendered = {message!r}.format(**state)\n"
-        f"    except (KeyError, IndexError):\n"
+        f"    except (KeyError, IndexError, ValueError):\n"
         f"        pass\n"
         f"    return {{'messages': [AIMessage(content=rendered)] }} if rendered else {{}}\n"
     )
@@ -204,7 +207,11 @@ def _node_fn(node_id: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-_SKIP_TYPES = {"sticky_note", "unknown", "start"}
+# Mirror ``compile.to_langgraph``: only ``sticky_note`` and ``start`` are
+# excluded from the runtime set. ``unknown`` nodes get a passthrough body so
+# surrounding edges keep flowing (matches the IR contract documented in
+# ``ir/model.py`` and the parse/import path).
+_SKIP_TYPES = {"sticky_note", "start"}
 _CONDITION_TYPES = {"condition", "condition_agent"}
 
 
@@ -252,8 +259,15 @@ def _render_edges(graph: IRGraph, runtime_ids: set[str]) -> list[str]:
                 node.config.get("loopMaxIterations") or node.config.get("maxLoopCount") or 5
             )
             counter_key = f"_loop_count__{node.id}"
+            # Walk outgoing edges in order, accepting the first eligible exit:
+            # an explicit END edge (END_SENTINEL) or a non-target runtime edge.
+            # Mirrors ``compile.to_langgraph``'s scan so the two emit paths
+            # don't diverge based on edge ordering.
             exit_target_repr = "END"
             for e in edges_from(graph, node.id):
+                if e.target == END_SENTINEL:
+                    exit_target_repr = "END"
+                    break
                 if e.target in runtime_ids and e.target != target:
                     exit_target_repr = repr(e.target)
                     break

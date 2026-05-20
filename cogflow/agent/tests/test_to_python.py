@@ -122,8 +122,8 @@ def test_iterations_fixture_emits_todo_for_bridge_nodes(iterations_path: Path):
     ast.parse(src)
 
 
-def test_sticky_note_and_unknown_nodes_are_skipped():
-    """Sticky notes and unknown types must not generate node functions or edges."""
+def test_sticky_note_is_skipped():
+    """Sticky notes must not generate node functions or edges."""
     start = IRNode(id="s0", type="start", label="Start")
     sticky = IRNode(id="sticky_0", type="sticky_note", label="Note", config={"note": "hello"})
     reply = IRNode(id="r0", type="direct_reply", label="Reply", config={"directReplyMessage": "bye"})
@@ -135,6 +135,34 @@ def test_sticky_note_and_unknown_nodes_are_skipped():
     src = to_python.to_source(graph)
     assert "sticky_0" not in src  # not registered as a node
     assert "node_r0" in src       # the real reply node IS rendered
+
+
+def test_unknown_node_is_passthrough_keeping_topology_flowing():
+    """Unknown types compile as passthrough so surrounding edges keep flowing.
+
+    Mirrors the IR contract documented in ir/model.py and the parse path —
+    ``unknown`` nodes must be reachable, not silently dropped like StickyNote.
+    """
+    start = IRNode(id="s0", type="start", label="Start")
+    mystery = IRNode(id="m0", type="unknown", label="Mystery")
+    reply = IRNode(id="r0", type="direct_reply", label="Reply", config={"directReplyMessage": "hi"})
+    graph = IRGraph(
+        nodes=[start, mystery, reply],
+        edges=[
+            IREdge(id="e0", source="s0", target="m0"),
+            IREdge(id="e1", source="m0", target="r0"),
+        ],
+        entry="s0",
+    )
+    src = to_python.to_source(graph)
+    # The unknown node must be present (passthrough fn + node registration).
+    assert "node_m0" in src
+    assert "builder.add_node('m0'" in src
+    # And the edge through it must be preserved.
+    assert "builder.add_edge('m0', 'r0')" in src
+    # The whole module still execs cleanly.
+    ns = _exec_module(src)
+    assert hasattr(ns["app"], "invoke")
 
 
 def test_conditional_branch_to_end_emits_END_in_mapping():
