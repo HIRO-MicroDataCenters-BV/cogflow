@@ -251,6 +251,34 @@ def test_conditional_branch_to_end_emits_END_in_mapping():
     assert hasattr(ns["app"], "invoke")
 
 
+def test_direct_reply_survives_non_identifier_state_keys():
+    """``state`` can contain Flowise-style keys like ``"user id"``; ``.format(**state)`` would otherwise TypeError."""
+    start = IRNode(id="s0", type="start", label="Start")
+    reply = IRNode(
+        id="r0",
+        type="direct_reply",
+        label="Reply",
+        # Template doesn't reference the weird key, but ``**state`` still
+        # unpacks it — must not crash.
+        config={"directReplyMessage": "hello world"},
+    )
+    graph = IRGraph(
+        state=[
+            IRStateField(key="user id", type="str"),
+            IRStateField(key="messages", type="messages", reducer="add_messages"),
+        ],
+        nodes=[start, reply],
+        edges=[IREdge(id="e0", source="s0", target="r0")],
+        entry="s0",
+    )
+    src = to_python.to_source(graph)
+    ast.parse(src)
+    ns = _exec_module(src)
+    result = ns["app"].invoke({"user id": "alice", "messages": []})
+    contents = [getattr(m, "content", "") for m in result.get("messages", [])]
+    assert "hello world" in contents
+
+
 def test_direct_reply_with_none_message_does_not_crash():
     """Partially-populated IRs can carry ``directReplyMessage=None``."""
     start = IRNode(id="s0", type="start", label="Start")

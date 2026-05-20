@@ -109,15 +109,21 @@ def _render_direct_reply(node: IRNode) -> str:
     # emitted code would otherwise call ``None.format(...)`` and crash.
     raw = node.config.get("directReplyMessage")
     message = raw if isinstance(raw, str) else ""
-    # Catch ValueError too — str.format raises it for malformed templates
-    # (unmatched braces, replacement-field syntax errors), which happens
-    # whenever the user's reply text legitimately contains a ``{`` or ``}``.
+    # ``.format(**state)`` can raise:
+    #   - KeyError / IndexError: template references a missing key
+    #   - ValueError: malformed template (unmatched braces — common when the
+    #     user's reply text literally contains a ``{`` or ``}``)
+    #   - TypeError: ``state`` contains keys that aren't valid Python
+    #     identifiers (Flowise startState legitimately allows ``"user id"`` /
+    #     ``"step-count"`` since R3 switched to the functional TypedDict).
+    # In every case, fall back to the unrendered template — the node still
+    # produces output and the graph doesn't crash.
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
         f"    rendered = {message!r}\n"
         f"    try:\n"
         f"        rendered = {message!r}.format(**state)\n"
-        f"    except (KeyError, IndexError, ValueError):\n"
+        f"    except (KeyError, IndexError, ValueError, TypeError):\n"
         f"        pass\n"
         f"    return {{'messages': [AIMessage(content=rendered)] }} if rendered else {{}}\n"
     )
