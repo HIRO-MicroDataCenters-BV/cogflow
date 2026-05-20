@@ -21,7 +21,7 @@ to **Flowise V2 AgentFlow JSON**. Two starting points are first-class:
 
 | Audience | Pain | What this gives them |
 |---|---|---|
-| Python engineer | Wants real LangGraph runtime, but also wants their agent visible to non-developers | `g.compile()` returns vanilla LangGraph; `compile.to_flowise(g.ir, path)` ships a Flowise-importable JSON |
+| Python engineer | Wants real LangGraph runtime, but also wants their agent visible to non-developers | `g.compile()` returns vanilla LangGraph; `compile.to_flowise.to_file(g.ir, path)` ships a Flowise-importable JSON |
 | Visual designer | Built an agent in Flowise but needs to deploy it without the canvas | `parse.flowise.from_file(path)` → real LangGraph runtime; or `compile.to_python.to_file(...)` for a cogflow-free `.py` they can maintain in code |
 | Platform team | Wants self-hosted observability, no vendor lock-in | MLflow Tracing via cogflow's existing kubeflow infra |
 

@@ -1,12 +1,15 @@
 # Tracing & observability
 
-The SDK supports two tracing backends, stackable, both opt-in by an
-explicit `configure_tracing(...)` call. The default is **MLflow**
-(self-hosted, reuses cogflow's existing kubeflow infrastructure). The
-opt-in is **OpenTelemetry**.
+Tracing is **disabled** until you call `configure_tracing(...)`
+explicitly — `compile()` doesn't auto-enable anything because library
+code shouldn't have surprise global side-effects.
 
-`compile()` does **not** auto-enable tracing — library code shouldn't
-have surprise global side-effects.
+When you do enable tracing, the SDK supports two stackable backends:
+
+- **MLflow** is the default backend (self-hosted, reuses cogflow's
+  existing kubeflow infrastructure). It's what you get when you call
+  `configure_tracing()` with no `backend=` argument.
+- **OpenTelemetry** is opt-in via `backend="otel"`.
 
 ## MLflow (default backend)
 
@@ -83,10 +86,10 @@ the autolog callback. Internally each adapter:
 
 ## LangSmith is intentionally not bundled
 
-LangSmith is a commercial hosted service from LangChain Inc. CF does
-not ship a LangSmith adapter; if you want LangSmith tracing, set the
-environment variables yourself and LangChain will pick it up at
-runtime — no CF-side wiring needed:
+LangSmith is a commercial hosted service from LangChain Inc. cogflow
+does not ship a LangSmith adapter; if you want LangSmith tracing, set
+the environment variables yourself and LangChain will pick it up at
+runtime — no cogflow-side wiring needed:
 
 ```bash
 export LANGCHAIN_TRACING_V2=true
