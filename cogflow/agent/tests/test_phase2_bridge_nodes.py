@@ -84,6 +84,10 @@ def test_iteration_no_body_node_is_noop():
 
 
 def test_iteration_empty_or_missing_collection():
+    # IterationFactory degrades to `{}` when ``langgraph.types.Send`` isn't
+    # importable (older langgraph in the supported range), so gate the
+    # ``== []`` assertion on Send actually being available.
+    pytest.importorskip("langgraph.types")
     factory = iteration(over="items", body="worker")
     fn = factory.to_callable(_ir("iter_2", "iteration", factory.config))
     assert fn({}) == []
@@ -268,10 +272,9 @@ def test_execute_flow_resolves_from_ctx_when_factory_is_bare():
     result = bare.to_callable(_ir("ef_1", "execute_flow", bare.config), ctx={"flows": {"child": stub}})({"x": 1})
 
     # With no explicit ``executeFlowInputKeys`` filter, the child sees the
-    # whole state dict (including the IR-config fields the base factory
-    # carries) and returns the echo-with-x payload.
+    # caller's state dict verbatim and returns the echo-with-x payload.
     assert len(stub.calls) == 1
-    assert stub.calls[0].get("x") == 1
+    assert stub.calls[0] == {"x": 1}
     assert result == {"subflow_result": {"echoed": 1}}
 
 

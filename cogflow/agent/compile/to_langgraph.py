@@ -155,6 +155,13 @@ def to_langgraph(
                 or 5
             )
             counter_key = f"_loop_count__{node.id}"
+            # If the target couldn't be resolved to a registered runtime node
+            # (typo, dangling reference after a node deletion, unsupported
+            # naming) we drop it so the router doesn't return an unknown id
+            # that LangGraph would error on at runtime.
+            if target and target not in runtime_ids:
+                target = ""
+
             # Follow the loop's normal outgoing edge (if any) when the cap is hit.
             exit_target: Any = END
             for e in edges_from(graph, node.id):
@@ -172,7 +179,7 @@ def to_langgraph(
                 _target: str = target,
                 _exit: Any = exit_target,
             ) -> Any:
-                if int(state.get(_counter_key, 0) or 0) < _max and _target:
+                if _target and int(state.get(_counter_key, 0) or 0) < _max:
                     return _target
                 return _exit
 
