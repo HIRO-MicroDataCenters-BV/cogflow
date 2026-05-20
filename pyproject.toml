@@ -93,6 +93,19 @@ agent-otel = [
   "opentelemetry-exporter-otlp>=1.20.0"
 ]
 
+# Single-command install for users who want the agent SDK *and* the OTel
+# tracing extras together. Keeps the base ``pip install cogflow`` lean
+# (pipeline-only users don't pull LangChain) while giving "everything"
+# users one command instead of two extras to remember.
+#
+# Only ``agent-otel`` is listed — it already self-references ``cogflow[agent]``
+# (see above), so explicitly listing ``agent`` here would duplicate the
+# self-requirement in the generated metadata. If the agent-otel graph ever
+# stops including ``agent`` transitively, add it back.
+full = [
+  "cogflow[agent-otel]"
+]
+
 [project.urls]
 Homepage = "https://github.com/HIRO-MicroDataCenters-BV/cogflow"
 Issues = "https://github.com/HIRO-MicroDataCenters-BV/cogflow/issues"

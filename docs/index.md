@@ -22,11 +22,14 @@ The agent SDK ships as an optional extra of cogflow:
 
 ```bash
 pip install "cogflow[agent]"        # core: langgraph + langchain-core
-pip install "cogflow[agent-otel]"   # adds OpenTelemetry tracing (agent-otel already depends on agent)
+pip install "cogflow[agent-otel]"   # adds OpenTelemetry tracing (already depends on agent)
+pip install "cogflow[full]"         # one-shot: everything above in a single command
 ```
 
-Plain `pip install cogflow` works too — the agent submodule just refuses
-to import without the extra installed and tells you what to install.
+Plain `pip install cogflow` works too — the base install gives you
+pipelines, models, datasets, serving, etc., but the agent submodule
+refuses to import without one of the agent extras installed and tells
+you which one to install.
 
 ## Quick example
 
