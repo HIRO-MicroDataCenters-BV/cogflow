@@ -101,10 +101,13 @@ block. The `analytics` kwarg injects Flowise's own analytic config — use
 it to point a re-imported flow at the same MLflow your runtime uses.
 
 Round-trip on the MVP-7 marketplace fixtures (`Simple RAG.json`,
-`Structured Output.json`, `Translator.json`) is byte-identical on the
-`nodes` / `edges` blocks; the `Iterations.json` and `Human In The
-Loop.json` bridge-node fixtures round-trip with `flowise_provenance`
-preserving everything we don't explicitly model.
+`Structured Output.json`, `Translator.json`) is **structurally
+identical** on the `nodes` / `edges` blocks — the round-trip tests
+normalize dict/list ordering and compare for deep equality, so field
+order may differ from the original but every field and value matches.
+The `Iterations.json` and `Human In The Loop.json` bridge-node
+fixtures round-trip with `flowise_provenance` preserving everything we
+don't explicitly model.
 
 ### `compile.to_python.to_source(ir) / to_file(ir, path)`
 
@@ -117,8 +120,8 @@ and the secret-redaction behaviour.
 
 ## Validation
 
-`compile.to_langgraph` runs `ir.validate.validate(graph)` first, which
-enforces:
+`compile.to_langgraph` runs `cogflow.agent.ir.validate.validate(graph)`
+first, which enforces:
 
 - At most one Start node
 - Either a Start node exists OR `graph.entry` overrides
