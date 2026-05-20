@@ -146,8 +146,8 @@ falls back to the first scenario.
 ### `direct_reply`
 
 Terminal node — writes an `AIMessage` and routes to `END`. The message
-is `.format(**state)`-templated and falls back to the raw template on
-any `KeyError`/`IndexError`/`ValueError`/`TypeError`.
+is `.format(**state)`-templated and falls back to the raw template when
+a referenced key is missing (catches `KeyError` / `IndexError`).
 
 ```python
 g.add_node("reply", direct_reply(message="Hi {user_name}, here's your summary."))
@@ -198,11 +198,15 @@ missing keys fall back to the unrendered URL.
 g.add_node("call_api", http(
     method="POST",
     url="https://api.example.com/v1/{endpoint}",
-    headers={"Authorization": "Bearer {token}"},
+    headers={"Authorization": f"Bearer {API_TOKEN}"},   # literal, set at construction time
     body={"q": 1},
     output_key="response",
 ))
 ```
+
+Only the `url` is `.format(**state)`-templated at runtime. Headers and
+body are passed through verbatim — render any per-request values into
+them at construction time (as above) or via a wrapper node.
 
 Inject a stub client for tests: `ctx={"httpx": stub_module}`.
 
@@ -255,7 +259,8 @@ g.add_node("approve", human_input(
 
 Honours both `humanInputPrompt` (Python-first) and `humanInputDescription`
 (Flowise-native) for the prompt text. Prompt is `.format(**state)`-templated
-with the same exception fallback as `direct_reply`.
+with a `KeyError` / `IndexError` fallback to the raw template (matches
+`direct_reply`).
 
 ### `execute_flow`
 
