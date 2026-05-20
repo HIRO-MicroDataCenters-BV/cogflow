@@ -253,7 +253,6 @@ def test_conditional_branch_to_end_emits_END_in_mapping():
 
 def test_human_input_emit_honours_custom_output_key():
     """HumanInput's emitted source must use the configured output key."""
-    _require = pytest  # alias just so the import-skip is on the import line
     start = IRNode(id="s0", type="start", label="Start")
     hi = IRNode(
         id="hi0",

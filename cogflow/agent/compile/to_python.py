@@ -1,27 +1,51 @@
-"""IR -> standalone LangGraph Python source.
+"""IR -> standalone LangGraph Python source. **Migration tool, not a runtime.**
 
-Emits a self-contained ``.py`` file that builds the same graph using only
-``langgraph`` and ``langchain_core`` — no runtime dependency on
-``cogflow.agent``. Useful for:
+Scope
+-----
 
-  - shipping an agent to an environment that has only the upstream
-    LangGraph stack installed;
-  - inspecting the generated structure during debugging;
-  - serving as a starting point for hand-tuning (the output is ordinary
-    Python that runs through ``black``/``ruff`` cleanly).
+This module exists for **one** use case: porting a Flowise-authored agent
+out of Flowise into a maintainable Python codebase. It is *not* a parallel
+runtime — for graphs built in Python with ``cogflow.agent.StateGraph``,
+calling ``g.compile()`` already returns a real
+``langgraph.graph.CompiledStateGraph`` (the SDK's ``StateGraph`` is a
+literal subclass of LangGraph's, IR is captured as a side-effect via
+``add_node``/``add_edge`` overrides). Calling ``to_python`` on a
+Python-first graph would just hand you a less-readable version of your
+own source.
 
-The contract is best-effort, not lossless: the emitted file always
-produces a valid ``CompiledStateGraph`` for the MVP-7 nodes (Start, LLM,
-Agent, Tool, Condition, ConditionAgent, DirectReply) plus Loop and
-HumanInput, which have clean LangGraph mappings. Bridge nodes with
-opaque runtime semantics (HTTP, Retriever, CustomFunction body, ExecuteFlow,
-Iteration) emit a clearly-marked TODO stub so the user knows where to
+When this is useful::
+
+    # Got a Flowise JSON from a visual designer? Migrate to maintainable code:
+    from cogflow.agent.parse import flowise
+    from cogflow.agent.compile import to_python
+    ir = flowise.from_file("my_flow.json")
+    to_python.to_file(ir, "my_agent.py")  # cogflow-free, langgraph-only source
+
+When this is *not* useful::
+
+    # Already authored in Python — you don't need this, ``g.compile()`` is enough:
+    g = StateGraph(MyState)
+    g.add_node(...)
+    g.add_edge(START, END)
+    app = g.compile()         # ← real CompiledStateGraph, no further emit needed
+    app.invoke({...})         # ← runs on LangGraph directly
+
+Coverage and semantics
+----------------------
+
+The emitted file always produces a valid ``CompiledStateGraph`` (the
+"output is always syntactically valid Python that execs cleanly" contract
+holds for every Flowise V2 node type). MVP-7 nodes (Start, LLM, Agent,
+Tool, Condition, ConditionAgent, DirectReply) plus Loop and HumanInput
+emit working bodies because they have clean LangGraph mappings. Bridge
+nodes with opaque runtime semantics (HTTP, Retriever, CustomFunction
+body, ExecuteFlow, Iteration) emit a clearly-marked ``TODO`` stub —
+secrets in the dumped config are redacted — so the user knows where to
 wire their own implementation. StickyNote nodes are skipped entirely.
 Unknown nodes compile as passthrough runtime nodes so surrounding edges
-keep flowing — same contract as ``compile.to_langgraph`` and documented
-on the IR.
+keep flowing (matches ``compile.to_langgraph`` and the IR contract).
 
-Public entry points:
+Public entry points::
 
     cogflow.agent.compile.to_python.to_source(graph) -> str
     cogflow.agent.compile.to_python.to_file(graph, path) -> Path
