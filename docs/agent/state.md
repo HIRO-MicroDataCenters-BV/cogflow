@@ -8,6 +8,7 @@ both ends.
 ## TypedDict in, TypedDict out
 
 ```python
+import operator
 from typing import Annotated, TypedDict
 
 from cogflow.agent import StateGraph, MessagesState, add_messages
@@ -16,7 +17,7 @@ from cogflow.agent import StateGraph, MessagesState, add_messages
 class State(TypedDict, total=False):
     messages: Annotated[list, add_messages]
     user_id: str
-    step_count: Annotated[int, lambda a, b: a + b]
+    step_count: Annotated[int, operator.add]
 
 
 g = StateGraph(State)
@@ -27,6 +28,17 @@ extract the reducers, records them as `IRStateField(reducer="add_messages")`
 etc., and normalizes the `messages` key to
 `type="messages" + reducer="add_messages"` regardless of whether the
 user annotated the reducer.
+
+!!! note "Reducers must be **named** to round-trip"
+
+    `introspect_state` only records reducers it can identify by name
+    via the registry — `add_messages`, `operator.add`, and anything
+    registered via [`register_reducer(...)`](#reducers). A bare lambda
+    (`Annotated[int, lambda a, b: a + b]`) **runs correctly at
+    runtime** but won't carry through IR / Flowise — the IR field gets
+    no `reducer` and downstream emit paths fall back to overwrite
+    semantics. Use `operator.add` / a `register_reducer`-named
+    function for round-trip-safe reducers.
 
 ## Synthesizing a TypedDict from Flowise state
 
