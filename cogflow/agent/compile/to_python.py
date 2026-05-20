@@ -183,20 +183,71 @@ def _render_loop(node: IRNode) -> str:
 
 def _render_human_input(node: IRNode) -> str:
     prompt = node.config.get("humanInputPrompt") or node.config.get("humanInputDescription") or ""
+    # Honour the configured output key (defaulting to ``human_input``) so the
+    # emitted graph agrees with ``HumanInputFactory.to_callable``.
+    output_key = node.config.get("humanInputOutputKey") or "human_input"
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
         f"    \"\"\"HumanInput node — pauses for user input via ``interrupt``.\"\"\"\n"
-        f"    reply = interrupt({{'prompt': {prompt!r}, 'node': {node.id!r}}})\n"
-        f"    return {{'human_input': reply}}\n"
+        f"    rendered = {prompt!r}\n"
+        f"    try:\n"
+        f"        rendered = {prompt!r}.format(**state)\n"
+        f"    except (KeyError, IndexError, ValueError, TypeError):\n"
+        f"        pass\n"
+        f"    reply = interrupt({{'prompt': rendered, 'node': {node.id!r}}})\n"
+        f"    return {{{output_key!r}: reply}}\n"
     )
 
 
+# Substrings (case-insensitive) that mark a config key as potentially holding
+# a secret. Conservative: better to redact something harmless than leak a token.
+_SECRET_HINTS = (
+    "key", "token", "secret", "password", "passwd",
+    "auth", "authorization", "credential", "apikey",
+    "bearer", "private",
+)
+
+
+def _looks_like_secret(key: str) -> bool:
+    k = key.lower()
+    return any(hint in k for hint in _SECRET_HINTS)
+
+
+def _redact_value(key: str, value: Any) -> Any:
+    """Replace a single field with ``<REDACTED>`` when its key looks sensitive.
+
+    Recurses into dicts and lists so nested secrets (``httpHeaders.x-api-key``)
+    are caught too. Lists are walked element-wise; non-string keys in nested
+    structures are passed through untouched.
+    """
+    if _looks_like_secret(key) and value not in (None, "", [], {}):
+        return "<REDACTED>"
+    if isinstance(value, dict):
+        return {k: _redact_value(str(k), v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(key, item) for item in value]
+    return value
+
+
+def _redacted_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Replace likely-secret values with ``<REDACTED>`` for emit (recursive)."""
+    return {k: _redact_value(k, v) for k, v in config.items()}
+
+
 def _render_todo(node: IRNode) -> str:
-    """Bridge nodes whose runtime body is too domain-specific to auto-emit."""
+    """Bridge nodes whose runtime body is too domain-specific to auto-emit.
+
+    The original IR config is dumped into a comment so the user can port
+    the body manually, but values keyed on ``*key``/``*token``/``*secret``/
+    ``*auth``/``*password``/``*credential`` are redacted. Flowise inputs
+    legitimately contain auth headers + API keys; emitting them verbatim
+    into checked-in files would leak credentials.
+    """
+    redacted = _redacted_config(dict(node.config))
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
         f"    # TODO: cogflow.agent bridge node `{node.type}` — implement manually.\n"
-        f"    # IR config: {dict(node.config)!r}\n"
+        f"    # IR config (secrets redacted): {redacted!r}\n"
         f"    return {{}}\n"
     )
 

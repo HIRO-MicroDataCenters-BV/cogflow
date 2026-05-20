@@ -251,6 +251,62 @@ def test_conditional_branch_to_end_emits_END_in_mapping():
     assert hasattr(ns["app"], "invoke")
 
 
+def test_human_input_emit_honours_custom_output_key():
+    """HumanInput's emitted source must use the configured output key."""
+    _require = pytest  # alias just so the import-skip is on the import line
+    start = IRNode(id="s0", type="start", label="Start")
+    hi = IRNode(
+        id="hi0",
+        type="human_input",
+        label="Ask",
+        config={"humanInputDescription": "approve?", "humanInputOutputKey": "user_reply"},
+    )
+    graph = IRGraph(
+        nodes=[start, hi],
+        edges=[IREdge(id="e0", source="s0", target="hi0")],
+        entry="s0",
+    )
+    src = to_python.to_source(graph)
+    ast.parse(src)
+    # Emitted return should use the custom key, not the hardcoded "human_input".
+    assert "'user_reply': reply" in src
+    assert "'human_input': reply" not in src
+
+
+def test_bridge_node_todo_redacts_secret_config_values():
+    """Bridge-node TODO stubs must not leak API keys / tokens / passwords."""
+    start = IRNode(id="s0", type="start", label="Start")
+    http_node = IRNode(
+        id="h0",
+        type="http",
+        label="Call",
+        config={
+            "httpUrl": "https://api.example.com/v1/thing",
+            "httpHeaders": {"x-api-key": "sk-LIVE-supersecret"},
+            "apiKey": "sk-also-secret",
+            "bearerToken": "eyJraWQ-not-actually",
+            "password": "hunter2",
+            "httpMethod": "GET",
+        },
+    )
+    graph = IRGraph(
+        nodes=[start, http_node],
+        edges=[IREdge(id="e0", source="s0", target="h0")],
+        entry="s0",
+    )
+    src = to_python.to_source(graph)
+    # The literal secret values must not appear in the emitted source.
+    assert "sk-LIVE-supersecret" not in src
+    assert "sk-also-secret" not in src
+    assert "eyJraWQ-not-actually" not in src
+    assert "hunter2" not in src
+    # Non-secret keys still appear (so the TODO stub is informative).
+    assert "httpUrl" in src
+    assert "https://api.example.com/v1/thing" in src
+    # The redaction marker appears.
+    assert "<REDACTED>" in src
+
+
 def test_direct_reply_survives_non_identifier_state_keys():
     """``state`` can contain Flowise-style keys like ``"user id"``; ``.format(**state)`` would otherwise TypeError."""
     start = IRNode(id="s0", type="start", label="Start")
