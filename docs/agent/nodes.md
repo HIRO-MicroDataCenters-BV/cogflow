@@ -12,7 +12,7 @@ Flowise-native config keys.
 | `startAgentflow` | `start` | `nodes.start(...)` | Native (no body — `START` fan-out) |
 | `llmAgentflow` | `llm` | `nodes.llm(...)` | Native (ChatModel `.invoke`) |
 | `agentAgentflow` | `agent` | `nodes.agent(...)` | Native (`bind_tools` + `.invoke`) |
-| `toolAgentflow` | `tool` | `nodes.tool_node(...)` | Native (`@tool` wrapper) |
+| `toolAgentflow` | `tool` | `nodes.tool_node(...)` | Native (calls a Python fn with `state["tool_input"]`, writes `tool_output`) |
 | `conditionAgentflow` | `condition` | `nodes.condition(...)` | Native (`add_conditional_edges`) |
 | `conditionAgentAgentflow` | `condition_agent` | `nodes.condition_agent(...)` | Native (LLM-driven router) |
 | `directReplyAgentflow` | `direct_reply` | `nodes.direct_reply(...)` | Native (writes `AIMessage`) |
@@ -65,13 +65,19 @@ g.add_node("llm_0", llm(
 ))
 ```
 
+The runtime calls the model with `messages` prepended to the chat
+history and returns `{"messages": [response]}`. Flowise keys
+`llmUpdateState` and `llmReturnResponseAs` are **preserved for
+Flowise round-trip** but the LangGraph runtime does not currently
+apply them — the node always returns its update under the `messages`
+channel.
+
 Flowise keys: `llmModel`, `llmMessages`, `llmUpdateState`, `llmReturnResponseAs`.
 
 ### `agent`
 
-ReAct-style loop: a chat model with tools bound. Prepends configured
-`agentMessages` to the model invocation; tool calls execute through
-LangGraph's built-in tool resolution.
+A chat model with tools **bound** (via `model.bind_tools`) and invoked
+once per call. `agentMessages` is prepended to the chat history.
 
 ```python
 from cogflow.agent.nodes import agent
@@ -80,10 +86,17 @@ g.add_node("agent_0", agent(
     model=ChatOpenAI(model="gpt-4o-mini"),
     tools=[search, calculator],
     messages=[{"role": "system", "content": "You are helpful."}],
-    enable_memory=True,
-    memory_type="allMessages",
 ))
 ```
+
+The runtime does a **single** `model.invoke(...)` call and returns
+`{"messages": [response]}`. If the model emits tool calls, they are
+*not* executed by this node — wire a separate `ToolNode` /
+`langgraph.prebuilt.ToolNode` or `nodes.tool_node(...)` and a
+conditional edge to get full ReAct semantics. Likewise `agentEnableMemory`,
+`agentMemoryType`, `agentReturnResponseAs`, and `agentUpdateState` are
+preserved for Flowise round-trip but **not** honoured by the LangGraph
+runtime today.
 
 Flowise keys: `agentModel`, `agentMessages`, `agentTools`, `agentEnableMemory`, `agentMemoryType`, `agentReturnResponseAs`, `agentUpdateState`.
 

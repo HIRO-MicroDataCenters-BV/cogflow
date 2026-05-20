@@ -66,7 +66,11 @@ enabled" while exporting nothing.
 
 ## Stacking
 
-The two backends are independent LangChain callback registrations:
+The two backends register through different LangChain hook surfaces —
+MLflow via `mlflow.langchain.autolog()` (a LangChain *callback*
+registration) and OTel via
+`openinference.instrumentation.langchain.LangChainInstrumentor().instrument()`
+(global *instrumentation*). They're independent and can run together:
 
 ```python
 configure_tracing(backend="mlflow", experiment="prod")
