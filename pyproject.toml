@@ -97,8 +97,12 @@ agent-otel = [
 # tracing extras together. Keeps the base ``pip install cogflow`` lean
 # (pipeline-only users don't pull LangChain) while giving "everything"
 # users one command instead of two extras to remember.
+#
+# Only ``agent-otel`` is listed — it already self-references ``cogflow[agent]``
+# (see above), so explicitly listing ``agent`` here would duplicate the
+# self-requirement in the generated metadata. If the agent-otel graph ever
+# stops including ``agent`` transitively, add it back.
 full = [
-  "cogflow[agent]",
   "cogflow[agent-otel]"
 ]
 
