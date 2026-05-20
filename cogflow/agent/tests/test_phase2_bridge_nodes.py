@@ -52,11 +52,11 @@ def test_loop_increments_counter_each_invocation():
         assert state[f"_loop_count__loop_0"] == expected
 
 
-def test_loop_factory_exposes_counter_key_and_max():
+def test_loop_factory_persists_target_and_max_in_config():
+    """The compiler reads ``loopTarget`` / ``loopMaxIterations`` from IR config."""
     factory = loop(target="body", max_iterations=7)
-    fn = factory.to_callable(_ir("loop_X", "loop", factory.config))
-    assert fn._cogflow_loop_counter_key == "_loop_count__loop_X"
-    assert fn._cogflow_loop_max == 7
+    assert factory.config.get("loopTarget") == "body"
+    assert factory.config.get("loopMaxIterations") == 7
 
 
 # ---------------------------------------------------------------------------
@@ -81,6 +81,18 @@ def test_iteration_no_body_node_is_noop():
     factory = iteration(over="items")  # no body
     fn = factory.to_callable(_ir("iter_1", "iteration", factory.config))
     assert fn({"items": [1, 2]}) == {}
+
+
+def test_iteration_body_id_not_in_runtime_ids_is_noop():
+    """Compile-time ctx contract: body id must be in runtime_node_ids."""
+    pytest.importorskip("langgraph.types")
+    factory = iteration(over="items", body="worker_missing")
+    fn = factory.to_callable(
+        _ir("iter_dangling", "iteration", factory.config),
+        ctx={"runtime_node_ids": {"some_other_node"}},
+    )
+    # body id is unknown to the compiler → must NOT emit Send to a missing node.
+    assert fn({"items": [1, 2, 3]}) == {}
 
 
 def test_iteration_empty_or_missing_collection():

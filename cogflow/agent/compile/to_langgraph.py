@@ -93,8 +93,14 @@ def to_langgraph(
     runtime_nodes = [n for n in graph.nodes if n.type not in _SKIP_TYPES and n.type != "start"]
     runtime_ids = {n.id for n in runtime_nodes}
 
+    # Inject the runtime node set into ``ctx`` so bridge factories (e.g.
+    # Iteration) can validate cross-node references at runtime instead of
+    # emitting Send/goto to a node the compiler skipped.
+    enriched_ctx = dict(ctx or {})
+    enriched_ctx.setdefault("runtime_node_ids", runtime_ids)
+
     for node in runtime_nodes:
-        builder.add_node(node.id, _callable_for(node, factories, ctx))
+        builder.add_node(node.id, _callable_for(node, factories, enriched_ctx))
 
     # Entry edge from LangGraph's START sentinel. Two cases:
     #   - ``graph.entry`` points at a Start IR node (the common case from a

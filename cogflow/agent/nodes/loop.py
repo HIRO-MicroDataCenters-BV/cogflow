@@ -33,17 +33,16 @@ class LoopFactory(NodeFactory):
         )
 
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
-        max_iters = int(self.config.get("loopMaxIterations", 5) or 5)
+        # Counter key is a stable derivation of the node id; the compiler
+        # in ``compile.to_langgraph`` recomputes ``_loop_count__{node.id}``
+        # directly when wiring the back-edge router, so we don't bind any
+        # private attributes here.
         counter_key = f"_loop_count__{node.id}"
 
         def loop_node(state: dict[str, Any]) -> dict[str, Any]:
             current = int(state.get(counter_key, 0) or 0)
             return {counter_key: current + 1}
 
-        # Expose the counter key + limit so the compiler can wire a conditional
-        # router back-edge without re-deriving them.
-        loop_node._cogflow_loop_counter_key = counter_key  # type: ignore[attr-defined]
-        loop_node._cogflow_loop_max = max_iters  # type: ignore[attr-defined]
         return loop_node
 
 

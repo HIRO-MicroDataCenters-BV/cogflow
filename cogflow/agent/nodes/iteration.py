@@ -80,6 +80,14 @@ class IterationFactory(NodeFactory):
             or (node.flowise_provenance or {}).get("iteration_body_id")
             or None
         )
+        # Validate the body id against the set of nodes the compiler is
+        # actually registering. Without this guard, a malformed import where
+        # ``parentNode`` references a node we skip at compile (e.g., sticky
+        # note, or a node type we don't yet support) would emit
+        # ``Send(missing_id, ...)`` and LangGraph would raise at runtime.
+        runtime_ids = (ctx or {}).get("runtime_node_ids") if ctx else None
+        if body_node_id and runtime_ids is not None and body_node_id not in runtime_ids:
+            body_node_id = None
         # ``iterationInput`` is Flowise's literal-source field — a stringified
         # JSON array (or rich-text). Used when no state key is supplied;
         # parsed best-effort as JSON, otherwise treated as a single-item list.
