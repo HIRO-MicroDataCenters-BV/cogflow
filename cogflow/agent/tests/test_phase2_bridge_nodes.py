@@ -36,6 +36,23 @@ def _ir(node_id: str, node_type: str, config: dict[str, Any] | None = None) -> I
     return IRNode(id=node_id, type=node_type, label=node_id, config=config or {})
 
 
+def _require_langgraph_symbol(name: str) -> Any:
+    """Skip the calling test unless ``langgraph.types.<name>`` is importable.
+
+    ``pytest.importorskip("langgraph.types")`` only proves the module exists;
+    older versions in the supported ``>=0.2,<0.5`` range may ship the module
+    without ``Send`` or ``interrupt``. Both ``IterationFactory`` and
+    ``HumanInputFactory`` already degrade gracefully when their specific
+    symbol is missing, so the corresponding assertion-based tests should
+    skip on that exact condition rather than crash.
+    """
+    try:
+        mod = __import__("langgraph.types", fromlist=[name])
+        return getattr(mod, name)
+    except (ImportError, AttributeError):
+        pytest.skip(f"langgraph.types.{name} not available in this langgraph build")
+
+
 # ---------------------------------------------------------------------------
 # Loop
 # ---------------------------------------------------------------------------
@@ -65,7 +82,7 @@ def test_loop_factory_persists_target_and_max_in_config():
 
 
 def test_iteration_emits_send_per_item():
-    pytest.importorskip("langgraph.types")
+    _require_langgraph_symbol("Send")
     factory = iteration(over="items", body="worker")
     fn = factory.to_callable(_ir("iter_0", "iteration", factory.config))
     sends = fn({"items": ["a", "b", "c"]})
@@ -85,7 +102,7 @@ def test_iteration_no_body_node_is_noop():
 
 def test_iteration_body_id_not_in_runtime_ids_is_noop():
     """Compile-time ctx contract: body id must be in runtime_node_ids."""
-    pytest.importorskip("langgraph.types")
+    _require_langgraph_symbol("Send")
     factory = iteration(over="items", body="worker_missing")
     fn = factory.to_callable(
         _ir("iter_dangling", "iteration", factory.config),
@@ -99,7 +116,7 @@ def test_iteration_empty_or_missing_collection():
     # IterationFactory degrades to `{}` when ``langgraph.types.Send`` isn't
     # importable (older langgraph in the supported range), so gate the
     # ``== []`` assertion on Send actually being available.
-    pytest.importorskip("langgraph.types")
+    _require_langgraph_symbol("Send")
     factory = iteration(over="items", body="worker")
     fn = factory.to_callable(_ir("iter_2", "iteration", factory.config))
     assert fn({}) == []
@@ -262,7 +279,7 @@ def test_custom_function_restricted_builtins_block_dangerous_names():
 
 
 def test_human_input_calls_interrupt(monkeypatch):
-    pytest.importorskip("langgraph.types")
+    _require_langgraph_symbol("interrupt")
     import langgraph.types as lgt
 
     captured: dict[str, Any] = {}
@@ -349,7 +366,7 @@ def test_human_input_reads_flowise_description_key(monkeypatch):
     """JSON-loaded HumanInput uses ``humanInputDescription``, not ``humanInputPrompt``."""
     from cogflow.agent.nodes import HumanInputFactory
 
-    pytest.importorskip("langgraph.types")
+    _require_langgraph_symbol("interrupt")
     bare = HumanInputFactory.from_ir(
         _ir("hi_flowise", "human_input", {"humanInputDescription": "Approve?"})
     )
@@ -379,7 +396,7 @@ def test_http_url_format_falls_back_on_missing_state_key():
 
 
 def test_human_input_prompt_format_falls_back_on_missing_state_key(monkeypatch):
-    pytest.importorskip("langgraph.types")
+    _require_langgraph_symbol("interrupt")
     import langgraph.types as lgt
 
     captured: dict[str, Any] = {}
