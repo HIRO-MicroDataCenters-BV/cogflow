@@ -36,6 +36,15 @@ from typing import Any
 
 from langchain_core.messages import BaseMessage
 
+# Channel keys an update_state directive must NOT be allowed to clobber.
+# ``messages`` carries the reducer-driven conversation history; letting an
+# update_state entry overwrite it would drop the model reply and break the
+# ``add_messages`` reducer contract. Filtering at this layer keeps every
+# caller safe — both the LLM and Agent factories splat the helper's return
+# alongside their ``{"messages": ...}`` delta, and the historical ordering
+# put ``**updates`` last (i.e. winning) which is what we have to disarm.
+_RESERVED_STATE_KEYS = frozenset({"messages"})
+
 
 def apply_update_state(
     directives: Any,
@@ -67,6 +76,15 @@ def apply_update_state(
         key = entry.get("key")
         value = entry.get("value")
         if not isinstance(key, str) or not key:
+            continue
+        # Silently drop directives that target reserved channel keys.
+        # Letting one through would clobber the model reply (or break the
+        # ``add_messages`` reducer when ``key == "messages"``) — neither
+        # outcome can be what the user wanted, so a no-op is safer than
+        # honouring the directive. We don't raise because JSON-imported
+        # flows can legitimately carry such entries from another Flowise
+        # instance, and a hard failure would brick the whole graph.
+        if key in _RESERVED_STATE_KEYS:
             continue
         if isinstance(value, str):
             try:

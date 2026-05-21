@@ -123,7 +123,11 @@ class AgentFactory(NodeFactory):
                     return {}
                 last = next((m for m in reversed(new_msgs) if isinstance(m, BaseMessage)), new_msgs[-1])
                 updates = apply_update_state(update_directives, last, state)
-                return {"messages": new_msgs, **updates}
+                # ``messages`` written LAST so even a future hole in the
+                # reserved-key filter can't clobber the loop output. The
+                # filter in ``apply_update_state`` is the primary defence;
+                # this ordering is defence in depth.
+                return {**updates, "messages": new_msgs}
 
             # Single-shot fallback: no tools, no bind_tools, or older
             # langgraph without create_react_agent.
@@ -143,7 +147,8 @@ class AgentFactory(NodeFactory):
             if not isinstance(response, BaseMessage):
                 response = AIMessage(content=str(response))
             updates = apply_update_state(update_directives, response, state)
-            return {"messages": [response], **updates}
+            # Same ordering as the ReAct path — see comment above.
+            return {**updates, "messages": [response]}
 
         return agent_node
 

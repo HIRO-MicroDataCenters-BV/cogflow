@@ -393,6 +393,33 @@ def test_llm_invoke_with_no_update_state_returns_only_messages():
 # ---------------------------------------------------------------------------
 
 
+def test_update_state_drops_reserved_key_messages():
+    """An ``update_state`` directive targeting ``messages`` must NOT clobber
+    the model reply or break the ``add_messages`` reducer contract.
+
+    The filter lives in ``apply_update_state`` (primary defence); the
+    dict-spread ordering in ``llm_node`` / ``agent_node`` is the secondary
+    guarantee. Both together mean even a malicious / mistaken directive
+    list can't drop the messages channel.
+    """
+    factory = LLMFactory(
+        model=_FixedReplyModel("the-reply"),
+        update_state=[
+            {"key": "messages", "value": "OVERRIDE-ATTEMPT"},
+            {"key": "summary", "value": "{response}"},  # legitimate, should land
+        ],
+    )
+    fn = factory.to_callable(IRNode(id="n", type="llm", label="n"))
+    out = fn({"messages": []})
+    # Messages channel carries the actual model reply, not the override.
+    assert len(out["messages"]) == 1
+    assert out["messages"][0].content == "the-reply"
+    # Legitimate directive landed.
+    assert out["summary"] == "the-reply"
+    # ``messages`` did NOT get a string value.
+    assert not isinstance(out["messages"], str)
+
+
 def test_update_state_reserved_placeholders_not_shadowed_by_state():
     """``{response}`` / ``{output}`` must always resolve to the model reply.
 

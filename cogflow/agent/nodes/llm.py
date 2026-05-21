@@ -80,7 +80,11 @@ class LLMFactory(NodeFactory):
             if not isinstance(response, BaseMessage):
                 response = AIMessage(content=str(response))
             updates = apply_update_state(update_directives, response, state)
-            return {"messages": [response], **updates}
+            # ``messages`` written LAST so a future hole in the reserved-key
+            # filter still can't clobber the model reply. The filter in
+            # ``apply_update_state`` is the primary defence; this ordering
+            # is defence in depth.
+            return {**updates, "messages": [response]}
 
         return llm_node
 
