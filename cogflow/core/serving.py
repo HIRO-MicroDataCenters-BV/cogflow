@@ -766,10 +766,16 @@ class ServingManager:
         # unset field. Applied symmetrically to both flags so the
         # diff-clean guarantee holds regardless of which sentinel the
         # caller picks.
-        if not _is_unset_sentinel(quantization):
-            args.append(f"--quantization={quantization}")
-        if not _is_unset_sentinel(kv_cache_dtype):
-            args.append(f"--kv-cache-dtype={kv_cache_dtype}")
+        normalized_quantization = (
+            quantization.strip() if quantization is not None else None
+        )
+        if not _is_unset_sentinel(normalized_quantization):
+            args.append(f"--quantization={normalized_quantization}")
+        normalized_kv_cache_dtype = (
+            kv_cache_dtype.strip() if kv_cache_dtype is not None else None
+        )
+        if not _is_unset_sentinel(normalized_kv_cache_dtype):
+            args.append(f"--kv-cache-dtype={normalized_kv_cache_dtype}")
         return args
 
     @staticmethod
