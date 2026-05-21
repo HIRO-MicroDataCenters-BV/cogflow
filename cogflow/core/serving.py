@@ -54,6 +54,29 @@ def _ensure_k8s_config_loaded():
     common._k8s_loaded_flag = True
 
 
+# Sentinel values that mean "no flag emitted" for quantization /
+# kv_cache_dtype runtime args. ``"none"`` and ``"auto"`` aren't real
+# vLLM CLI values — they're recommender-side labels for the absence of
+# a runtime cast — so emitting them would either no-op (best case) or
+# break model load (vLLM rejects ``--quantization=auto``). The empty
+# string is included because a stringly-typed config layer can
+# substitute it for unset.
+_LLM_ARG_SENTINELS = frozenset({"", "none", "auto"})
+
+
+def _is_unset_sentinel(value: str | None) -> bool:
+    """Return True when ``value`` should suppress the corresponding flag.
+
+    Matches case-insensitively and ignores surrounding whitespace so the
+    diff-clean guarantee holds when callers normalise to ``"AUTO"`` or
+    ``" none "``. Real CLI values (e.g. ``"fp8"``, ``"fp8_e4m3"``) are
+    preserved untouched and emitted verbatim.
+    """
+    if value is None:
+        return True
+    return value.strip().lower() in _LLM_ARG_SENTINELS
+
+
 # =====================================================================
 #   Serving Manager (Kubernetes-native)
 # =====================================================================
@@ -734,14 +757,18 @@ class ServingManager:
             args.append(f"--gpu-memory-utilization={gpu_memory_utilization}")
         if max_num_seqs is not None:
             args.append(f"--max-num-seqs={max_num_seqs}")
-        # ``"none"`` and ``"auto"`` are recommender-side sentinels for
-        # "vLLM should decide" — they aren't real vLLM CLI values, so
-        # treat them like an unset kwarg and emit nothing. Keeps the
-        # diff-clean guarantee when callers normalise their config layer
-        # to those defaults instead of leaving the field unset.
-        if quantization is not None and quantization not in {"none", "auto"}:
+        # ``"none"`` / ``"auto"`` (and the empty string) are recommender-
+        # side sentinels for "vLLM should decide" — they aren't real
+        # vLLM CLI values, so treat them like an unset kwarg and emit
+        # nothing. Matched case-insensitively and after stripping
+        # surrounding whitespace so a slightly noisy config layer
+        # (``"AUTO"``, ``" none "``) still produces the same ISVC as an
+        # unset field. Applied symmetrically to both flags so the
+        # diff-clean guarantee holds regardless of which sentinel the
+        # caller picks.
+        if not _is_unset_sentinel(quantization):
             args.append(f"--quantization={quantization}")
-        if kv_cache_dtype is not None and kv_cache_dtype != "auto":
+        if not _is_unset_sentinel(kv_cache_dtype):
             args.append(f"--kv-cache-dtype={kv_cache_dtype}")
         return args
 

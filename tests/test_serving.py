@@ -737,14 +737,32 @@ def test_deploy_llm_quantization_and_kv_cache_dtype_appear_at_tail(serving, serv
     ]
 
 
-@pytest.mark.parametrize("quant_sentinel", [None, "none", "auto"])
+# Sentinel values that mean "don't emit the flag" — applied symmetrically
+# to both ``quantization`` and ``kv_cache_dtype``. Case + whitespace
+# variants prove the normaliser handles noisy config layers.
+_LLM_ARG_UNSET_SENTINELS = [
+    None,
+    "",
+    "none",
+    "None",
+    "NONE",
+    " none ",
+    "auto",
+    "Auto",
+    "AUTO",
+    " auto ",
+]
+
+
+@pytest.mark.parametrize("quant_sentinel", _LLM_ARG_UNSET_SENTINELS)
 def test_deploy_llm_quantization_sentinels_emit_no_flag(
     serving, serving_module, quant_sentinel
 ):
     """``None`` (unset), ``"none"`` (recommender's "unquantized" label),
-    and ``"auto"`` (vLLM-decides) all mean "don't emit ``--quantization``"
-    so callers can normalise to whichever default fits their config
-    layer without changing the rendered ISVC."""
+    and ``"auto"`` (vLLM-decides) — plus their case/whitespace variants
+    and the empty string — all mean "don't emit ``--quantization``" so
+    callers can normalise to whichever default fits their config layer
+    without changing the rendered ISVC."""
     _, fake_api, _ = serving_module
 
     serving.deploy_llm(
@@ -759,12 +777,15 @@ def test_deploy_llm_quantization_sentinels_emit_no_flag(
     assert not any(a.startswith("--quantization") for a in args), args
 
 
-@pytest.mark.parametrize("kv_sentinel", [None, "auto"])
+@pytest.mark.parametrize("kv_sentinel", _LLM_ARG_UNSET_SENTINELS)
 def test_deploy_llm_kv_cache_dtype_sentinels_emit_no_flag(
     serving, serving_module, kv_sentinel
 ):
-    """``None`` and ``"auto"`` both leave KV at the compute dtype, so no
-    ``--kv-cache-dtype`` should appear."""
+    """Same sentinel handling as ``quantization`` — applied symmetrically
+    so the diff-clean guarantee is field-agnostic. ``"none"`` was added
+    in response to Copilot review #2 on PR #103: a stringly-typed
+    config layer that uses ``"none"`` as the off-state for both flags
+    should produce identical ISVCs regardless of which field is set."""
     _, fake_api, _ = serving_module
 
     serving.deploy_llm(
@@ -777,6 +798,26 @@ def test_deploy_llm_kv_cache_dtype_sentinels_emit_no_flag(
 
     args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
     assert not any(a.startswith("--kv-cache-dtype") for a in args), args
+
+
+def test_deploy_llm_real_quantization_values_preserved_verbatim(serving, serving_module):
+    """A non-sentinel value passes through to the emitted arg unchanged
+    (no lowercasing of real vLLM CLI values like ``"fp8"`` — guards
+    against the normaliser accidentally munging legitimate inputs)."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-7B-Instruct",
+        isvc_name="q",
+        served_model_name="q",
+        max_model_len=4096,
+        quantization="fp8",
+        kv_cache_dtype="fp8_e4m3",
+    )
+
+    args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
+    assert "--quantization=fp8" in args
+    assert "--kv-cache-dtype=fp8_e4m3" in args
 
 
 # ---------------------------------------------------------------------
