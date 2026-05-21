@@ -143,7 +143,8 @@ exist:
 | `langgraph.graph.MessagesState`, `add_messages` | `cogflow.agent.MessagesState`, `add_messages` |
 | `langgraph.prebuilt.create_react_agent`, `ToolNode` | `cogflow.agent.create_react_agent`, `cogflow.agent.tools.ToolNode` |
 | `langgraph.types.interrupt`, `Command` | `cogflow.agent.interrupt`, `Command` |
-| `langgraph.checkpoint.memory.MemorySaver`, `SqliteSaver` | `cogflow.agent.runtime.MemorySaver`, `SqliteSaver` |
+| `langgraph.checkpoint.memory.MemorySaver` | `cogflow.agent.runtime.MemorySaver` |
+| `langgraph.checkpoint.sqlite.SqliteSaver` | `cogflow.agent.runtime.SqliteSaver` |
 | `langgraph.checkpoint.base.BaseCheckpointSaver` | `cogflow.agent.runtime.BaseCheckpointSaver` |
 | `langchain_core.tools.tool` | `cogflow.agent.tools.tool` |
 | `langchain_core.messages.{AIMessage, HumanMessage, …}` | `cogflow.agent.messages.{AIMessage, …}` |

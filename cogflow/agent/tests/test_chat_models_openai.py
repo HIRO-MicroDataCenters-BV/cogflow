@@ -32,9 +32,13 @@ def _has_langchain_openai() -> bool:
 
 
 def test_openai_reexport_raises_friendly_error_when_uninstalled(monkeypatch):
-    # Shadow the top-level package with a plain module (no ``__path__``)
-    # so any ``from langchain_openai import ChatOpenAI`` deterministically
-    # raises ``ModuleNotFoundError`` regardless of what's installed locally.
+    # Shadow the top-level package with a plain (non-package) module so
+    # ``from langchain_openai import ChatOpenAI`` deterministically fails
+    # regardless of what's installed locally. The immediate exception is
+    # an ``ImportError`` (Python finds the shadowed module but the symbol
+    # ``ChatOpenAI`` is missing from it); the SUT catches the broader
+    # ``ImportError`` and re-raises as ``ModuleNotFoundError`` with the
+    # install hint, which is the user-facing shape we assert on below.
     fake_root = types.ModuleType("langchain_openai")
     monkeypatch.setitem(sys.modules, "langchain_openai", fake_root)
 
