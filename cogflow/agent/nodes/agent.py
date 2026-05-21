@@ -98,9 +98,20 @@ class AgentFactory(NodeFactory):
             if create_react is not None:
                 try:
                     react_app = create_react(model, tools)
-                except Exception:
-                    # ``create_react_agent`` may reject duck-typed models;
-                    # the single-shot fallback below still runs.
+                except (TypeError, ValueError, NotImplementedError, AttributeError):
+                    # Narrow tuple covers what ``create_react_agent`` raises
+                    # when it can't accept the model/tools shape:
+                    #   - ``TypeError`` — model isn't a Runnable
+                    #     ("Expected a Runnable, callable or dict").
+                    #   - ``NotImplementedError`` — ``bind_tools`` isn't
+                    #     implemented for this chat-model class.
+                    #   - ``AttributeError`` — duck-typed model missing
+                    #     a method ``create_react_agent`` introspects.
+                    #   - ``ValueError`` — malformed tool definition.
+                    # Anything else (e.g. an OOMError, a network error
+                    # from a model's eager init, an authentication
+                    # failure) propagates so the user sees the real
+                    # problem instead of silently degrading.
                     react_app = None
 
         def agent_node(state: dict[str, Any]) -> dict[str, Any]:

@@ -34,14 +34,16 @@ class DirectReplyFactory(NodeFactory):
             #     the reply text literally contains ``{`` or ``}`` without
             #     escaping). Also raised by most builtin types when the
             #     format spec is wrong (``"{x:d}".format(x="hi")``).
-            #   - ``TypeError`` — caught defensively. The common case is a
-            #     value in state whose custom ``__format__`` raises (some
-            #     third-party types do this on bad spec). Note that
-            #     ``str.format(**mapping)`` itself does NOT raise on
-            #     extra keys, non-string keys, or non-identifier keys
-            #     when the template doesn't reference them — Flowise
-            #     startState entries like ``"user id"`` are inert unless
-            #     the template tries to interpolate them.
+            #   - ``TypeError`` — caught defensively, two paths:
+            #     1) a value in state whose custom ``__format__`` raises on
+            #        a particular spec (some third-party types do this);
+            #     2) a non-string key in the ``**state`` unpack. Note that
+            #        ``str.format(**mapping)`` in CPython 3.10–3.12 does
+            #        NOT raise on extra unreferenced non-string keys
+            #        (verified empirically — int/None/tuple keys flow
+            #        through), unlike a regular Python function call where
+            #        ``**`` strictly requires string keys. A future Python
+            #        enforcing the spec stricter would land here.
             # In every case fall back to the unrendered template so the
             # node still produces output. ``compile/to_python.py:
             # _render_direct_reply`` emits the same tuple — keep them in

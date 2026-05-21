@@ -3,10 +3,12 @@
 What's exercised here, in order:
 
   - Stage A — ``.format(**state)`` wider exception tuple. Templates with
-    malformed braces (``ValueError``) and non-identifier state keys
-    (``TypeError``) must fall back to the literal instead of crashing
-    the graph. The runtime path is brought in line with what
-    ``compile/to_python.py`` already emits.
+    malformed braces or bad builtin-type format specs (``ValueError``)
+    and values whose custom ``__format__`` raises (``TypeError``) must
+    fall back to the literal instead of crashing the graph. Extra
+    unreferenced state keys (including non-identifier strings like
+    ``"user id"``) are inert in CPython 3.10+. The runtime path is
+    brought in line with what ``compile/to_python.py`` already emits.
 
   - Stage B — ``llmUpdateState`` / ``agentUpdateState`` directives.
     LLM and Agent now apply the directive list after invoking the model,

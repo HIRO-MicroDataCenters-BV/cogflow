@@ -19,9 +19,12 @@ documented modes:
     state whose custom ``__format__`` raises on a particular spec.
 
 On any failure the literal value passes through unrendered so the node
-still updates state instead of crashing. Extra unreferenced state keys
-are inert regardless of their shape — only what the template
-interpolates matters.
+still updates state instead of crashing. Extra state keys the template
+doesn't reference are inert in CPython 3.10+ (str.format silently
+tolerates non-string keys in the ``**`` unpack, unlike an ordinary
+Python function call which strictly requires string kwargs); the
+``TypeError`` catch covers the unlikely case a future Python enforces
+the spec more strictly.
 
 For JSON-loaded flows whose ``value`` strings use Flowise's mustache-style
 ``{{ output }}`` / ``{{ $flow.state.X }}`` placeholders, the strings simply

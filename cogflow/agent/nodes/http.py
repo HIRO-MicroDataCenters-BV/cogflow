@@ -54,10 +54,12 @@ class HTTPFactory(NodeFactory):
             # Missing template keys must not crash the graph — fall back to
             # the unrendered URL so the user can see what was attempted.
             # Wider tuple than the original ``(KeyError, IndexError)`` also
-            # catches ``ValueError`` (malformed brace or bad format spec on a
-            # builtin type) and ``TypeError`` (caught defensively for values
-            # whose custom ``__format__`` raises). Extra state keys the URL
-            # template doesn't reference are inert regardless of their shape.
+            # catches ``ValueError`` (malformed brace or bad format spec on
+            # a builtin type) and ``TypeError`` (caught defensively for
+            # values whose custom ``__format__`` raises and for the unlikely
+            # case a future Python enforces string-only keys in the
+            # ``**state`` unpack — CPython 3.10+ silently tolerates extra
+            # non-string keys when the template doesn't reference them).
             rendered_url = url
             if url:
                 try:
