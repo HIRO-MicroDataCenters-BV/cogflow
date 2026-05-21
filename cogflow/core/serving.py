@@ -1826,4 +1826,23 @@ for attr_name in dir(ServingManager):
         # Bind the method to the singleton instance
         globals()[attr_name] = getattr(_serving, attr_name)
 
-# Expose async methods from AsyncServingManager
+# Expose async methods from AsyncServingManager so consumers reaching
+# ``cogflow.serving`` (via the package-level _LazyLoader, which maps
+# ``cogflow.serving`` → ``cogflow.core.serving``) get the full async
+# surface alongside the sync one — without this block, ``from cogflow
+# import serving as cogflow_serving; cogflow_serving.async_deploy_llm``
+# returns AttributeError. Test
+# ``test_serving_module_reexports_async_deploy_llm`` defends this
+# contract by running an import in a fresh subprocess.
+from .async_serving import (  # noqa: E402
+    async_deploy_model,
+    async_deploy_llm,
+    async_serve_llm,
+    async_update_model,
+    async_delete_isvc,
+    async_list_models,
+    async_get_isvc,
+    async_update_isvc,
+    async_restart_isvc,
+    async_create_isvc,
+)
