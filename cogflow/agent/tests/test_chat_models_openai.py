@@ -63,3 +63,32 @@ def test_openai_reexport_resolves_to_real_chatopenai():
     from langchain_openai import ChatOpenAI as _Upstream
 
     assert ChatOpenAI is _Upstream
+
+
+def test_openai_reexport_propagates_unrelated_import_errors(monkeypatch):
+    """A failure inside langchain_openai (e.g. its transitive ``openai`` dep
+    missing) must NOT be re-raised as a misleading "install langchain-openai"
+    hint. The SUT only converts ImportErrors whose ``name`` points at
+    ``langchain_openai`` itself; everything else propagates unchanged so the
+    user sees the real cause.
+    """
+
+    # Build a shadow ``langchain_openai`` whose ``__getattr__`` raises
+    # ModuleNotFoundError(name="openai") — simulating a broken transitive.
+    # ``from langchain_openai import ChatOpenAI`` invokes module __getattr__
+    # under PEP 562 when the attribute isn't in the module dict.
+    fake_root = types.ModuleType("langchain_openai")
+
+    def _broken_getattr(name: str):
+        raise ModuleNotFoundError("No module named 'openai'", name="openai")
+
+    fake_root.__getattr__ = _broken_getattr  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "langchain_openai", fake_root)
+    monkeypatch.delitem(sys.modules, "cogflow.agent.chat_models.openai", raising=False)
+
+    # The transitive failure surfaces with its real ``name="openai"`` — not
+    # masked as a langchain-openai install hint.
+    with pytest.raises(ModuleNotFoundError) as exc_info:
+        importlib.import_module("cogflow.agent.chat_models.openai")
+    assert exc_info.value.name == "openai"
+    assert "cogflow[openai]" not in str(exc_info.value)
