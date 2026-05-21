@@ -72,11 +72,17 @@ class AgentFactory(NodeFactory):
         # import is lazy because langgraph is an optional extra; the
         # single-shot fallback below covers the import-failed case.
         #
-        # Two import paths: LangGraph 1.0+ renamed ``create_react_agent`` to
-        # ``langchain.agents.create_agent`` (deprecated in lg 1.0, removed in
-        # lg 2.0). Prefer the new home if ``langchain`` is on the user's
-        # path; fall back to the deprecated location otherwise. Either one
-        # produces a CompiledStateGraph with the same .invoke contract.
+        # Two import paths tried in order:
+        #   1. ``langchain.agents.create_agent`` — only present if the user
+        #      installed the ``langchain`` package separately. Newer
+        #      surface introduced after the ``langgraph.prebuilt`` API was
+        #      deprecated.
+        #   2. ``langgraph.prebuilt.create_react_agent`` — the supported
+        #      home for the SDK's declared dep range
+        #      (``langgraph >=0.2,<0.5`` in ``pyproject.toml``). This is the
+        #      path 99% of users land on.
+        # Either entry point returns a CompiledStateGraph with the same
+        # ``.invoke`` contract, so the rest of this function is path-agnostic.
         react_app = None
         if model is not None and tools and hasattr(model, "bind_tools"):
             create_react: Any | None = None
@@ -121,7 +127,18 @@ class AgentFactory(NodeFactory):
 
             # Single-shot fallback: no tools, no bind_tools, or older
             # langgraph without create_react_agent.
-            bound = model.bind_tools(tools) if tools and hasattr(model, "bind_tools") else model
+            #
+            # ``hasattr`` isn't a strong enough guard: ``BaseChatModel``
+            # defines ``bind_tools`` on the base class but its default impl
+            # raises ``NotImplementedError`` (so do most fakes). Catch that
+            # and proceed with the unbound model — single-shot can still
+            # produce a response, just without tool-calling capability.
+            bound = model
+            if tools and hasattr(model, "bind_tools"):
+                try:
+                    bound = model.bind_tools(tools)
+                except NotImplementedError:
+                    bound = model
             response = bound.invoke(input_messages)
             if not isinstance(response, BaseMessage):
                 response = AIMessage(content=str(response))

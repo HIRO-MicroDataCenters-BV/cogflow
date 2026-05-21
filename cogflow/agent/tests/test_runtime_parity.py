@@ -293,5 +293,78 @@ def test_llm_invoke_with_no_update_state_returns_only_messages():
     assert set(out.keys()) == {"messages"}
 
 
+# ---------------------------------------------------------------------------
+# Copilot review follow-ups (PR #102)
+# ---------------------------------------------------------------------------
+
+
+def test_update_state_reserved_placeholders_not_shadowed_by_state():
+    """``{response}`` / ``{output}`` must always resolve to the model reply.
+
+    A prior node could have stashed something under ``state["response"]``;
+    that must NOT bleed through into the template — the helper splats
+    state first and sets the reserved keys last, so the reply wins.
+    """
+    factory = LLMFactory(
+        model=_FixedReplyModel("the-real-reply"),
+        update_state=[{"key": "summary", "value": "{response}"}],
+    )
+    fn = factory.to_callable(IRNode(id="n", type="llm", label="n"))
+    out = fn({"messages": [], "response": "STALE-FROM-EARLIER", "output": "ALSO-STALE"})
+    assert out["summary"] == "the-real-reply"
+
+
+def test_tool_factory_reads_basetool_name_and_description():
+    """``@tool(name="custom_name")`` must persist into config — not __name__."""
+    from langchain_core.tools import tool
+
+    @tool("custom_name", description="custom description")
+    def underlying(x: str) -> str:
+        """Docstring that should NOT appear in the config."""
+        return x
+
+    factory = ToolFactory(fn=underlying)
+    assert factory.config["toolName"] == "custom_name"
+    assert factory.config["toolDescription"] == "custom description"
+
+
+def test_tool_factory_plain_callable_still_uses_dunder_name():
+    """Regression: plain callables (no BaseTool) keep the historic fallback."""
+
+    def my_helper(x: int) -> int:
+        """Plain helper."""
+        return x + 1
+
+    factory = ToolFactory(fn=my_helper)
+    assert factory.config["toolName"] == "my_helper"
+    assert "Plain helper" in factory.config["toolDescription"]
+
+
+class _BindToolsRaisesModel(FakeMessagesListChatModel):
+    """Fake whose ``bind_tools`` raises NotImplementedError (BaseChatModel default).
+
+    Used to verify the single-shot fallback in ``AgentFactory`` swallows
+    the NotImplementedError and continues with the unbound model rather
+    than crashing.
+    """
+
+
+def test_agent_single_shot_tolerates_bind_tools_not_implemented():
+    """``bind_tools`` raising NotImplementedError must not crash the node."""
+
+    def trivial_tool(x: str) -> str:
+        return x  # plain callable, NOT a BaseTool — keeps the single-shot path
+
+    # FakeMessagesListChatModel has hasattr(bind_tools) True but the base
+    # implementation raises NotImplementedError. ``create_react_agent`` would
+    # also reject this model (no proper bind_tools), so the agent factory
+    # falls through to the single-shot path — which used to crash here.
+    model = _BindToolsRaisesModel(responses=[AIMessage(content="ok")])
+    factory = AgentFactory(model=model, tools=[trivial_tool])
+    fn = factory.to_callable(IRNode(id="agent", type="agent", label="agent"))
+    out = fn({"messages": [HumanMessage(content="hi")]})
+    assert out["messages"][0].content == "ok"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

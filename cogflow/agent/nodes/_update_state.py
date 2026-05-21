@@ -44,10 +44,11 @@ def apply_update_state(
         return {}
 
     response_text = response.content if isinstance(response, BaseMessage) else str(response)
-    # Both ``response`` and ``output`` resolve to the model reply text — keeps
-    # Python-first ergonomics aligned with Flowise's ``{{ output }}`` label
-    # without needing to detect which spelling the user wrote.
-    fmt_kwargs: dict[str, Any] = {"response": response_text, "output": response_text, **dict(state)}
+    # Splat state first, then overwrite ``response`` / ``output`` so a prior
+    # state entry under those keys can't shadow the reserved placeholders —
+    # ``{response}`` in a template must always refer to the current model
+    # reply, never to whatever a previous node stashed under ``state["response"]``.
+    fmt_kwargs: dict[str, Any] = {**dict(state), "response": response_text, "output": response_text}
 
     updates: dict[str, Any] = {}
     for entry in directives:

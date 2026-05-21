@@ -31,9 +31,30 @@ class ToolFactory(NodeFactory):
         description: str | None = None,
         **extra: Any,
     ) -> None:
+        # ``@tool``-decorated callables are ``BaseTool`` instances, where the
+        # canonical metadata lives on ``.name`` / ``.description``. Reading
+        # ``__name__`` / ``__doc__`` would pull from the underlying function
+        # (often the decorator's bookkeeping or an empty docstring) and
+        # break IR round-trip when the user customised the @tool name. For
+        # plain callables we keep the historic ``__name__`` / ``__doc__``
+        # fallback so JSON-imported nodes without a live ``fn`` don't change.
+        derived_name = "tool"
+        derived_desc = ""
+        if fn is not None:
+            try:
+                from langchain_core.tools import BaseTool  # type: ignore[import-not-found]
+            except ImportError:
+                BaseTool = None  # type: ignore[assignment]
+            if BaseTool is not None and isinstance(fn, BaseTool):
+                derived_name = fn.name or "tool"
+                derived_desc = fn.description or ""
+            else:
+                derived_name = getattr(fn, "__name__", "tool")
+                derived_desc = getattr(fn, "__doc__", "") or ""
+
         super().__init__(
-            toolName=name or (getattr(fn, "__name__", "tool") if fn else "tool"),
-            toolDescription=description or (getattr(fn, "__doc__", "") if fn else ""),
+            toolName=name or derived_name,
+            toolDescription=description or derived_desc,
             **extra,
         )
         self._fn = fn
