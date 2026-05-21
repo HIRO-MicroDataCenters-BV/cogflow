@@ -32,7 +32,17 @@ except ImportError:  # pragma: no cover - older langgraph
     interrupt = None  # type: ignore[assignment]
     Command = None  # type: ignore[assignment]
 
-from . import compile, nodes, parse, tracing
+from . import (
+    chat_models,
+    compile,
+    fakes,
+    messages,
+    nodes,
+    parse,
+    prompts,
+    runnables,
+    tracing,
+)
 from .graph import StateGraph
 from .prebuilt import create_react_agent
 from .state import MessagesState, add_messages
@@ -46,11 +56,16 @@ __all__ = [
     "StateGraph",
     "ToolNode",
     "add_messages",
+    "chat_models",
     "compile",
     "create_react_agent",
+    "fakes",
     "interrupt",
+    "messages",
     "nodes",
     "parse",
+    "prompts",
+    "runnables",
     "tool",
     "tracing",
 ]

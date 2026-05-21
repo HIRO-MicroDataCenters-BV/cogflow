@@ -143,9 +143,18 @@ exist:
 | `langgraph.graph.MessagesState`, `add_messages` | `cogflow.agent.MessagesState`, `add_messages` |
 | `langgraph.prebuilt.create_react_agent`, `ToolNode` | `cogflow.agent.create_react_agent`, `cogflow.agent.tools.ToolNode` |
 | `langgraph.types.interrupt`, `Command` | `cogflow.agent.interrupt`, `Command` |
-| `langgraph.checkpoint.memory.MemorySaver`, `SqliteSaver` | `cogflow.agent.runtime.checkpoint.MemorySaver`, `SqliteSaver` |
+| `langgraph.checkpoint.memory.MemorySaver` | `cogflow.agent.runtime.MemorySaver` |
+| `langgraph.checkpoint.sqlite.SqliteSaver` | `cogflow.agent.runtime.SqliteSaver` |
+| `langgraph.checkpoint.base.BaseCheckpointSaver` | `cogflow.agent.runtime.BaseCheckpointSaver` |
 | `langchain_core.tools.tool` | `cogflow.agent.tools.tool` |
+| `langchain_core.messages.{AIMessage, HumanMessage, …}` | `cogflow.agent.messages.{AIMessage, …}` |
+| `langchain_core.prompts.{ChatPromptTemplate, PromptTemplate, MessagesPlaceholder}` | `cogflow.agent.prompts.*` |
+| `langchain_core.runnables.{Runnable, RunnableConfig, RunnableLambda, …}` | `cogflow.agent.runnables.*` |
+| `langchain_core.language_models.fake_chat_models.{FakeListChatModel, GenericFakeChatModel}` | `cogflow.agent.fakes.*` |
+| `langchain_openai.ChatOpenAI` | `cogflow.agent.chat_models.openai.ChatOpenAI` (requires `pip install cogflow[openai]`) |
 
-Provider SDKs (`langchain_openai`, `langchain_anthropic`, message
-classes, runnables) stay as direct deps — the SDK is provider-agnostic
-and doesn't try to abstract them.
+Provider chat models live behind optional install extras
+(`cogflow[openai]` so far; additional providers added on demand based
+on real downstream usage). The base `cogflow[agent]` install stays
+provider-agnostic — opt-in pulls only the providers a given agent
+actually needs.
