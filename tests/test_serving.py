@@ -701,6 +701,84 @@ def test_deploy_llm_whitelisted_args_order_and_flags(serving, serving_module):
     ]
 
 
+def test_deploy_llm_quantization_and_kv_cache_dtype_appear_at_tail(serving, serving_module):
+    """When the recommender supplies ``quantization`` / ``kv_cache_dtype``,
+    they land at the tail of the args list so the prefix order stays
+    diff-stable with calls that omit them."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen3.6-35B-A3B",
+        isvc_name="q",
+        served_model_name="q",
+        max_model_len=32768,
+        dtype="bfloat16",
+        tensor_parallel_size=1,
+        gpu_memory_utilization=0.92,
+        quantization="fp8",
+        kv_cache_dtype="fp8_e4m3",
+    )
+
+    args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
+    # The two new flags must be at the end; everything before them must
+    # match the existing stable ordering. This mirrors the user's live
+    # qwen3-6-35b-a3b ISVC shape — that's the recommender's target.
+    assert args[-2:] == [
+        "--quantization=fp8",
+        "--kv-cache-dtype=fp8_e4m3",
+    ]
+    assert args[:-2] == [
+        "--model_id=Qwen/Qwen3.6-35B-A3B",
+        "--model_name=q",
+        "--max_model_len=32768",
+        "--dtype=bfloat16",
+        "--tensor-parallel-size=1",
+        "--gpu-memory-utilization=0.92",
+    ]
+
+
+@pytest.mark.parametrize("quant_sentinel", [None, "none", "auto"])
+def test_deploy_llm_quantization_sentinels_emit_no_flag(
+    serving, serving_module, quant_sentinel
+):
+    """``None`` (unset), ``"none"`` (recommender's "unquantized" label),
+    and ``"auto"`` (vLLM-decides) all mean "don't emit ``--quantization``"
+    so callers can normalise to whichever default fits their config
+    layer without changing the rendered ISVC."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-7B-Instruct",
+        isvc_name="q",
+        served_model_name="q",
+        max_model_len=4096,
+        quantization=quant_sentinel,
+    )
+
+    args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
+    assert not any(a.startswith("--quantization") for a in args), args
+
+
+@pytest.mark.parametrize("kv_sentinel", [None, "auto"])
+def test_deploy_llm_kv_cache_dtype_sentinels_emit_no_flag(
+    serving, serving_module, kv_sentinel
+):
+    """``None`` and ``"auto"`` both leave KV at the compute dtype, so no
+    ``--kv-cache-dtype`` should appear."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-7B-Instruct",
+        isvc_name="q",
+        served_model_name="q",
+        max_model_len=4096,
+        kv_cache_dtype=kv_sentinel,
+    )
+
+    args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
+    assert not any(a.startswith("--kv-cache-dtype") for a in args), args
+
+
 # ---------------------------------------------------------------------
 # LLM name derivation (derive_llm_names + deploy_llm with omitted names)
 # ---------------------------------------------------------------------

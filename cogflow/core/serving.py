@@ -734,7 +734,12 @@ class ServingManager:
             args.append(f"--gpu-memory-utilization={gpu_memory_utilization}")
         if max_num_seqs is not None:
             args.append(f"--max-num-seqs={max_num_seqs}")
-        if quantization is not None and quantization != "none":
+        # ``"none"`` and ``"auto"`` are recommender-side sentinels for
+        # "vLLM should decide" — they aren't real vLLM CLI values, so
+        # treat them like an unset kwarg and emit nothing. Keeps the
+        # diff-clean guarantee when callers normalise their config layer
+        # to those defaults instead of leaving the field unset.
+        if quantization is not None and quantization not in {"none", "auto"}:
             args.append(f"--quantization={quantization}")
         if kv_cache_dtype is not None and kv_cache_dtype != "auto":
             args.append(f"--kv-cache-dtype={kv_cache_dtype}")
