@@ -47,8 +47,12 @@ class HumanInputFactory(NodeFactory):
             except ImportError:
                 # Older langgraph without interrupts: degrade to passthrough.
                 return {}
-            # Same widened tuple as direct_reply / compile.to_python — covers
-            # missing keys, malformed templates, and non-identifier state keys.
+            # Same widened tuple as direct_reply / compile.to_python — see
+            # ``direct_reply.py`` for the full failure-mode breakdown.
+            # Covers missing template slots (KeyError/IndexError), malformed
+            # templates and builtin-type format-spec errors (ValueError),
+            # and defensive TypeError catch for custom ``__format__``
+            # implementations that raise.
             rendered = prompt
             if prompt:
                 try:

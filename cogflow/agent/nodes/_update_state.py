@@ -8,10 +8,20 @@ and serialize them into config; this helper applies them at runtime so the
 state actually mutates.
 
 Templating semantics are Python ``str.format`` — the same widened exception
-tuple used by ``direct_reply`` / ``human_input`` / ``http`` covers the four
-failure modes (missing key, malformed braces, non-identifier state keys, and
-type-incompatible state values). On any failure the literal value passes
-through unrendered so the node still updates state instead of crashing.
+tuple used by ``direct_reply`` / ``human_input`` / ``http`` covers three
+documented modes:
+
+  - ``KeyError`` / ``IndexError`` — template references a missing keyword
+    or positional slot.
+  - ``ValueError`` — malformed template (unmatched brace) or a builtin
+    type rejecting the format spec (``"{x:d}".format(x="hi")``).
+  - ``TypeError`` — caught defensively. Most common cause is a value in
+    state whose custom ``__format__`` raises on a particular spec.
+
+On any failure the literal value passes through unrendered so the node
+still updates state instead of crashing. Extra unreferenced state keys
+are inert regardless of their shape — only what the template
+interpolates matters.
 
 For JSON-loaded flows whose ``value`` strings use Flowise's mustache-style
 ``{{ output }}`` / ``{{ $flow.state.X }}`` placeholders, the strings simply

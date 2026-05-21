@@ -53,11 +53,11 @@ class HTTPFactory(NodeFactory):
                 client = httpx
             # Missing template keys must not crash the graph — fall back to
             # the unrendered URL so the user can see what was attempted.
-            # Wider tuple than the original ``(KeyError, IndexError)`` catches
-            # malformed-brace ``ValueError`` (a literal ``{`` in the URL) and
-            # non-identifier state-key ``TypeError`` (Flowise startState keys
-            # like ``"user id"`` are legitimate but break ``str.format`` since
-            # they aren't valid Python identifiers).
+            # Wider tuple than the original ``(KeyError, IndexError)`` also
+            # catches ``ValueError`` (malformed brace or bad format spec on a
+            # builtin type) and ``TypeError`` (caught defensively for values
+            # whose custom ``__format__`` raises). Extra state keys the URL
+            # template doesn't reference are inert regardless of their shape.
             rendered_url = url
             if url:
                 try:

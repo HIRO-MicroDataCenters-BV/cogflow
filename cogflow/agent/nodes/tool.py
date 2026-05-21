@@ -14,10 +14,21 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, Union
 
 from ..ir.model import IRNode
 from .base import NodeFactory, NodeRuntime
+
+if TYPE_CHECKING:
+    from langchain_core.tools import BaseTool
+
+# ``fn`` may be a plain Python callable (Flowise's historic shape) OR a
+# LangChain ``BaseTool`` from the ``@tool`` decorator (the new path that
+# delegates to ``langgraph.prebuilt.ToolNode``). Keep the ``BaseTool``
+# reference behind ``TYPE_CHECKING`` so users without ``langchain_core``
+# on import path don't pay an import-time hit; the annotation is purely
+# for typed callers.
+ToolFnInput = Union[Callable[..., Any], "BaseTool"]
 
 
 class ToolFactory(NodeFactory):
@@ -27,7 +38,7 @@ class ToolFactory(NodeFactory):
         self,
         *,
         name: str | None = None,
-        fn: Callable[..., Any] | None = None,
+        fn: ToolFnInput | None = None,
         description: str | None = None,
         **extra: Any,
     ) -> None:

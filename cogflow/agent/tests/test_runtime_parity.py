@@ -78,12 +78,39 @@ def test_direct_reply_tolerates_malformed_template_braces():
     assert out == {"messages": [AIMessage(content="see {section 1}")]}
 
 
-def test_direct_reply_tolerates_non_identifier_state_key():
-    """Flowise startState keys like ``"user id"`` used to raise TypeError."""
+def test_direct_reply_tolerates_extra_unreferenced_state_keys():
+    """Extra state keys the template doesn't reference must not interfere.
+
+    Originally framed as "non-identifier state keys" (Flowise's startState
+    permits ``"user id"`` / ``"step-count"``). That framing was misleading
+    — ``str.format(**mapping)`` only requires keys be strings, not valid
+    Python identifiers, when those keys aren't referenced by the template.
+    The behaviour we actually care about is: rendering with the keys the
+    template DOES want, ignoring the rest, regardless of their shape.
+    """
     factory = DirectReplyFactory(message="hi {name}")
     fn = factory.to_callable(IRNode(id="n", type="direct_reply", label="n"))
-    out = fn({"name": "alice", "user id": "u-1"})
+    out = fn({"name": "alice", "user id": "u-1", "step-count": 3})
     assert out == {"messages": [AIMessage(content="hi alice")]}
+
+
+def test_direct_reply_tolerates_custom_format_typeerror():
+    """A custom ``__format__`` that raises TypeError must not crash the node.
+
+    This is the actual TypeError hot path for ``str.format(**state)``:
+    a value in state whose ``__format__`` raises (custom types, certain
+    numeric conversions). The widened exception tuple catches it; the
+    node falls back to the unrendered template.
+    """
+
+    class _BadFormat:
+        def __format__(self, spec: str) -> str:
+            raise TypeError("custom __format__ refuses to render")
+
+    factory = DirectReplyFactory(message="hi {bad}")
+    fn = factory.to_callable(IRNode(id="n", type="direct_reply", label="n"))
+    out = fn({"bad": _BadFormat()})
+    assert out == {"messages": [AIMessage(content="hi {bad}")]}
 
 
 def test_direct_reply_coerces_null_message_to_empty():
@@ -282,7 +309,7 @@ def test_tool_factory_with_basetool_delegates_to_langgraph_toolnode():
     )
 
 
-def test_tool_factory_basetool_dispatches_in_compiled_statgraph():
+def test_tool_factory_basetool_dispatches_in_compiled_stategraph():
     """End-to-end: feed an AIMessage(tool_calls=...) through a StateGraph
     whose only node is the ToolFactory-produced ToolNode; assert that
     exactly one ToolMessage carrying the tool's return value lands on the
