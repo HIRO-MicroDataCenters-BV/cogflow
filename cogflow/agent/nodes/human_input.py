@@ -47,11 +47,13 @@ class HumanInputFactory(NodeFactory):
             except ImportError:
                 # Older langgraph without interrupts: degrade to passthrough.
                 return {}
+            # Same widened tuple as direct_reply / compile.to_python — covers
+            # missing keys, malformed templates, and non-identifier state keys.
             rendered = prompt
             if prompt:
                 try:
                     rendered = prompt.format(**state)
-                except (KeyError, IndexError):
+                except (KeyError, IndexError, ValueError, TypeError):
                     rendered = prompt
             reply = interrupt({"prompt": rendered, "node": node.id})
             return {output_key: reply}

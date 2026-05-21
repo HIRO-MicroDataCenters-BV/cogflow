@@ -8,6 +8,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from ..ir.model import IRNode
+from ._update_state import apply_update_state
 from .base import NodeFactory
 
 
@@ -66,6 +67,11 @@ class LLMFactory(NodeFactory):
         model = raw_model if not isinstance(raw_model, str) else None
         prompts = _coerce_messages(self.config.get("llmMessages"))
 
+        # Honour Flowise's ``llmUpdateState`` directive list — evaluated
+        # against the response and folded into the returned delta. See
+        # ``_update_state.apply_update_state`` for the templating rules.
+        update_directives = self.config.get("llmUpdateState")
+
         def llm_node(state: dict[str, Any]) -> dict[str, Any]:
             history = list(state.get("messages") or [])
             if model is None:
@@ -73,7 +79,8 @@ class LLMFactory(NodeFactory):
             response = model.invoke(prompts + history)
             if not isinstance(response, BaseMessage):
                 response = AIMessage(content=str(response))
-            return {"messages": [response]}
+            updates = apply_update_state(update_directives, response, state)
+            return {"messages": [response], **updates}
 
         return llm_node
 

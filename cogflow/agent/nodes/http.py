@@ -53,11 +53,16 @@ class HTTPFactory(NodeFactory):
                 client = httpx
             # Missing template keys must not crash the graph — fall back to
             # the unrendered URL so the user can see what was attempted.
+            # Wider tuple than the original ``(KeyError, IndexError)`` catches
+            # malformed-brace ``ValueError`` (a literal ``{`` in the URL) and
+            # non-identifier state-key ``TypeError`` (Flowise startState keys
+            # like ``"user id"`` are legitimate but break ``str.format`` since
+            # they aren't valid Python identifiers).
             rendered_url = url
             if url:
                 try:
                     rendered_url = url.format(**state)
-                except (KeyError, IndexError):
+                except (KeyError, IndexError, ValueError, TypeError):
                     rendered_url = url
             kwargs: dict[str, Any] = {"headers": headers, "timeout": timeout}
             if body not in (None, ""):

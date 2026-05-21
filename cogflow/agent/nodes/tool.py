@@ -1,4 +1,14 @@
-"""Tool node — exposes a callable that an Agent node may invoke."""
+"""Tool node — exposes a callable that an Agent node may invoke.
+
+Two runtime shapes are supported. If the user passed a ``@tool``-decorated
+``BaseTool`` (the LangChain idiom), we delegate to ``langgraph.prebuilt.ToolNode``
+so the node honours the standard contract: read ``tool_calls`` off the last
+AIMessage in state, execute each call, emit one ``ToolMessage`` per call. If
+the user passed a plain Python callable, we keep the simpler historic
+contract: read ``state["tool_input"]``, call ``fn``, stash the return value
+under ``tool_output``. Both contracts coexist so Flowise's ``toolAgentflow``
+(a plain callable) and a Python-first ``@tool`` continue to drop in.
+"""
 
 from __future__ import annotations
 
@@ -30,6 +40,21 @@ class ToolFactory(NodeFactory):
 
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
         fn = getattr(self, "_fn", None)
+
+        # If ``fn`` is a ``@tool``-decorated BaseTool, delegate to LangGraph's
+        # ToolNode so the standard tool_calls contract is honoured (read
+        # last-AIMessage tool_calls, execute each, emit ToolMessages). Falls
+        # back to the plain-callable path on any import or type mismatch so
+        # JSON-imported nodes (which carry no live ``fn``) keep working.
+        if fn is not None:
+            try:
+                from langchain_core.tools import BaseTool  # type: ignore[import-not-found]
+                from langgraph.prebuilt import ToolNode as _LGToolNode  # type: ignore[attr-defined]
+
+                if isinstance(fn, BaseTool):
+                    return _LGToolNode([fn])
+            except ImportError:
+                pass
 
         def tool_node(state: dict[str, Any]) -> dict[str, Any]:
             if fn is None:

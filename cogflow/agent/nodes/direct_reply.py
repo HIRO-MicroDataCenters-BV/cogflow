@@ -21,10 +21,19 @@ class DirectReplyFactory(NodeFactory):
         message = self.config.get("directReplyMessage", "")
 
         def direct_reply_node(state: dict[str, Any]) -> dict[str, Any]:
+            # ``.format(**state)`` can raise four ways: ``KeyError`` /
+            # ``IndexError`` for a missing template slot, ``ValueError`` for
+            # an unmatched brace (the reply text literally contains ``{`` or
+            # ``}``), and ``TypeError`` when ``state`` carries keys that
+            # aren't valid Python identifiers (Flowise's startState allows
+            # ``"user id"`` / ``"step-count"``). In all four cases fall back
+            # to the unrendered template so the node still produces output.
+            # ``compile/to_python.py:_render_direct_reply`` emits the same
+            # tuple — keep them in lockstep.
             rendered = message
             try:
                 rendered = message.format(**state) if message else ""
-            except (KeyError, IndexError):
+            except (KeyError, IndexError, ValueError, TypeError):
                 rendered = message
             return {"messages": [AIMessage(content=rendered)]} if rendered else {}
 
