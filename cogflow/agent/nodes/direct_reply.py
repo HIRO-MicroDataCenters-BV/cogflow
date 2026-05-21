@@ -18,7 +18,13 @@ class DirectReplyFactory(NodeFactory):
         super().__init__(directReplyMessage=message, **extra)
 
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
-        message = self.config.get("directReplyMessage", "")
+        # Coerce non-string values to ``""`` — partially-populated IR nodes
+        # (or imported flows whose ``directReplyMessage`` came across as
+        # ``null``) can carry ``None`` here, and ``None.format(...)`` would
+        # raise ``AttributeError`` which is not in the widened tuple below.
+        # ``compile/to_python.py:_render_direct_reply`` guards the same way.
+        raw_message = self.config.get("directReplyMessage", "")
+        message = raw_message if isinstance(raw_message, str) else ""
 
         def direct_reply_node(state: dict[str, Any]) -> dict[str, Any]:
             # ``.format(**state)`` can raise four ways: ``KeyError`` /

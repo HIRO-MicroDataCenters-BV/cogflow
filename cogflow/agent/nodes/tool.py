@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from ..ir.model import IRNode
-from .base import NodeFactory
+from .base import NodeFactory, NodeRuntime
 
 
 class ToolFactory(NodeFactory):
@@ -59,7 +59,7 @@ class ToolFactory(NodeFactory):
         )
         self._fn = fn
 
-    def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
+    def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> NodeRuntime:
         fn = getattr(self, "_fn", None)
 
         # If ``fn`` is a ``@tool``-decorated BaseTool, delegate to LangGraph's

@@ -25,17 +25,28 @@ What's exercised here, in order:
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any, TypedDict
 
 import pytest
 from langchain_core.language_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
+from cogflow.agent import add_messages
 from cogflow.agent.ir.model import IRNode
 from cogflow.agent.nodes.agent import AgentFactory
 from cogflow.agent.nodes.direct_reply import DirectReplyFactory
 from cogflow.agent.nodes.llm import LLMFactory
 from cogflow.agent.nodes.tool import ToolFactory
+
+
+class _MessagesOnlyState(TypedDict, total=False):
+    """Module-level TypedDict so ``langgraph.get_type_hints`` can resolve
+    the ``Annotated[..., add_messages]`` reducer at compile time. Defining
+    this inside a test function makes the reducer invisible to LangGraph's
+    schema introspection (``NameError`` on ``Annotated``).
+    """
+
+    messages: Annotated[list, add_messages]
 
 
 class _ToolCallingFakeModel(FakeMessagesListChatModel):
@@ -73,6 +84,23 @@ def test_direct_reply_tolerates_non_identifier_state_key():
     fn = factory.to_callable(IRNode(id="n", type="direct_reply", label="n"))
     out = fn({"name": "alice", "user id": "u-1"})
     assert out == {"messages": [AIMessage(content="hi alice")]}
+
+
+def test_direct_reply_coerces_null_message_to_empty():
+    """JSON-imported IR with ``directReplyMessage: null`` must not crash.
+
+    ``None.format(...)`` would raise ``AttributeError`` (NOT in the widened
+    tuple). The factory now coerces non-string config values to ``""``
+    before the format call, matching what ``compile/to_python.py`` already
+    emits.
+    """
+    factory = DirectReplyFactory.from_ir(
+        IRNode(id="n", type="direct_reply", label="n", config={"directReplyMessage": None})
+    )
+    fn = factory.to_callable(IRNode(id="n", type="direct_reply", label="n"))
+    out = fn({"messages": []})
+    # Empty rendered → factory returns no delta rather than crashing.
+    assert out == {}
 
 
 # ---------------------------------------------------------------------------
@@ -230,13 +258,14 @@ def test_agent_update_state_applies_after_react_loop():
 def test_tool_factory_with_basetool_delegates_to_langgraph_toolnode():
     """A ``@tool``-decorated callable must produce a LangGraph ``ToolNode``.
 
-    We verify by type rather than by invoking standalone — ``ToolNode`` in
-    LangGraph 1.x requires a Runtime context (it expects to be invoked as
-    part of a compiled StateGraph), so a bare ``.invoke({...})`` call raises
-    ``ValueError: Missing required config key 'N/A' for 'tools'``. The
-    type check is sufficient: ToolNode's own test suite covers its runtime
-    behaviour, and ``test_agent_runs_react_loop_when_tools_provided`` above
-    exercises the full path end-to-end through a compiled subgraph.
+    Type check only — see the next test for an end-to-end compiled-graph
+    invocation. Standalone ``.invoke({...})`` on a ToolNode raises
+    ``ValueError: Missing required config key 'N/A' for 'tools'`` because
+    LangGraph expects ToolNodes to be invoked inside a compiled StateGraph
+    (where the Runtime context is established). That's a property of the
+    LangGraph version actually installed in this environment, not a tie
+    to a specific major; the next test covers the integration through a
+    real StateGraph regardless of which LangGraph the user resolved.
     """
     from langchain_core.tools import tool
     from langgraph.prebuilt import ToolNode
@@ -251,6 +280,45 @@ def test_tool_factory_with_basetool_delegates_to_langgraph_toolnode():
     assert isinstance(runtime, ToolNode), (
         "ToolFactory.to_callable should return a langgraph ToolNode when fn is a @tool-decorated BaseTool"
     )
+
+
+def test_tool_factory_basetool_dispatches_in_compiled_statgraph():
+    """End-to-end: feed an AIMessage(tool_calls=...) through a StateGraph
+    whose only node is the ToolFactory-produced ToolNode; assert that
+    exactly one ToolMessage carrying the tool's return value lands on the
+    messages channel. This is the runtime check the previous test
+    intentionally leaves out (ToolNode standalone-invoke is forbidden,
+    but inside a compiled graph the Runtime context is provided and the
+    standard tool_calls contract holds).
+    """
+    from langchain_core.tools import tool
+    from langgraph.graph import END, START, StateGraph
+
+    @tool
+    def echo(value: str) -> str:
+        """Return the value unchanged."""
+        return f"echoed-{value}"
+
+    factory = ToolFactory(fn=echo)
+    runtime = factory.to_callable(IRNode(id="t", type="tool", label="t"))
+
+    g = StateGraph(_MessagesOnlyState)
+    g.add_node("tools", runtime)
+    g.add_edge(START, "tools")
+    g.add_edge("tools", END)
+    app = g.compile()
+
+    ai = AIMessage(content="", tool_calls=[{"name": "echo", "args": {"value": "hi"}, "id": "tc-1"}])
+    result = app.invoke({"messages": [ai]})
+
+    # ToolNode appends one ToolMessage to ``messages`` for the single
+    # tool_call. The original AIMessage is still there too (add_messages
+    # reducer accumulates), so look for the ToolMessage specifically.
+    from langchain_core.messages import ToolMessage
+
+    tool_messages = [m for m in result["messages"] if isinstance(m, ToolMessage)]
+    assert len(tool_messages) == 1
+    assert "echoed-hi" in str(tool_messages[0].content)
 
 
 def test_tool_factory_with_plain_callable_keeps_tool_input_contract():
