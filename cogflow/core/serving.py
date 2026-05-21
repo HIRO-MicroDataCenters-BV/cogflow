@@ -1834,7 +1834,7 @@ for attr_name in dir(ServingManager):
 # raises AttributeError. Test
 # ``test_serving_module_reexports_async_deploy_llm`` defends this
 # contract by running an import in a fresh subprocess.
-from .async_serving import (  # noqa: E402
+from .async_serving import (  # noqa: E402, F401
     async_deploy_model,
     async_deploy_llm,
     async_serve_llm,
