@@ -15,16 +15,16 @@ No plugin structure. No circular imports. SDK-style API.
 
 from __future__ import annotations
 
-import os
 import inspect
-from typing import Optional, Mapping, List
+import os
+from collections.abc import Mapping
 
-from ...utils.logging import get_logger
 from ...utils.exceptions import (
+    CogflowConnectionError,
     CogflowErrorHandler,
     CogflowPipelineError,
-    CogflowConnectionError,
 )
+from ...utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -149,10 +149,10 @@ def _inject_env_into_container_op(op):
 
 
 def client(
-    api_url: Optional[str] = None,
+    api_url: str | None = None,
     skip_tls_verify: bool = True,
-    session_cookies: Optional[str] = None,
-    namespace: Optional[str] = None,
+    session_cookies: str | None = None,
+    namespace: str | None = None,
 ):
     """Create a Kubeflow Pipelines client with lazy loading."""
     logger.info("Creating KFP client api_url=%s namespace=%s", api_url, namespace)
@@ -213,10 +213,10 @@ def pipeline(name: str = None, description: str = None):
 
 def create_component_from_func(
     func,
-    output_component_file: Optional[str] = None,
-    base_image: Optional[str] = None,
-    packages_to_install: Optional[List[str]] = None,
-    annotations: Optional[Mapping[str, str]] = None,
+    output_component_file: str | None = None,
+    base_image: str | None = None,
+    packages_to_install: list[str] | None = None,
+    annotations: Mapping[str, str] | None = None,
 ):
     """Convert python function into a KFP component with env injection."""
 
@@ -303,13 +303,13 @@ def load_component_from_text(text: str):
 
 def create_run_from_pipeline_func(
     pipeline_func,
-    arguments: Optional[dict] = None,
-    run_name: Optional[str] = None,
-    experiment_name: Optional[str] = None,
-    namespace: Optional[str] = None,
-    pipeline_root: Optional[str] = None,
-    enable_caching: Optional[bool] = None,
-    service_account: Optional[str] = None,
+    arguments: dict | None = None,
+    run_name: str | None = None,
+    experiment_name: str | None = None,
+    namespace: str | None = None,
+    pipeline_root: str | None = None,
+    enable_caching: bool | None = None,
+    service_account: str | None = None,
 ):
     """Create a KFP run safely."""
 
@@ -351,7 +351,7 @@ def create_service(name: str) -> str:
     logger.info("Creating Kubernetes service=%s", name)
 
     client, api_exception = _load_k8s_client()
-    from ...utils.common import load_k8s_config, get_namespace
+    from ...utils.common import get_namespace, load_k8s_config
 
     load_k8s_config()
     namespace = get_namespace()
@@ -361,9 +361,7 @@ def create_service(name: str) -> str:
         kind="Service",
         metadata=client.V1ObjectMeta(
             name=name,
-            annotations={
-                "service.alpha.kubernetes.io/app-protocols": '{"grpc":"HTTP2"}'
-            },
+            annotations={"service.alpha.kubernetes.io/app-protocols": '{"grpc":"HTTP2"}'},
         ),
         spec=client.V1ServiceSpec(
             selector={"app": name},
@@ -385,7 +383,7 @@ def delete_service(name: str):
     logger.info("Deleting Kubernetes service=%s", name)
 
     client, api_exception = _load_k8s_client()
-    from ...utils.common import load_k8s_config, get_namespace
+    from ...utils.common import get_namespace, load_k8s_config
 
     load_k8s_config()
     namespace = get_namespace()
@@ -435,8 +433,8 @@ def create_fl_pipeline(
     fl_server,
     connectors: list,
     node_enforce: bool = True,
-    pipeline_name: Optional[str] = None,
-    description: Optional[str] = None,
+    pipeline_name: str | None = None,
+    description: str | None = None,
 ):
     """
     Auto-generate a Federated Learning pipeline for standard connectors.
@@ -489,9 +487,7 @@ def create_fl_pipeline(
 
     for name in extra_params:
         param = client_sig.parameters.get(name, server_sig.parameters.get(name))
-        default = (
-            param.default if param.default is not inspect._empty else inspect._empty
-        )
+        default = param.default if param.default is not inspect._empty else inspect._empty
         ann = param.annotation if param.annotation is not inspect._empty else None
 
         sig_params.append(
@@ -508,13 +504,9 @@ def create_fl_pipeline(
     # -------------------------------------------------------------------
     # 3) Convert service create/delete to reusable components
     # -------------------------------------------------------------------
-    setup_links = create_component_from_func(
-        _create_service_component, base_image=cfg.FL_LINKS_BASE_IMAGE
-    )
+    setup_links = create_component_from_func(_create_service_component, base_image=cfg.FL_LINKS_BASE_IMAGE)
 
-    release_links = create_component_from_func(
-        _delete_service_component, base_image=cfg.FL_LINKS_BASE_IMAGE
-    )
+    release_links = create_component_from_func(_delete_service_component, base_image=cfg.FL_LINKS_BASE_IMAGE)
 
     # -------------------------------------------------------------------
     # 4) Actual pipeline implementation
@@ -588,8 +580,8 @@ def create_fl_pipeline_dataspace(
     fl_server,
     data_products: list,
     node_enforce=True,
-    pipeline_name: Optional[str] = None,
-    description: Optional[str] = None,
+    pipeline_name: str | None = None,
+    description: str | None = None,
 ):
     """
     Auto-generate a Federated Learning pipeline for dataspace integrations.
@@ -637,9 +629,7 @@ def create_fl_pipeline_dataspace(
 
     for name in extra_params:
         param = client_sig.parameters.get(name, server_sig.parameters.get(name))
-        default = (
-            param.default if param.default is not inspect._empty else inspect._empty
-        )
+        default = param.default if param.default is not inspect._empty else inspect._empty
         ann = param.annotation if param.annotation is not inspect._empty else None
         sig_params.append(
             inspect.Parameter(
@@ -652,13 +642,9 @@ def create_fl_pipeline_dataspace(
 
     pipeline_sig = inspect.Signature(parameters=sig_params)
 
-    setup_links = create_component_from_func(
-        _create_service_component, base_image=cfg.FL_LINKS_BASE_IMAGE
-    )
+    setup_links = create_component_from_func(_create_service_component, base_image=cfg.FL_LINKS_BASE_IMAGE)
 
-    release_links = create_component_from_func(
-        _delete_service_component, base_image=cfg.FL_LINKS_BASE_IMAGE
-    )
+    release_links = create_component_from_func(_delete_service_component, base_image=cfg.FL_LINKS_BASE_IMAGE)
 
     def fl_pipeline_func(*args, _node_enforce=node_enforce, **kwargs):
         bound = fl_pipeline_func.__signature__.bind_partial(*args, **kwargs)
@@ -675,9 +661,7 @@ def create_fl_pipeline_dataspace(
         cleanup_task = release_links(name=srv_name)
 
         with dsl.ExitHandler(cleanup_task):
-            server_task = fl_server(
-                number_of_iterations=number_of_iterations, **server_kwargs
-            ).after(setup_task)
+            server_task = fl_server(number_of_iterations=number_of_iterations, **server_kwargs).after(setup_task)
             server_task.add_pod_label(name="app", value=srv_name)
 
             for dp in data_products:

@@ -10,8 +10,7 @@ try:
     from langchain_core.tools import tool
 except ModuleNotFoundError as _exc:  # pragma: no cover - belt-and-braces
     raise ModuleNotFoundError(
-        "cogflow.agent.tools requires `langchain-core`. "
-        "Install with `pip install cogflow[agent]`."
+        "cogflow.agent.tools requires `langchain-core`. Install with `pip install cogflow[agent]`."
     ) from _exc
 
 try:
@@ -23,8 +22,7 @@ except ModuleNotFoundError as _exc:  # pragma: no cover
     _name = _exc.name or ""
     if _name == "langgraph":
         raise ModuleNotFoundError(
-            "cogflow.agent.tools requires `langgraph`. "
-            "Install with `pip install cogflow[agent]`."
+            "cogflow.agent.tools requires `langgraph`. Install with `pip install cogflow[agent]`."
         ) from _exc
     if not _name.startswith("langgraph."):
         raise

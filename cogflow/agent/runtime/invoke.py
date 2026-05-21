@@ -19,9 +19,7 @@ def stream(app: Any, inputs: dict[str, Any], *, config: dict[str, Any] | None = 
     yield from app.stream(inputs, config=config)
 
 
-async def ainvoke(
-    app: Any, inputs: dict[str, Any], *, config: dict[str, Any] | None = None
-) -> dict[str, Any]:
+async def ainvoke(app: Any, inputs: dict[str, Any], *, config: dict[str, Any] | None = None) -> dict[str, Any]:
     return await app.ainvoke(inputs, config=config)
 
 

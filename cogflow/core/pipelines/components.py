@@ -21,32 +21,32 @@ from __future__ import annotations
 
 import asyncio
 import io
-from typing import Mapping, List, Optional
-from uuid import UUID
+from collections.abc import Mapping
 from urllib.parse import urlparse
+from uuid import UUID
 
 import yaml
 
-from ...utils.storage import minio_client
+from ...config import config
 from ...utils import common
-from ...utils.network import (
-    make_get_request,
-    make_post_request,
-    make_patch_request,
-    make_get_request_raw,
-    make_async_post_request,
-    make_async_patch_request,
-    make_async_get_request_raw,
-)
 from ...utils.exceptions import (
-    CogflowErrorHandler,
     CogflowComponentError,
-    CogflowComponentValidationError,
     CogflowComponentRegistryError,
     CogflowComponentStorageError,
+    CogflowComponentValidationError,
+    CogflowErrorHandler,
 )
 from ...utils.logging import get_logger
-from ...config import config
+from ...utils.network import (
+    make_async_get_request_raw,
+    make_async_patch_request,
+    make_async_post_request,
+    make_get_request,
+    make_get_request_raw,
+    make_patch_request,
+    make_post_request,
+)
+from ...utils.storage import minio_client
 
 logger = get_logger(__name__)
 
@@ -64,9 +64,7 @@ def _orc():
 def _parse_s3_uri(uri: str):
     """Parse s3:// URI into (category, bucket, object_name)."""
     if not uri or not uri.startswith("s3://"):
-        raise CogflowComponentValidationError(
-            f"Invalid s3 path '{uri}'. Must begin with s3://."
-        )
+        raise CogflowComponentValidationError(f"Invalid s3 path '{uri}'. Must begin with s3://.")
 
     parsed = urlparse(uri)
     netloc = parsed.netloc.strip()
@@ -89,12 +87,10 @@ def parse_component_yaml(yaml_path: str = None, yaml_data: str = None) -> dict:
         if yaml_data:
             content = yaml.safe_load(yaml_data)
         elif yaml_path:
-            with open(yaml_path, "r", encoding="utf-8") as f:
+            with open(yaml_path, encoding="utf-8") as f:
                 content = yaml.safe_load(f)
         else:
-            raise CogflowComponentValidationError(
-                "Either yaml_path or yaml_data must be provided."
-            )
+            raise CogflowComponentValidationError("Either yaml_path or yaml_data must be provided.")
     except Exception as exc:
         raise CogflowComponentValidationError("Failed parsing component YAML.") from exc
 
@@ -108,9 +104,7 @@ def parse_component_yaml(yaml_path: str = None, yaml_data: str = None) -> dict:
 # ============================================================================
 
 
-def _upload_yaml_to_minio(
-    *, bucket_name: str, object_name: str, data_bytes: bytes, overwrite: bool = True
-) -> str:
+def _upload_yaml_to_minio(*, bucket_name: str, object_name: str, data_bytes: bytes, overwrite: bool = True) -> str:
     """Upload YAML bytes to MinIO and return s3://bucket/object."""
     client = minio_client()
 
@@ -119,17 +113,13 @@ def _upload_yaml_to_minio(
         if not client.bucket_exists(bucket_name):
             client.make_bucket(bucket_name)
     except Exception as exc:
-        raise CogflowComponentStorageError(
-            f"Failed accessing bucket '{bucket_name}'."
-        ) from exc
+        raise CogflowComponentStorageError(f"Failed accessing bucket '{bucket_name}'.") from exc
 
     # Check existing
     try:
         client.stat_object(bucket_name, object_name)
         if not overwrite:
-            raise CogflowComponentValidationError(
-                f"Object '{object_name}' already exists (overwrite=False)."
-            )
+            raise CogflowComponentValidationError(f"Object '{object_name}' already exists (overwrite=False).")
     except Exception:
         pass  # OK if not exists
 
@@ -143,9 +133,7 @@ def _upload_yaml_to_minio(
             content_type="application/x-yaml",
         )
     except Exception as exc:
-        raise CogflowComponentStorageError(
-            f"Failed uploading '{object_name}'."
-        ) from exc
+        raise CogflowComponentStorageError(f"Failed uploading '{object_name}'.") from exc
 
     return f"s3://{bucket_name}/{object_name}"
 
@@ -212,30 +200,22 @@ def register_component(
         if resp is None:
             existing = []
         existing = resp.get("data", [])
-    except Exception as ex:
-        raise CogflowComponentRegistryError(
-            f"Failed checking registry for '{component_name}'"
-        )
+    except Exception as exc:
+        raise CogflowComponentRegistryError(f"Failed checking registry for '{component_name}'") from exc
 
     # --- Update existing component ---
     if existing:
         # Stop immediately if overwrite is not allowed
         if not overwrite:
-            raise CogflowComponentValidationError(
-                f"Component '{component_name}' already exists; overwrite=False."
-            )
+            raise CogflowComponentValidationError(f"Component '{component_name}' already exists; overwrite=False.")
 
         # Otherwise continue with patch request
         try:
             url = f"{endpoint}?creator={creator}" if creator else endpoint
-            resp = make_patch_request(
-                url, data=payload, headers=headers, timeout=time_out
-            )
+            resp = make_patch_request(url, data=payload, headers=headers, timeout=time_out)
             return resp.get("data")
         except Exception as exc:
-            raise CogflowComponentRegistryError(
-                f"Failed updating component '{component_name}'"
-            ) from exc
+            raise CogflowComponentRegistryError(f"Failed updating component '{component_name}'") from exc
 
     # Create
     try:
@@ -243,9 +223,7 @@ def register_component(
         resp = make_post_request(url, data=payload, headers=headers, timeout=time_out)
         return resp.get("data")
     except Exception as exc:
-        raise CogflowComponentRegistryError(
-            f"Failed creating component '{component_name}'"
-        ) from exc
+        raise CogflowComponentRegistryError(f"Failed creating component '{component_name}'") from exc
 
 
 # ============================================================================
@@ -316,49 +294,35 @@ async def async_register_component(
     check_url = f"{endpoint}?name={component_name}"
     try:
         resp = await make_async_get_request_raw(check_url, timeout=time_out)
-    except Exception:
-        raise CogflowComponentRegistryError(
-            f"Failed checking registry for '{component_name}'"
-        )
+    except Exception as exc:
+        raise CogflowComponentRegistryError(f"Failed checking registry for '{component_name}'") from exc
 
     # make_async_get_request_raw returns None on transport failure;
     # don't silently treat that as "no existing component", or an
     # intermittent registry outage could re-create a record that
     # already exists when overwrite=True.
     if resp is None:
-        raise CogflowComponentRegistryError(
-            f"Failed checking registry for '{component_name}'"
-        )
+        raise CogflowComponentRegistryError(f"Failed checking registry for '{component_name}'")
 
     existing = resp.get("data", [])
 
     if existing:
         if not overwrite:
-            raise CogflowComponentValidationError(
-                f"Component '{component_name}' already exists; overwrite=False."
-            )
+            raise CogflowComponentValidationError(f"Component '{component_name}' already exists; overwrite=False.")
 
         try:
             url = f"{endpoint}?creator={creator}" if creator else endpoint
-            resp = await make_async_patch_request(
-                url, data=payload, headers=headers, timeout=time_out
-            )
+            resp = await make_async_patch_request(url, data=payload, headers=headers, timeout=time_out)
             return resp.get("data")
         except Exception as exc:
-            raise CogflowComponentRegistryError(
-                f"Failed updating component '{component_name}'"
-            ) from exc
+            raise CogflowComponentRegistryError(f"Failed updating component '{component_name}'") from exc
 
     try:
         url = f"{endpoint}?creator={creator}" if creator else endpoint
-        resp = await make_async_post_request(
-            url, data=payload, headers=headers, timeout=time_out
-        )
+        resp = await make_async_post_request(url, data=payload, headers=headers, timeout=time_out)
         return resp.get("data")
     except Exception as exc:
-        raise CogflowComponentRegistryError(
-            f"Failed creating component '{component_name}'"
-        ) from exc
+        raise CogflowComponentRegistryError(f"Failed creating component '{component_name}'") from exc
 
 
 # ============================================================================
@@ -377,25 +341,17 @@ def load_component_from_id(component_id: UUID):
     try:
         resp = make_get_request(url, timeout=10)
         data = resp.json() if hasattr(resp, "json") else resp
-        metadata = (
-            data.get("data") if isinstance(data, dict) and "data" in data else data
-        )
+        metadata = data.get("data") if isinstance(data, dict) and "data" in data else data
     except Exception as exc:
         logger.exception("Failed fetching metadata for component %s", component_id)
-        raise CogflowComponentRegistryError(
-            f"Failed fetching metadata for component '{component_id}'"
-        ) from exc
+        raise CogflowComponentRegistryError(f"Failed fetching metadata for component '{component_id}'") from exc
 
     if not metadata:
-        raise CogflowComponentRegistryError(
-            f"Component '{component_id}' not found in registry."
-        )
+        raise CogflowComponentRegistryError(f"Component '{component_id}' not found in registry.")
 
     component_file = metadata.get("component_file")
     if not component_file:
-        raise CogflowComponentValidationError(
-            f"Component '{component_id}' missing component_file."
-        )
+        raise CogflowComponentValidationError(f"Component '{component_id}' missing component_file.")
 
     _, bucket, object_name = _parse_s3_uri(component_file)
 
@@ -405,9 +361,7 @@ def load_component_from_id(component_id: UUID):
         obj = client.get_object(bucket, object_name)
         yaml_content = obj.read().decode("utf-8")
     except Exception as exc:
-        raise CogflowComponentStorageError(
-            f"Failed reading MinIO object '{object_name}'."
-        ) from exc
+        raise CogflowComponentStorageError(f"Failed reading MinIO object '{object_name}'.") from exc
     finally:
         try:
             obj.close()
@@ -419,9 +373,7 @@ def load_component_from_id(component_id: UUID):
     try:
         component = _orc().load_component_from_text(yaml_content)
     except Exception as exc:
-        raise CogflowComponentError(
-            f"Failed parsing component YAML '{object_name}'."
-        ) from exc
+        raise CogflowComponentError(f"Failed parsing component YAML '{object_name}'.") from exc
 
     # Inject env vars (runtime enhancement)
     return _orc()._inject_env_into_container_op(component)
@@ -432,14 +384,14 @@ def load_component_from_id(component_id: UUID):
 
 def cogcomponent(
     *,
-    output_component_file: Optional[str] = None,
+    output_component_file: str | None = None,
     base_image: str = config.COMP_BASE_IMAGE,
-    packages_to_install: Optional[List[str]] = None,
-    annotations: Optional[Mapping[str, str]] = None,
-    name: Optional[str] = None,
-    category: Optional[str] = None,
+    packages_to_install: list[str] | None = None,
+    annotations: Mapping[str, str] | None = None,
+    name: str | None = None,
+    category: str | None = None,
     register: bool = False,
-    bucket_name: Optional[str] = None,
+    bucket_name: str | None = None,
     overwrite: bool = False,
 ):
     """Decorator to convert Python function into KFP component + optional registry."""
@@ -521,6 +473,4 @@ def download_yaml_from_minio(bucket_name: str, object_name: str, local_path: str
             local_path,
         )
     except Exception as exc:
-        raise CogflowComponentStorageError(
-            f"Failed to download '{object_name}' from bucket '{bucket_name}'."
-        ) from exc
+        raise CogflowComponentStorageError(f"Failed to download '{object_name}' from bucket '{bucket_name}'.") from exc

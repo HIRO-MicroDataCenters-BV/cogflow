@@ -11,7 +11,8 @@ security sandbox. Don't execute untrusted flows.
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from ..ir.model import IRNode
 from .base import NodeFactory
@@ -49,7 +50,7 @@ class CustomFunctionFactory(NodeFactory):
     ir_type = "custom_function"
 
     @classmethod
-    def from_ir(cls, node: IRNode) -> "NodeFactory":
+    def from_ir(cls, node: IRNode) -> NodeFactory:
         # Mirror ``__init__`` validation: JSON-loaded nodes carrying a JS body
         # must be rejected here, otherwise the JS would slip through and try
         # to execute under ``allow_custom_code=True``.
@@ -75,9 +76,7 @@ class CustomFunctionFactory(NodeFactory):
         **extra: Any,
     ) -> None:
         if language.lower() not in ("python", "py"):
-            raise UnsupportedNodeError(
-                f"CustomFunction node only supports Python bodies; got language={language!r}"
-            )
+            raise UnsupportedNodeError(f"CustomFunction node only supports Python bodies; got language={language!r}")
         # ``customFunctionPython`` is treated as **executable code** on re-import
         # (from_ir copies it into ``_body``), so we must never stash a non-code
         # string like ``fn.__name__`` here. When ``fn=`` is supplied without an

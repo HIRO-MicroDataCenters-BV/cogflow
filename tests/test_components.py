@@ -1,19 +1,19 @@
-import pytest
 from uuid import UUID
+
+import pytest
 
 from cogflow.core.pipelines.components import (
     _parse_s3_uri,
-    parse_component_yaml,
-    register_component,
-    load_component_from_id,
     cogcomponent,
     download_yaml_from_minio,
+    load_component_from_id,
+    parse_component_yaml,
+    register_component,
 )
-
 from cogflow.utils.exceptions import (
-    CogflowComponentValidationError,
     CogflowComponentRegistryError,
     CogflowComponentStorageError,
+    CogflowComponentValidationError,
 )
 
 # ============================================================

@@ -63,27 +63,27 @@ Handles ML integration, model lifecycle, versioning, and registry operations.
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional, Union
 
+from ..config import config
+from ..utils import common, network
 from ..utils.exceptions import (
+    CogflowArtifactError,
+    CogflowConnectionError,
     CogflowErrorHandler,
+    CogflowExperimentError,
     CogflowModelError,
     CogflowRunError,
-    CogflowConnectionError,
-    CogflowArtifactError,
-    CogflowExperimentError,
     CogflowValidationError,
 )
-from ..utils.logging import get_logger
 from ..utils.imports import lazy_import
-from ..utils import network, common
-from ..config import config
+from ..utils.logging import get_logger
 
 if TYPE_CHECKING:
-    import pandas as pd
     import numpy as np
-    from scipy.sparse import csr_matrix, csc_matrix
+    import pandas as pd
     from mlflow.models.signature import ModelSignature
+    from scipy.sparse import csc_matrix, csr_matrix
 
 logger = get_logger(__name__)
 
@@ -142,9 +142,7 @@ class ModelManager:
         if not self._healthy:
             msg = "MLflow tracking server at %s is not reachable. Some operations may fail."
             if strict:
-                CogflowErrorHandler.log_and_raise(
-                    msg % config.MLFLOW_TRACKING_URI, CogflowConnectionError
-                )
+                CogflowErrorHandler.log_and_raise(msg % config.MLFLOW_TRACKING_URI, CogflowConnectionError)
             logger.warning(msg, config.MLFLOW_TRACKING_URI)
         else:
             logger.info("MLflow tracking server is healthy and reachable.")
@@ -157,9 +155,7 @@ class ModelManager:
             network.make_health_check_request(uri, timeout=config.DEFAULT_TIMEOUT)
             return True
         except Exception as e:
-            CogflowErrorHandler.handle_exception(
-                e, context="MLflow health check", raise_as=CogflowConnectionError
-            )
+            CogflowErrorHandler.handle_exception(e, context="MLflow health check", raise_as=CogflowConnectionError)
             return False
 
     def _ensure_health(self) -> bool:
@@ -172,11 +168,9 @@ class ModelManager:
     def _warn_if_unhealthy(self, action: str):
         """Log a warning if MLflow tracking may be unreachable."""
         if not self._ensure_health():
-            logger.warning(
-                "MLflow tracking server may be unreachable — %s may fail.", action
-            )
+            logger.warning("MLflow tracking server may be unreachable — %s may fail.", action)
 
-    def load_model(self, model_uri: str, dst_path: Optional[str] = None) -> Any:
+    def load_model(self, model_uri: str, dst_path: str | None = None) -> Any:
         """Load a model from the specified MLflow model URI.
         Args:
             model_uri (str): The URI of the model to load.
@@ -215,9 +209,9 @@ class ModelManager:
         self,
         model_uri: str,
         model_name: str,
-        await_registration_for: Optional[int] = None,
+        await_registration_for: int | None = None,
         *,
-        tags: Optional[Dict[str, Any]] = None,
+        tags: dict[str, Any] | None = None,
     ):
         """
         Register a model with the MLflow Model Registry.
@@ -279,8 +273,8 @@ class ModelManager:
     def create_registered_model(
         self,
         model: str,
-        tags: Optional[Dict[str, Any]] = None,
-        description: Optional[str] = None,
+        tags: dict[str, Any] | None = None,
+        description: str | None = None,
     ):
         """
         Create a new registered model entry in the MLflow Model Registry.
@@ -313,9 +307,7 @@ class ModelManager:
 
         try:
             logger.info("Creating registered model: %s", model)
-            registered_model = self.client.create_registered_model(
-                name=model, tags=tags, description=description
-            )
+            registered_model = self.client.create_registered_model(name=model, tags=tags, description=description)
             logger.info("Registered model %s created successfully.", model)
             return registered_model
 
@@ -331,11 +323,11 @@ class ModelManager:
         self,
         model: str,
         source: str,
-        run_id: Optional[str] = None,
-        tags: Optional[Dict[str, Any]] = None,
-        run_link: Optional[str] = None,
-        description: Optional[str] = None,
-        await_creation_for: Optional[int] = None,
+        run_id: str | None = None,
+        tags: dict[str, Any] | None = None,
+        run_link: str | None = None,
+        description: str | None = None,
+        await_creation_for: int | None = None,
     ):
         """
         Create a new model version for an existing registered model.
@@ -445,15 +437,15 @@ class ModelManager:
         *,
         targets,
         model_type: str,
-        dataset_path: Optional[str] = None,
-        feature_names: Optional[list] = None,
-        evaluators: Optional[list] = None,
-        evaluator_config: Optional[dict] = None,
-        custom_metrics: Optional[dict] = None,
-        custom_artifacts: Optional[dict] = None,
-        validation_thresholds: Optional[dict] = None,
+        dataset_path: str | None = None,
+        feature_names: list | None = None,
+        evaluators: list | None = None,
+        evaluator_config: dict | None = None,
+        custom_metrics: dict | None = None,
+        custom_artifacts: dict | None = None,
+        validation_thresholds: dict | None = None,
         baseline_model=None,
-        env_manager: Optional[str] = None,
+        env_manager: str | None = None,
     ) -> Any:
         """
         Evaluate a model and automatically log metrics & artifacts via CogFlow.
@@ -612,29 +604,18 @@ class ModelManager:
         self,
         model,
         artifact_path: str,
-        registered_model_name: Optional[str] = None,
-        conda_env: Optional[str] = None,
-        code_paths: Optional[List[str]] = None,
+        registered_model_name: str | None = None,
+        conda_env: str | None = None,
+        code_paths: list[str] | None = None,
         serialization_format: str = config.SERIALIZATION_FORMAT,
         signature: Optional["ModelSignature"] = None,
-        input_example: Optional[
-            Union[
-                "pd.DataFrame",
-                "np.ndarray",
-                dict,
-                list,
-                "csr_matrix",
-                "csc_matrix",
-                str,
-                bytes,
-                tuple,
-            ]
-        ] = None,
+        input_example: Union["pd.DataFrame", "np.ndarray", dict, list, "csr_matrix", "csc_matrix", str, bytes, tuple]
+        | None = None,
         await_registration_for: int = config.AWAIT_REGISTRATION_FOR,
-        pip_requirements: Optional[str] = None,
-        extra_pip_requirements: Optional[str] = None,
+        pip_requirements: str | None = None,
+        extra_pip_requirements: str | None = None,
         pyfunc_predict_fn: str = config.PYFUNC_PREDICT_FN,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> Any:
         """
         Log a model to MLflow and optionally register it in the CogFlow system.
@@ -706,19 +687,14 @@ class ModelManager:
             cls_hierarchy = [cls.__name__.lower() for cls in type(model).mro()]
 
             is_pyfunc = isinstance(model, self.pyfunc.PythonModel) or (
-                self.inspect.isclass(model)
-                and issubclass(model, self.pyfunc.PythonModel)
+                self.inspect.isclass(model) and issubclass(model, self.pyfunc.PythonModel)
             )
             is_pytorch = "module" in cls_hierarchy  # torch.nn.Module base class
-            is_sklearn = (
-                "baseestimator" in cls_hierarchy
-            )  # sklearn.base.BaseEstimator base class
+            is_sklearn = "baseestimator" in cls_hierarchy  # sklearn.base.BaseEstimator base class
             # ---------------------------------------------------------------
 
             if is_pyfunc:
-                logger.info(
-                    "Logging custom PyFunc model using MLflow.pyfunc.log_model()"
-                )
+                logger.info("Logging custom PyFunc model using MLflow.pyfunc.log_model()")
                 result = self.mlflow.pyfunc.log_model(
                     artifact_path=artifact_path,
                     python_model=model,
@@ -746,9 +722,7 @@ class ModelManager:
                     metadata=metadata,
                 )
             elif is_sklearn:
-                logger.info(
-                    "Logging scikit-learn model using MLflow.sklearn.log_model()"
-                )
+                logger.info("Logging scikit-learn model using MLflow.sklearn.log_model()")
                 result = self.sklearn.log_model(
                     sk_model=model,
                     artifact_path=artifact_path,
@@ -778,25 +752,18 @@ class ModelManager:
                     raise RuntimeError("No active MLflow run found")
 
                 model_id = active_run.info.run_id
-                model_details = self.get_full_model_uri_from_run_or_registry(
-                    model_id=model_id
-                )
+                model_details = self.get_full_model_uri_from_run_or_registry(model_id=model_id)
                 model_type = self.detect_model_type(model_details["model_uri"])
 
                 model_dict = {
                     "model_id": common.normalize_uuid(model_id),
                     "model_name": str(
-                        model_details.get("model_name")
-                        or active_run.data.tags.get("mlflow.runName", "UnnamedModel")
+                        model_details.get("model_name") or active_run.data.tags.get("mlflow.runName", "UnnamedModel")
                     ),
                     "model_version": int(model_details.get("model_version") or 0),
-                    "register_date": datetime.fromtimestamp(
-                        active_run.info.start_time / 1000
-                    ).isoformat(),
+                    "register_date": datetime.fromtimestamp(active_run.info.start_time / 1000).isoformat(),
                     "type": model_type,
-                    "description": str(
-                        active_run.data.tags.get("mlflow.note.content") or "log_model"
-                    ),
+                    "description": str(active_run.data.tags.get("mlflow.note.content") or "log_model"),
                     "user_id": common.get_current_user(),
                 }
 
@@ -827,8 +794,8 @@ class ModelManager:
         self,
         *,
         served_model_name: str,
-        hf_model_id: Optional[str],
-        extra_tags: Optional[Dict[str, str]],
+        hf_model_id: str | None,
+        extra_tags: dict[str, str] | None,
     ):
         """Open the MLflow run that anchors an LLM catalog entry.
 
@@ -858,14 +825,10 @@ class ModelManager:
                 hf_model_id = hf_model_id[len("hf://") :]
             from cogflow.core.serving import ServingManager as _ServingManager
 
-            hf_model_id = _ServingManager._extract_hf_model_id(
-                f"hf://{hf_model_id}"
-            )
+            hf_model_id = _ServingManager._extract_hf_model_id(f"hf://{hf_model_id}")
 
         description = (
-            f"LLM served from HuggingFace: {hf_model_id}"
-            if hf_model_id
-            else "LLM served from MLflow-backed checkpoint"
+            f"LLM served from HuggingFace: {hf_model_id}" if hf_model_id else "LLM served from MLflow-backed checkpoint"
         )
 
         try:
@@ -907,9 +870,9 @@ class ModelManager:
         run_id: str,
         start_time_ms: int,
         served_model_name: str,
-        hf_model_id: Optional[str],
+        hf_model_id: str | None,
         description: str,
-        user_id: Optional[str],
+        user_id: str | None,
     ):
         """Shape the ``POST /models/log`` payload for an LLM catalog entry.
 
@@ -918,7 +881,7 @@ class ModelManager:
         without duplicating the resolution + dict-shaping logic.
         """
         resolved_user = user_id or common.get_current_user()
-        model_dict: Dict[str, Any] = {
+        model_dict: dict[str, Any] = {
             "model_id": common.normalize_uuid(run_id),
             "model_name": served_model_name,
             # HF-sourced LLMs aren't MLflow-registered, so there's no
@@ -928,9 +891,7 @@ class ModelManager:
             # artifacts when ``model_details.get("model_version")``
             # is missing or falsy.
             "model_version": 0,
-            "register_date": datetime.fromtimestamp(
-                start_time_ms / 1000
-            ).isoformat(),
+            "register_date": datetime.fromtimestamp(start_time_ms / 1000).isoformat(),
             "type": "llm",
             "description": description,
             "user_id": resolved_user,
@@ -949,9 +910,9 @@ class ModelManager:
         self,
         *,
         served_model_name: str,
-        hf_model_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        extra_tags: Optional[Dict[str, str]] = None,
+        hf_model_id: str | None = None,
+        user_id: str | None = None,
+        extra_tags: dict[str, str] | None = None,
     ) -> str:
         """Open a tracking run for an LLM and register its catalog entry.
 
@@ -995,12 +956,10 @@ class ModelManager:
             CogflowModelError: If opening the tracking run itself fails.
                 Backend POST failures are *not* raised (warn-only).
         """
-        run_id, start_time_ms, description, hf_model_id = (
-            self._prepare_llm_catalog_run(
-                served_model_name=served_model_name,
-                hf_model_id=hf_model_id,
-                extra_tags=extra_tags,
-            )
+        run_id, start_time_ms, description, hf_model_id = self._prepare_llm_catalog_run(
+            served_model_name=served_model_name,
+            hf_model_id=hf_model_id,
+            extra_tags=extra_tags,
         )
 
         url, model_dict, headers, _ = self._build_llm_catalog_payload(
@@ -1024,8 +983,7 @@ class ModelManager:
             )
         except Exception as post_err:
             logger.warning(
-                "Failed to post LLM catalog entry to CogFlow backend "
-                "(deploy proceeds regardless): %s",
+                "Failed to post LLM catalog entry to CogFlow backend (deploy proceeds regardless): %s",
                 str(post_err),
             )
 
@@ -1035,9 +993,9 @@ class ModelManager:
         self,
         *,
         served_model_name: str,
-        hf_model_id: Optional[str] = None,
-        user_id: Optional[str] = None,
-        extra_tags: Optional[Dict[str, str]] = None,
+        hf_model_id: str | None = None,
+        user_id: str | None = None,
+        extra_tags: dict[str, str] | None = None,
     ) -> str:
         """Async variant of :meth:`register_llm_catalog_entry`.
 
@@ -1056,12 +1014,10 @@ class ModelManager:
 
         Return value and exception semantics match the sync variant.
         """
-        run_id, start_time_ms, description, hf_model_id = (
-            self._prepare_llm_catalog_run(
-                served_model_name=served_model_name,
-                hf_model_id=hf_model_id,
-                extra_tags=extra_tags,
-            )
+        run_id, start_time_ms, description, hf_model_id = self._prepare_llm_catalog_run(
+            served_model_name=served_model_name,
+            hf_model_id=hf_model_id,
+            extra_tags=extra_tags,
         )
 
         url, model_dict, headers, _ = self._build_llm_catalog_payload(
@@ -1074,9 +1030,7 @@ class ModelManager:
         )
 
         try:
-            await network.make_async_post_request(
-                url=url, data=model_dict, headers=headers
-            )
+            await network.make_async_post_request(url=url, data=model_dict, headers=headers)
             logger.info(
                 "Registered LLM catalog entry via CogFlow backend: %s (run_id=%s)",
                 url,
@@ -1084,14 +1038,13 @@ class ModelManager:
             )
         except Exception as post_err:
             logger.warning(
-                "Failed to post LLM catalog entry to CogFlow backend "
-                "(deploy proceeds regardless): %s",
+                "Failed to post LLM catalog entry to CogFlow backend (deploy proceeds regardless): %s",
                 str(post_err),
             )
 
         return run_id
 
-    def search_model_versions(self, filter_string: Optional[str] = None):
+    def search_model_versions(self, filter_string: str | None = None):
         """
         Search for model versions in the MLflow Model Registry.
 
@@ -1177,11 +1130,11 @@ class ModelManager:
 
     def get_full_model_uri_from_run_or_registry(
         self,
-        model_id: Optional[str] = None,
-        artifact_path: Optional[str] = None,
-        model_name: Optional[str] = None,
-        model_version: Optional[str] = None,
-    ) -> Dict[str, str]:
+        model_id: str | None = None,
+        artifact_path: str | None = None,
+        model_name: str | None = None,
+        model_version: str | None = None,
+    ) -> dict[str, str]:
         """
         Resolve the full model URI from either a run ID or a registered model name/version.
 
@@ -1260,9 +1213,7 @@ class ModelManager:
 
             # Resolve run_id from registry if model_name/version provided
             if not model_id and model_name and model_version:
-                mv = client.get_model_version(
-                    name=model_name, version=str(model_version)
-                )
+                mv = client.get_model_version(name=model_name, version=str(model_version))
                 model_id = mv.run_id
 
             run = self.mlflow.get_run(model_id)
@@ -1274,11 +1225,7 @@ class ModelManager:
                 artifacts = client.list_artifacts(model_id)
                 dirs = [a for a in artifacts if a.is_dir]
                 model_files = [
-                    a
-                    for a in artifacts
-                    if a.path.endswith(
-                        (".pkl", ".joblib", ".onnx", ".pt", ".sav", ".mlmodel")
-                    )
+                    a for a in artifacts if a.path.endswith((".pkl", ".joblib", ".onnx", ".pt", ".sav", ".mlmodel"))
                 ]
 
                 if len(dirs) == 1:
@@ -1292,15 +1239,12 @@ class ModelManager:
                     model_uri = f"{artifact_uri}/{model_files[0].path}"
                 else:
                     raise CogflowModelError(
-                        f"No valid model artifact found for run '{model_id}'. "
-                        "Specify `artifact_path` explicitly."
+                        f"No valid model artifact found for run '{model_id}'. Specify `artifact_path` explicitly."
                     )
 
             # Backfill name/version if not provided
             if not model_name or not model_version:
-                results = self.search_model_versions(
-                    filter_string=f"run_id = '{model_id}'"
-                )
+                results = self.search_model_versions(filter_string=f"run_id = '{model_id}'")
                 if results:
                     model_name = results[0].name
                     model_version = results[0].version
@@ -1414,12 +1358,12 @@ class ModelManager:
 
     def start_run(
         self,
-        run_id: Optional[str] = None,
-        experiment_id: Optional[str] = None,
-        run_name: Optional[str] = None,
+        run_id: str | None = None,
+        experiment_id: str | None = None,
+        run_name: str | None = None,
         nested: bool = False,
-        tags: Optional[Dict[str, Any]] = None,
-        description: Optional[str] = None,
+        tags: dict[str, Any] | None = None,
+        description: str | None = None,
     ):
         """
         Start or resume an MLflow run.
@@ -1512,8 +1456,8 @@ class ModelManager:
 
     def set_experiment(
         self,
-        experiment_name: Optional[str] = None,
-        experiment_id: Optional[str] = None,
+        experiment_name: str | None = None,
+        experiment_id: str | None = None,
     ) -> None:
         """
         Set the active MLflow experiment.
@@ -1539,12 +1483,8 @@ class ModelManager:
         self._warn_if_unhealthy("setting experiment")
 
         try:
-            logger.info(
-                "Setting experiment: name=%s, id=%s", experiment_name, experiment_id
-            )
-            self.mlflow.set_experiment(
-                experiment_name=experiment_name, experiment_id=experiment_id
-            )
+            logger.info("Setting experiment: name=%s, id=%s", experiment_name, experiment_id)
+            self.mlflow.set_experiment(experiment_name=experiment_name, experiment_id=experiment_id)
             logger.info("Active experiment set successfully.")
         except Exception as e:
             CogflowErrorHandler.handle_exception(
@@ -1684,7 +1624,7 @@ class ModelManager:
         run = self.get_run(run_id)
         return run.info.artifact_uri
 
-    def list_artifacts_grouped(self, run_id: str) -> Dict[str, List[str]]:
+    def list_artifacts_grouped(self, run_id: str) -> dict[str, list[str]]:
         """
         List artifacts for a run, grouped by directory.
 
@@ -1709,17 +1649,13 @@ class ModelManager:
         try:
             run_id = common.uuid_to_hex(run_id)
             artifacts = self.client.list_artifacts(run_id)
-            grouped: Dict[str, List[str]] = {}
+            grouped: dict[str, list[str]] = {}
 
             for artifact in artifacts:
                 if artifact.is_dir:
                     # List files inside the directory
                     sub_artifacts = self.client.list_artifacts(run_id, artifact.path)
-                    grouped[artifact.path] = [
-                        a.path.split("/")[-1]
-                        for a in sub_artifacts
-                        if not a.is_dir
-                    ]
+                    grouped[artifact.path] = [a.path.split("/")[-1] for a in sub_artifacts if not a.is_dir]
                 else:
                     grouped.setdefault("", []).append(artifact.path)
 
@@ -1734,12 +1670,12 @@ class ModelManager:
 
     def search_runs(
         self,
-        experiment_ids: List[str],
+        experiment_ids: list[str],
         filter_string: str = "",
-        run_view_type: Optional[int] = None,
+        run_view_type: int | None = None,
         max_results: int = 100,
-        order_by: Optional[List[str]] = None,
-        page_token: Optional[str] = None,
+        order_by: list[str] | None = None,
+        page_token: str | None = None,
     ):
         """
         Search for MLflow runs based on specified criteria.
@@ -1777,8 +1713,7 @@ class ModelManager:
             results = self.client.search_runs(
                 experiment_ids=experiment_ids,
                 filter_string=filter_string,
-                run_view_type=run_view_type
-                or self.mlflow.entities.ViewType.ACTIVE_ONLY,
+                run_view_type=run_view_type or self.mlflow.entities.ViewType.ACTIVE_ONLY,
                 max_results=max_results,
                 order_by=order_by,
                 page_token=page_token,
@@ -1830,7 +1765,7 @@ class ModelManager:
                 re_raise=True,
             )
 
-    def log_params(self, params: Dict[str, Any]) -> None:
+    def log_params(self, params: dict[str, Any]) -> None:
         """
         Log multiple parameters in a single batch to the active MLflow run.
 
@@ -1863,7 +1798,7 @@ class ModelManager:
                 re_raise=True,
             )
 
-    def log_metric(self, key: str, value: float, step: Optional[int] = None) -> None:
+    def log_metric(self, key: str, value: float, step: int | None = None) -> None:
         """
         Log a single metric to the current MLflow run.
 
@@ -1900,9 +1835,7 @@ class ModelManager:
                 re_raise=True,
             )
 
-    def log_metrics(
-        self, metrics: Dict[str, float], step: Optional[int] = None
-    ) -> None:
+    def log_metrics(self, metrics: dict[str, float], step: int | None = None) -> None:
         """
         Log multiple metrics at once for the current MLflow run.
 
@@ -1927,9 +1860,7 @@ class ModelManager:
         try:
             logger.debug("Logging multiple metrics: %s, step=%s", metrics, step)
             self.mlflow.log_metrics(metrics, step=step)
-            logger.info(
-                "%s metrics logged successfully at step %s.", len(metrics), step
-            )
+            logger.info("%s metrics logged successfully at step %s.", len(metrics), step)
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1941,8 +1872,8 @@ class ModelManager:
     def log_artifact(
         self,
         local_path: str,
-        artifact_path: Optional[str] = None,
-        run_id: Optional[str] = None,
+        artifact_path: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """
         Log a local file or directory as an artifact to the active MLflow run.
@@ -1995,9 +1926,7 @@ class ModelManager:
                 logger.info("Artifact logged successfully to run %s.", run_id)
             else:
                 logger.debug("Logging artifact: %s", local_path)
-                self.mlflow.log_artifact(
-                    local_path=local_path, artifact_path=artifact_path
-                )
+                self.mlflow.log_artifact(local_path=local_path, artifact_path=artifact_path)
                 logger.info("Artifact logged successfully.")
         except Exception as e:
             CogflowErrorHandler.handle_exception(
@@ -2010,8 +1939,8 @@ class ModelManager:
     def log_artifacts(
         self,
         local_dir: str,
-        artifact_path: Optional[str] = None,
-        run_id: Optional[str] = None,
+        artifact_path: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """
         Log all files within a directory as artifacts to the current MLflow run.
@@ -2048,9 +1977,7 @@ class ModelManager:
                 )
             else:
                 logger.debug("Logging artifacts from directory: %s", local_dir)
-                self.mlflow.log_artifacts(
-                    local_dir=local_dir, artifact_path=artifact_path
-                )
+                self.mlflow.log_artifacts(local_dir=local_dir, artifact_path=artifact_path)
                 logger.info("All artifacts logged successfully.")
         except Exception as e:
             CogflowErrorHandler.handle_exception(
@@ -2062,11 +1989,11 @@ class ModelManager:
 
     def search_registered_models(
         self,
-        filter_string: Optional[str] = None,
-        max_results: Optional[int] = None,
-        order_by: Optional[List[str]] = None,
-        page_token: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        filter_string: str | None = None,
+        max_results: int | None = None,
+        order_by: list[str] | None = None,
+        page_token: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Search for registered models in the MLflow Model Registry.
 
@@ -2113,16 +2040,11 @@ class ModelManager:
                 order_by=order_by,
                 page_token=page_token,
             )
-            results = [
-                rm.to_dictionary() if hasattr(rm, "to_dictionary") else rm.__dict__
-                for rm in registered_models
-            ]
+            results = [rm.to_dictionary() if hasattr(rm, "to_dictionary") else rm.__dict__ for rm in registered_models]
             logger.info("Found %s registered model(s).", len(results))
             return results
         except Exception as e:
-            CogflowErrorHandler.handle_exception(
-                e, context="Searching registered models", raise_as=CogflowModelError
-            )
+            CogflowErrorHandler.handle_exception(e, context="Searching registered models", raise_as=CogflowModelError)
 
     def autolog(self) -> None:
         """
@@ -2186,7 +2108,7 @@ class ModelManager:
             logger.error("Failed to set MLflow tracking URI: %s", e)
             raise
 
-    def get_artifact_uri(self, artifact_path: Optional[str] = None) -> str:
+    def get_artifact_uri(self, artifact_path: str | None = None) -> str:
         """
         Retrieve the artifact URI of the current or specified MLflow run.
 
@@ -2217,9 +2139,7 @@ class ModelManager:
 
         """
         if not self._ensure_health():
-            logger.warning(
-                "Tracking server might be unreachable; artifact URI may not resolve."
-            )
+            logger.warning("Tracking server might be unreachable; artifact URI may not resolve.")
 
         try:
             uri = self.mlflow.get_artifact_uri(artifact_path=artifact_path)
@@ -2232,8 +2152,8 @@ class ModelManager:
     def create_experiment(
         self,
         name: str,
-        artifact_location: Optional[str] = None,
-        tags: Optional[Dict[str, str]] = None,
+        artifact_location: str | None = None,
+        tags: dict[str, str] | None = None,
     ) -> str:
         """
         Create a new experiment in MLflow.
@@ -2259,15 +2179,11 @@ class ModelManager:
             42
         """
         if not self._ensure_health():
-            logger.warning(
-                "Tracking server may be unreachable; experiment creation may fail."
-            )
+            logger.warning("Tracking server may be unreachable; experiment creation may fail.")
 
         try:
             logger.info("Creating new experiment: %s", name)
-            exp_id = self.client.create_experiment(
-                name=name, artifact_location=artifact_location, tags=tags
-            )
+            exp_id = self.client.create_experiment(name=name, artifact_location=artifact_location, tags=tags)
             logger.info("Experiment %s created successfully with ID: %s", name, exp_id)
             return exp_id
         except Exception as e:

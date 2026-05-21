@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from typing import Any
 
 from ..ir.model import IRNode
 from .base import NodeFactory
-
 
 _HTML_TAG = re.compile(r"<[^>]+>")
 
@@ -76,9 +76,7 @@ class IterationFactory(NodeFactory):
         # in ``flowise_provenance.iteration_body_id`` (derived from
         # ``parentNode`` references at import time).
         body_node_id = (
-            self.config.get("iterationBody")
-            or (node.flowise_provenance or {}).get("iteration_body_id")
-            or None
+            self.config.get("iterationBody") or (node.flowise_provenance or {}).get("iteration_body_id") or None
         )
         # Validate the body id against the set of nodes the compiler is
         # actually registering. Without this guard, a malformed import where

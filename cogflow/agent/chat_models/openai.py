@@ -22,8 +22,7 @@ except ImportError as _exc:  # pragma: no cover - install-time guard
     _name = getattr(_exc, "name", "") or ""
     if _name == "langchain_openai" or _name.startswith("langchain_openai."):
         raise ModuleNotFoundError(
-            "cogflow.agent.chat_models.openai requires `langchain-openai`. "
-            "Install with `pip install cogflow[openai]`."
+            "cogflow.agent.chat_models.openai requires `langchain-openai`. Install with `pip install cogflow[openai]`."
         ) from _exc
     raise
 

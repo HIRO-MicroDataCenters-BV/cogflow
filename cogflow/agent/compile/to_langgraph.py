@@ -21,7 +21,8 @@ Loop nodes additionally rewrite themselves into a conditional back-edge
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
@@ -30,7 +31,6 @@ from ..ir.validate import END_SENTINEL, validate
 from ..nodes import FACTORY_BY_IR_TYPE, NodeFactory
 from ..state import introspect_state, synthesize_typeddict
 from .topo import edges_from
-
 
 _SKIP_TYPES = {"sticky_note"}
 _CONDITION_TYPES = {"condition", "condition_agent"}
@@ -64,6 +64,7 @@ def _state_schema(graph: IRGraph) -> type:
         return synthesize_typeddict(graph.state)
     # Fall back to a TypedDict carrying ``messages`` only.
     from .. import state as _state_mod  # type: ignore  # noqa: F401
+
     return synthesize_typeddict(introspect_state(_state_mod.MessagesState))
 
 
@@ -147,19 +148,11 @@ def to_langgraph(
             # and Flowise-native ones (loopBackToNode / maxLoopCount). The
             # Flowise value encodes ``{node_id}-{label}``; strip the label
             # suffix so the routing actually finds the runtime node.
-            raw_target = (
-                node.config.get("loopTarget")
-                or node.config.get("loopBackToNode")
-                or ""
-            )
+            raw_target = node.config.get("loopTarget") or node.config.get("loopBackToNode") or ""
             if raw_target and "-" in raw_target and raw_target not in runtime_ids:
                 raw_target = raw_target.split("-", 1)[0]
             target = raw_target
-            max_iters = int(
-                node.config.get("loopMaxIterations")
-                or node.config.get("maxLoopCount")
-                or 5
-            )
+            max_iters = int(node.config.get("loopMaxIterations") or node.config.get("maxLoopCount") or 5)
             counter_key = f"_loop_count__{node.id}"
             # If the target couldn't be resolved to a registered runtime node
             # (typo, dangling reference after a node deletion, unsupported
@@ -199,11 +192,7 @@ def to_langgraph(
         # Start (or skipped) node are dropped — looping back to entry would
         # require routing to LangGraph's ``START`` sentinel, which is not what
         # an edge to a removed Start node means.
-        outs = [
-            e
-            for e in edges_from(graph, node.id)
-            if e.target in runtime_ids or e.target == END_SENTINEL
-        ]
+        outs = [e for e in edges_from(graph, node.id) if e.target in runtime_ids or e.target == END_SENTINEL]
         if not outs:
             builder.add_edge(node.id, END)
             end_edged.add(node.id)

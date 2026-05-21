@@ -1,10 +1,11 @@
-import pytest
 from types import SimpleNamespace
+
+import pytest
 
 from cogflow.core.pipelines import orchestration
 from cogflow.utils.exceptions import (
-    CogflowPipelineError,
     CogflowConnectionError,
+    CogflowPipelineError,
 )
 
 # ============================================================
@@ -76,8 +77,6 @@ def test_client_internal_cluster(mocker):
 
 
 def test_client_external_with_cookies(mocker):
-    fake_client = mocker.Mock()
-
     class FakeClient:
         def __init__(self, **kwargs):
             pass

@@ -144,9 +144,7 @@ def test_model_manager_init_strict_raises(monkeypatch):
         """Fake that always raises."""
         raise raise_as(msg)
 
-    monkeypatch.setattr(
-        models_mod.CogflowErrorHandler, "log_and_raise", fake_log_and_raise
-    )
+    monkeypatch.setattr(models_mod.CogflowErrorHandler, "log_and_raise", fake_log_and_raise)
 
     with pytest.raises(models_mod.CogflowConnectionError):
         models_mod.ModelManager(strict=True)
@@ -165,9 +163,7 @@ def test_ensure_health_rechecks(monkeypatch):
         called["ok"] = True
         return True
 
-    monkeypatch.setattr(
-        models_mod.ModelManager, "_check_tracking_server_health", fake_check
-    )
+    monkeypatch.setattr(models_mod.ModelManager, "_check_tracking_server_health", fake_check)
 
     assert mm._ensure_health() is True
     assert called["ok"] is True
@@ -183,9 +179,7 @@ def test_warn_if_unhealthy_logs(monkeypatch):
         """Fake health check that returns False."""
         return False
 
-    monkeypatch.setattr(
-        models_mod.ModelManager, "_check_tracking_server_health", fake_check
-    )
+    monkeypatch.setattr(models_mod.ModelManager, "_check_tracking_server_health", fake_check)
 
     # Just ensure no exception
     mm._warn_if_unhealthy("some action")
@@ -228,9 +222,7 @@ def test_register_model_success(manager):
     mock_version.version = 3
     manager.mlflow.register_model.return_value = mock_version
 
-    result = manager.register_model(
-        model_uri="runs:/abc/model", model_name="MyModel", await_registration_for=10
-    )
+    result = manager.register_model(model_uri="runs:/abc/model", model_name="MyModel", await_registration_for=10)
 
     manager.mlflow.register_model.assert_called_once()
     assert result.version == 3
@@ -256,9 +248,7 @@ def test_create_model_version_success(manager):
     ver.version = 2
     manager.client.create_model_version.return_value = ver
 
-    result = manager.create_model_version(
-        model="M", source="s3://bucket/model", run_id="abc123"
-    )
+    result = manager.create_model_version(model="M", source="s3://bucket/model", run_id="abc123")
     manager.client.create_model_version.assert_called_once()
     assert result.version == 2
 
@@ -426,9 +416,7 @@ def test_get_model_uri(manager):
     manager.client.get_model_version.return_value = mv
 
     uri = manager.get_model_uri("MyModel", "3")
-    manager.client.get_model_version.assert_called_once_with(
-        name="MyModel", version="3"
-    )
+    manager.client.get_model_version.assert_called_once_with(name="MyModel", version="3")
     assert uri == "s3://bucket/model"
 
 
@@ -453,9 +441,7 @@ def test_get_full_model_uri_run_id_single_dir(manager):
     manager.mlflow.get_run.return_value = run
 
     # list_artifacts returns one dir
-    manager.client.list_artifacts.return_value = [
-        MockArtifact(path="model_dir", is_dir=True)
-    ]
+    manager.client.list_artifacts.return_value = [MockArtifact(path="model_dir", is_dir=True)]
 
     # search_model_versions -> name/version backfill
     mv = MagicMock()
@@ -480,9 +466,7 @@ def test_get_full_model_uri_with_artifact_path(manager):
     run.info = run_info
     manager.mlflow.get_run.return_value = run
 
-    info = manager.get_full_model_uri_from_run_or_registry(
-        model_id="abc", artifact_path="custom/model"
-    )
+    info = manager.get_full_model_uri_from_run_or_registry(model_id="abc", artifact_path="custom/model")
 
     assert info["model_uri"] == "uri/custom/model"
 
@@ -518,9 +502,7 @@ def test_get_full_model_uri_model_file_no_dir(manager):
     run.info = run_info
     manager.mlflow.get_run.return_value = run
 
-    manager.client.list_artifacts.return_value = [
-        MockArtifact(path="model.pkl", is_dir=False)
-    ]
+    manager.client.list_artifacts.return_value = [MockArtifact(path="model.pkl", is_dir=False)]
 
     info = manager.get_full_model_uri_from_run_or_registry(model_id="abc")
     assert info["model_uri"] == "uri/model.pkl"
@@ -612,9 +594,7 @@ def test_end_run(manager):
 def test_set_experiment(manager):
     """Test set_experiment."""
     manager.set_experiment(experiment_name="exp1")
-    manager.mlflow.set_experiment.assert_called_once_with(
-        experiment_name="exp1", experiment_id=None
-    )
+    manager.mlflow.set_experiment.assert_called_once_with(experiment_name="exp1", experiment_id=None)
 
 
 def test_set_tag(manager):
@@ -667,9 +647,7 @@ def test_search_runs_success(manager):
     r1, r2 = MagicMock(), MagicMock()
     manager.client.search_runs.return_value = [r1, r2]
 
-    results = manager.search_runs(
-        experiment_ids=["1"], filter_string="metrics.acc > 0.9"
-    )
+    results = manager.search_runs(experiment_ids=["1"], filter_string="metrics.acc > 0.9")
     manager.client.search_runs.assert_called_once()
     assert len(results) == 2
 
@@ -723,9 +701,7 @@ def test_log_metrics(manager):
 def test_log_artifact_without_run_id(manager):
     """Test log_artifact without run_id specified."""
     manager.log_artifact("file.txt", artifact_path="reports")
-    manager.mlflow.log_artifact.assert_called_once_with(
-        local_path="file.txt", artifact_path="reports"
-    )
+    manager.mlflow.log_artifact.assert_called_once_with(local_path="file.txt", artifact_path="reports")
 
 
 def test_log_artifact_with_run_id(manager):
@@ -742,9 +718,7 @@ def test_log_artifact_with_run_id(manager):
 def test_log_artifacts_without_run_id(manager):
     """Test log_artifacts without run_id specified."""
     manager.log_artifacts("dir", artifact_path="models")
-    manager.mlflow.log_artifacts.assert_called_once_with(
-        local_dir="dir", artifact_path="models"
-    )
+    manager.mlflow.log_artifacts.assert_called_once_with(local_dir="dir", artifact_path="models")
 
 
 def test_log_artifacts_with_run_id(manager):
@@ -865,9 +839,7 @@ def test_get_artifact_uri_failure(manager):
 def test_create_experiment_success(manager):
     """Test success path for create_experiment."""
     manager.client.create_experiment.return_value = "42"
-    exp_id = manager.create_experiment(
-        name="my_exp", artifact_location="s3://bucket", tags={"team": "mlops"}
-    )
+    exp_id = manager.create_experiment(name="my_exp", artifact_location="s3://bucket", tags={"team": "mlops"})
     manager.client.create_experiment.assert_called_once()
     assert exp_id == "42"
 

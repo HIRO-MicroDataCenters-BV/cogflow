@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from ..ir.model import IRNode
 from .base import NodeFactory
@@ -59,7 +60,8 @@ class ToolFactory(NodeFactory):
             elif args is None:
                 # No tool_input supplied; only call zero-arg form if signature allows.
                 positional_required = [
-                    p for p in params.values()
+                    p
+                    for p in params.values()
                     if p.kind in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
                     and p.default is inspect.Parameter.empty
                 ]

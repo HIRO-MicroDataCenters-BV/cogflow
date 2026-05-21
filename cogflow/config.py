@@ -12,7 +12,6 @@ Compatible with:
 
 import logging
 from functools import lru_cache
-from typing import Optional
 
 from pydantic import Field
 
@@ -46,9 +45,9 @@ class CogFlowSettings(BaseSettings):
     ML_TOOL: str = "mlflow"
     BUCKET_NAME: str = "mlflow"
 
-    AWS_ACCESS_KEY_ID: Optional[str] = None
-    AWS_SECRET_ACCESS_KEY: Optional[str] = None
-    MINIO_SECURE: Optional[bool] = False
+    AWS_ACCESS_KEY_ID: str | None = None
+    AWS_SECRET_ACCESS_KEY: str | None = None
+    MINIO_SECURE: bool | None = False
 
     # ---------- API Paths ----------
     MODELS_URI: str = "/models/uri"
@@ -131,6 +130,4 @@ config = get_settings()
 # ----------------------------------------------------------------------
 # 🔊 Configure global logging
 # ----------------------------------------------------------------------
-logging.getLogger("cogflow").setLevel(
-    getattr(logging, config.LOG_LEVEL.upper(), logging.INFO)
-)
+logging.getLogger("cogflow").setLevel(getattr(logging, config.LOG_LEVEL.upper(), logging.INFO))

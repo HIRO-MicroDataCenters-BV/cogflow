@@ -53,13 +53,14 @@ Public entry points::
 
 from __future__ import annotations
 
+import keyword as _kw
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ..ir.model import IRGraph, IRNode, IRStateField
 from ..ir.validate import END_SENTINEL, validate
 from .topo import edges_from
-
 
 # ---------------------------------------------------------------------------
 # State schema
@@ -96,22 +97,14 @@ def _state_typeddict(fields: list[IRStateField]) -> str:
     """
     if not fields:
         return (
-            'FlowState = TypedDict(\n'
+            "FlowState = TypedDict(\n"
             '    "FlowState",\n'
             '    {"messages": Annotated[list, add_messages]},\n'
-            '    total=False,\n'
-            ')\n'
+            "    total=False,\n"
+            ")\n"
         )
-    items = ",\n".join(f'        {f.key!r}: {_state_field_annotation(f)}' for f in fields)
-    return (
-        'FlowState = TypedDict(\n'
-        '    "FlowState",\n'
-        '    {\n'
-        f'{items},\n'
-        '    },\n'
-        '    total=False,\n'
-        ')\n'
-    )
+    items = ",\n".join(f"        {f.key!r}: {_state_field_annotation(f)}" for f in fields)
+    return f'FlowState = TypedDict(\n    "FlowState",\n    {{\n{items},\n    }},\n    total=False,\n)\n'
 
 
 # ---------------------------------------------------------------------------
@@ -122,7 +115,7 @@ def _state_typeddict(fields: list[IRStateField]) -> str:
 def _render_passthrough(node: IRNode) -> str:
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
-        f"    \"\"\"{node.type} node — runtime is a no-op.\"\"\"\n"
+        f'    """{node.type} node — runtime is a no-op."""\n'
         f"    return {{}}\n"
     )
 
@@ -156,7 +149,7 @@ def _render_direct_reply(node: IRNode) -> str:
 def _render_llm(node: IRNode) -> str:
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
-        f"    \"\"\"LLM node — wire your ChatModel via the ``MODEL`` symbol.\"\"\"\n"
+        f'    """LLM node — wire your ChatModel via the ``MODEL`` symbol."""\n'
         f"    if MODEL is None:\n"
         f"        return {{}}\n"
         f"    history = list(state.get('messages') or [])\n"
@@ -168,7 +161,7 @@ def _render_llm(node: IRNode) -> str:
 def _render_agent(node: IRNode) -> str:
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
-        f"    \"\"\"Agent node — bind tools via ``TOOLS`` and a model via ``MODEL``.\"\"\"\n"
+        f'    """Agent node — bind tools via ``TOOLS`` and a model via ``MODEL``."""\n'
         f"    if MODEL is None:\n"
         f"        return {{}}\n"
         f"    bound = MODEL.bind_tools(TOOLS) if TOOLS and hasattr(MODEL, 'bind_tools') else MODEL\n"
@@ -180,7 +173,7 @@ def _render_agent(node: IRNode) -> str:
 def _render_tool(node: IRNode) -> str:
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
-        f"    \"\"\"Tool node — replace with your @tool function.\"\"\"\n"
+        f'    """Tool node — replace with your @tool function."""\n'
         f"    return {{}}\n"
     )
 
@@ -188,7 +181,7 @@ def _render_tool(node: IRNode) -> str:
 def _render_condition(node: IRNode) -> str:
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
-        f"    \"\"\"Condition node — populates `_condition_branch` for routing.\"\"\"\n"
+        f'    """Condition node — populates `_condition_branch` for routing."""\n'
         f"    # TODO: implement rule evaluation; ``add_conditional_edges`` reads\n"
         f"    # the returned ``_condition_branch`` value.\n"
         f"    return {{'_condition_branch': 'default'}}\n"
@@ -199,7 +192,7 @@ def _render_loop(node: IRNode) -> str:
     counter_key = f"_loop_count__{node.id}"
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
-        f"    \"\"\"Loop node — increments a per-node counter; routing wired below.\"\"\"\n"
+        f'    """Loop node — increments a per-node counter; routing wired below."""\n'
         f"    current = int(state.get({counter_key!r}, 0) or 0)\n"
         f"    return {{{counter_key!r}: current + 1}}\n"
     )
@@ -212,7 +205,7 @@ def _render_human_input(node: IRNode) -> str:
     output_key = node.config.get("humanInputOutputKey") or "human_input"
     return (
         f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
-        f"    \"\"\"HumanInput node — pauses for user input via ``interrupt``.\"\"\"\n"
+        f'    """HumanInput node — pauses for user input via ``interrupt``."""\n'
         f"    rendered = {prompt!r}\n"
         f"    try:\n"
         f"        rendered = {prompt!r}.format(**state)\n"
@@ -226,9 +219,17 @@ def _render_human_input(node: IRNode) -> str:
 # Substrings (case-insensitive) that mark a config key as potentially holding
 # a secret. Conservative: better to redact something harmless than leak a token.
 _SECRET_HINTS = (
-    "key", "token", "secret", "password", "passwd",
-    "auth", "authorization", "credential", "apikey",
-    "bearer", "private",
+    "key",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "authorization",
+    "credential",
+    "apikey",
+    "bearer",
+    "private",
 )
 
 
@@ -360,18 +361,12 @@ def _render_edges(graph: IRGraph, runtime_nodes: list[IRNode]) -> list[str]:
             continue
 
         if node.type == "loop":
-            target = (
-                node.config.get("loopTarget")
-                or node.config.get("loopBackToNode")
-                or ""
-            )
+            target = node.config.get("loopTarget") or node.config.get("loopBackToNode") or ""
             if target and "-" in target and target not in runtime_ids:
                 target = target.split("-", 1)[0]
             if target and target not in runtime_ids:
                 target = ""
-            max_iters = int(
-                node.config.get("loopMaxIterations") or node.config.get("maxLoopCount") or 5
-            )
+            max_iters = int(node.config.get("loopMaxIterations") or node.config.get("maxLoopCount") or 5)
             counter_key = f"_loop_count__{node.id}"
             # Walk outgoing edges in order, accepting the first eligible exit:
             # an explicit END edge (END_SENTINEL) or a non-target runtime edge.
@@ -469,18 +464,13 @@ TOOLS: list[Any] = []
 '''
 
 
-import keyword as _kw
-
-
 def to_source(graph: IRGraph, *, app_var: str = "app") -> str:
     """Render an IRGraph as a self-contained Python module string."""
     # ``app_var`` is interpolated verbatim into the emitted source; refuse
     # anything that isn't a bare identifier so the contract ("output is
     # always valid Python") holds even if the caller passes a hostile value.
     if not isinstance(app_var, str) or not app_var.isidentifier() or _kw.iskeyword(app_var):
-        raise ValueError(
-            f"app_var must be a valid non-keyword Python identifier; got {app_var!r}"
-        )
+        raise ValueError(f"app_var must be a valid non-keyword Python identifier; got {app_var!r}")
     validate(graph)
 
     runtime_nodes = [n for n in graph.nodes if n.type not in _SKIP_TYPES]

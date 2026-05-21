@@ -1,10 +1,10 @@
 import pytest
 
 from cogflow.utils.exceptions import (
-    CogflowError,
     CogflowConnectionError,
-    CogflowValidationError,
+    CogflowError,
     CogflowErrorHandler,
+    CogflowValidationError,
 )
 
 # ------------------------------------------------------------------

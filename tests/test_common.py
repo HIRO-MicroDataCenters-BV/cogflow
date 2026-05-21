@@ -1,7 +1,8 @@
 import os
-import pytest
 from datetime import datetime
 from uuid import UUID
+
+import pytest
 
 from cogflow.utils import common
 

@@ -111,7 +111,9 @@ def from_dict(raw: dict[str, Any]) -> IRGraph:
         flowise_provenance={
             "usecases": raw.get("usecases"),
             # keep any unknown top-level keys
-            "extra": {k: v for k, v in raw.items() if k not in {"description", "usecases", "nodes", "edges", "viewport"}},
+            "extra": {
+                k: v for k, v in raw.items() if k not in {"description", "usecases", "nodes", "edges", "viewport"}
+            },
         },
     )
 

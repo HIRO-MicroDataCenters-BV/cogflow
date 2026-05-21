@@ -10,6 +10,7 @@ All external dependencies are mocked:
 """
 
 import pytest
+
 from cogflow.utils import common
 
 # ---------------------------------------------------------------------
@@ -235,9 +236,7 @@ def test_restart_isvc(serving, serving_module):
 # ---------------------------------------------------------------------
 
 
-def test_deploy_model_resolves_model_and_calls_create_isvc(
-    monkeypatch, serving, serving_module
-):
+def test_deploy_model_resolves_model_and_calls_create_isvc(monkeypatch, serving, serving_module):
     """
     deploy_model should:
     - resolve model URI via model helper
@@ -317,9 +316,7 @@ def test_deploy_model_with_model_type(monkeypatch, serving, serving_module):
         lambda: (lambda **_: "onnx", fake_get_model_details),
         raising=True,
     )
-    monkeypatch.setattr(
-        serving, "_get_transformer_env", lambda *args, **kwargs: {}, raising=True
-    )
+    monkeypatch.setattr(serving, "_get_transformer_env", lambda *args, **kwargs: {}, raising=True)
 
     serving.deploy_model(
         model_id="11111111-1111-1111-1111-111111111111",
@@ -353,9 +350,7 @@ def test_deploy_model_without_model_type(monkeypatch, serving, serving_module):
         lambda: (lambda **_: "onnx", fake_get_model_details),
         raising=True,
     )
-    monkeypatch.setattr(
-        serving, "_get_transformer_env", lambda *args, **kwargs: {}, raising=True
-    )
+    monkeypatch.setattr(serving, "_get_transformer_env", lambda *args, **kwargs: {}, raising=True)
 
     serving.deploy_model(model_id="11111111-1111-1111-1111-111111111111")
 
@@ -488,10 +483,7 @@ def test_deploy_llm_hf_uri_emits_expected_spec(serving, serving_module):
         isvc_name="qwen25-coder",
         served_model_name="qwen25-coder",
         max_model_len=4096,
-        tolerations=[
-            {"key": "storage-type", "operator": "Equal",
-             "value": "local", "effect": "NoSchedule"}
-        ],
+        tolerations=[{"key": "storage-type", "operator": "Equal", "value": "local", "effect": "NoSchedule"}],
         annotations={"model_type": "llm", "hf_model_id": "Qwen/Qwen2.5-Coder-7B-Instruct"},
     )
 
@@ -588,12 +580,12 @@ def test_deploy_llm_resource_override_is_per_field_merge(serving, serving_module
     )
 
     res = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["resources"]
-    assert res["requests"]["cpu"] == "4"              # default preserved
-    assert res["requests"]["memory"] == "14Gi"        # overridden
-    assert res["requests"]["nvidia.com/gpu"] == "2"   # overridden
-    assert res["limits"]["cpu"] == "8"                # default preserved
-    assert res["limits"]["memory"] == "8Gi"           # default preserved
-    assert res["limits"]["nvidia.com/gpu"] == "2"     # overridden
+    assert res["requests"]["cpu"] == "4"  # default preserved
+    assert res["requests"]["memory"] == "14Gi"  # overridden
+    assert res["requests"]["nvidia.com/gpu"] == "2"  # overridden
+    assert res["limits"]["cpu"] == "8"  # default preserved
+    assert res["limits"]["memory"] == "8Gi"  # default preserved
+    assert res["limits"]["nvidia.com/gpu"] == "2"  # overridden
 
 
 def test_deploy_llm_rejects_inverted_replica_range(serving, serving_module):
@@ -669,9 +661,7 @@ def test_deploy_llm_with_hf_secret_adds_env(serving, serving_module):
     assert env == [
         {
             "name": "HF_TOKEN",
-            "valueFrom": {
-                "secretKeyRef": {"name": "cog-llm-token-llama", "key": "HF_TOKEN"}
-            },
+            "valueFrom": {"secretKeyRef": {"name": "cog-llm-token-llama", "key": "HF_TOKEN"}},
         }
     ]
 
@@ -895,9 +885,7 @@ def test_serve_llm_end_to_end_happy_path(serving, serving_module, monkeypatch):
     assert meta_annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
 
 
-def test_serve_llm_storage_uri_hf_shorthand_populates_hf_model_id(
-    serving, serving_module, monkeypatch
-):
+def test_serve_llm_storage_uri_hf_shorthand_populates_hf_model_id(serving, serving_module, monkeypatch):
     """Passing ``storage_uri='hf://org/name'`` instead of ``hf_model_id``
     still tags and annotates with the HF id — the wrapper extracts it."""
     fake_run_id = "1234567890abcdef1234567890abcdef"
@@ -936,9 +924,7 @@ def test_serve_llm_preserves_caller_annotations(serving, serving_module, monkeyp
     assert annotations["model_id"] == common.normalize_uuid(fake_run_id)
 
 
-def test_serve_llm_identity_annotations_are_authoritative(
-    serving, serving_module, monkeypatch
-):
+def test_serve_llm_identity_annotations_are_authoritative(serving, serving_module, monkeypatch):
     """Caller-supplied ``model_type`` and ``hf_model_id`` annotations must
     NOT win over the values derived from the actual deploy. Otherwise
     the ISVC metadata could drift from the catalog entry.
@@ -976,18 +962,13 @@ def test_serve_llm_normalizes_dirty_hf_model_id(serving, serving_module, monkeyp
     serving.serve_llm(hf_model_id="/Qwen/Qwen2.5-Coder-7B-Instruct/")
 
     # Catalog registration saw the canonical id.
-    assert (
-        register_mock.call_args.kwargs["hf_model_id"]
-        == "Qwen/Qwen2.5-Coder-7B-Instruct"
-    )
+    assert register_mock.call_args.kwargs["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
     # ISVC annotation carries the canonical id too.
     annotations = _deploy_llm_create_call(fake_api)["metadata"]["annotations"]
     assert annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
 
 
-def test_serve_llm_strips_accidental_hf_scheme_prefix(
-    serving, serving_module, monkeypatch
-):
+def test_serve_llm_strips_accidental_hf_scheme_prefix(serving, serving_module, monkeypatch):
     """A caller passing ``hf_model_id="hf://Org/Name"`` (accidentally
     double-schemed) should not produce a ``hf://hf://…`` URI. Strip the
     leading ``hf://`` from the bare id before building the URI."""
@@ -997,10 +978,7 @@ def test_serve_llm_strips_accidental_hf_scheme_prefix(
 
     serving.serve_llm(hf_model_id="hf://Qwen/Qwen2.5-Coder-7B-Instruct")
 
-    assert (
-        register_mock.call_args.kwargs["hf_model_id"]
-        == "Qwen/Qwen2.5-Coder-7B-Instruct"
-    )
+    assert register_mock.call_args.kwargs["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
     annotations = _deploy_llm_create_call(fake_api)["metadata"]["annotations"]
     assert annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
     # The deploy's args must carry the canonical ``--model_id`` — not the
@@ -1009,9 +987,7 @@ def test_serve_llm_strips_accidental_hf_scheme_prefix(
     assert "--model_id=Qwen/Qwen2.5-Coder-7B-Instruct" in args
 
 
-def test_serve_llm_rejects_double_hf_scheme_prefix(
-    serving, serving_module, monkeypatch
-):
+def test_serve_llm_rejects_double_hf_scheme_prefix(serving, serving_module, monkeypatch):
     """Tolerating one accidental ``hf://`` prefix is forgiveness; two or
     more is a typo the user should see. Without rejection,
     ``hf://hf://Org/Name`` would strip to ``hf://Org/Name`` and vLLM
@@ -1037,9 +1013,7 @@ def test_serve_llm_rejects_double_hf_scheme_prefix(
     register_mock.assert_not_called()
 
 
-def test_serve_llm_rejects_hf_id_with_non_hf_storage_uri(
-    serving, serving_module, monkeypatch
-):
+def test_serve_llm_rejects_hf_id_with_non_hf_storage_uri(serving, serving_module, monkeypatch):
     """Passing ``hf_model_id`` alongside a non-``hf://`` ``storage_uri``
     would tag the catalog as HuggingFace-sourced while deploying from
     (say) s3. Reject up-front so the catalog can't diverge from the
@@ -1075,17 +1049,13 @@ def test_extract_hf_model_id_rejects_embedded_scheme(serving_module):
 
     # Well-formed inputs still pass.
     assert (
-        module_obj.ServingManager._extract_hf_model_id(
-            "hf://Qwen/Qwen2.5-Coder-7B-Instruct"
-        )
+        module_obj.ServingManager._extract_hf_model_id("hf://Qwen/Qwen2.5-Coder-7B-Instruct")
         == "Qwen/Qwen2.5-Coder-7B-Instruct"
     )
     assert module_obj.ServingManager._extract_hf_model_id("hf://gpt2") == "gpt2"
 
 
-def test_serve_llm_invalid_hf_model_id_rejected_before_catalog(
-    serving, serving_module, monkeypatch
-):
+def test_serve_llm_invalid_hf_model_id_rejected_before_catalog(serving, serving_module, monkeypatch):
     """An invalid bare ``hf_model_id`` (empty, whitespace, slash-only)
     must raise CogflowValidationError BEFORE any MLflow run is opened
     or catalog POST is issued — no side effects to clean up."""
@@ -1116,9 +1086,7 @@ def test_serve_llm_storage_uri_hf_id_mismatch_raises(serving, serving_module, mo
         )
 
 
-def test_register_llm_catalog_entry_extra_tags_cannot_override_reserved(
-    serving_module, monkeypatch
-):
+def test_register_llm_catalog_entry_extra_tags_cannot_override_reserved(serving_module, monkeypatch):
     """``extra_tags`` must not override the reserved identity tags —
     reserved wins so the MLflow run stays consistent with the catalog
     entry. We check this via the order of ``set_tag`` calls: reserved
@@ -1139,18 +1107,10 @@ def test_register_llm_catalog_entry_extra_tags_cannot_override_reserved(
     set_tag_mock = MagicMock()
     post_mock = MagicMock()
 
-    monkeypatch.setattr(
-        cogflow_models_module._models, "start_run", start_run_mock, raising=True
-    )
-    monkeypatch.setattr(
-        cogflow_models_module._models, "set_tag", set_tag_mock, raising=True
-    )
-    monkeypatch.setattr(
-        cogflow_models_module._models, "_warn_if_unhealthy", lambda _ctx: None
-    )
-    monkeypatch.setattr(
-        cogflow_models_module.network, "make_post_request", post_mock, raising=True
-    )
+    monkeypatch.setattr(cogflow_models_module._models, "start_run", start_run_mock, raising=True)
+    monkeypatch.setattr(cogflow_models_module._models, "set_tag", set_tag_mock, raising=True)
+    monkeypatch.setattr(cogflow_models_module._models, "_warn_if_unhealthy", lambda _ctx: None)
+    monkeypatch.setattr(cogflow_models_module.network, "make_post_request", post_mock, raising=True)
     monkeypatch.setattr(
         cogflow_models_module.common,
         "get_current_user",
@@ -1221,28 +1181,16 @@ def test_register_llm_catalog_entry_posts_to_cogapi(serving_module, monkeypatch)
 
     # Swap out the singleton's bound methods so register_llm_catalog_entry
     # hits the stubs instead of MLflow / kubernetes.
-    monkeypatch.setattr(
-        cogflow_models_module, "start_run", start_run_mock, raising=True
-    )
+    monkeypatch.setattr(cogflow_models_module, "start_run", start_run_mock, raising=True)
     monkeypatch.setattr(cogflow_models_module, "set_tag", set_tag_mock, raising=True)
     # The module-level ``_models`` singleton's own methods are what
     # register_llm_catalog_entry calls through ``self`` — rebind them to
     # the same stubs so the entry point sees the patches consistently.
-    monkeypatch.setattr(
-        core_models_module._models, "start_run", start_run_mock, raising=True
-    )
-    monkeypatch.setattr(
-        core_models_module._models, "set_tag", set_tag_mock, raising=True
-    )
-    monkeypatch.setattr(
-        core_models_module._models, "_warn_if_unhealthy", lambda _ctx: None
-    )
-    monkeypatch.setattr(
-        core_models_module.network, "make_post_request", post_mock, raising=True
-    )
-    monkeypatch.setattr(
-        core_models_module.common, "get_current_user", get_user_mock, raising=True
-    )
+    monkeypatch.setattr(core_models_module._models, "start_run", start_run_mock, raising=True)
+    monkeypatch.setattr(core_models_module._models, "set_tag", set_tag_mock, raising=True)
+    monkeypatch.setattr(core_models_module._models, "_warn_if_unhealthy", lambda _ctx: None)
+    monkeypatch.setattr(core_models_module.network, "make_post_request", post_mock, raising=True)
+    monkeypatch.setattr(core_models_module.common, "get_current_user", get_user_mock, raising=True)
 
     run_id = cogflow_models_module.register_llm_catalog_entry(
         served_model_name="Qwen2.5-Coder-7B-Instruct",
@@ -1270,9 +1218,7 @@ def test_register_llm_catalog_entry_posts_to_cogapi(serving_module, monkeypatch)
     assert post_kwargs["headers"]["kubeflow-userid"] == "user@example.com"
 
 
-def test_register_llm_catalog_entry_swallows_post_failure(
-    serving_module, monkeypatch, caplog
-):
+def test_register_llm_catalog_entry_swallows_post_failure(serving_module, monkeypatch, caplog):
     """A CogFlow-backend POST failure must NOT abort the registration —
     matches the log_model pattern. Returns the run_id regardless so the
     caller can still create the ISVC."""
@@ -1296,22 +1242,12 @@ def test_register_llm_catalog_entry_swallows_post_failure(
     def failing_post(**_kwargs):
         raise RuntimeError("cogapi unreachable")
 
-    monkeypatch.setattr(
-        cogflow_models_module, "start_run", start_run_mock, raising=True
-    )
+    monkeypatch.setattr(cogflow_models_module, "start_run", start_run_mock, raising=True)
     monkeypatch.setattr(cogflow_models_module, "set_tag", set_tag_mock, raising=True)
-    monkeypatch.setattr(
-        core_models_module._models, "start_run", start_run_mock, raising=True
-    )
-    monkeypatch.setattr(
-        core_models_module._models, "set_tag", set_tag_mock, raising=True
-    )
-    monkeypatch.setattr(
-        core_models_module._models, "_warn_if_unhealthy", lambda _ctx: None
-    )
-    monkeypatch.setattr(
-        core_models_module.network, "make_post_request", failing_post, raising=True
-    )
+    monkeypatch.setattr(core_models_module._models, "start_run", start_run_mock, raising=True)
+    monkeypatch.setattr(core_models_module._models, "set_tag", set_tag_mock, raising=True)
+    monkeypatch.setattr(core_models_module._models, "_warn_if_unhealthy", lambda _ctx: None)
+    monkeypatch.setattr(core_models_module.network, "make_post_request", failing_post, raising=True)
     monkeypatch.setattr(
         core_models_module.common,
         "get_current_user",

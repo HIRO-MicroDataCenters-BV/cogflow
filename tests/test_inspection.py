@@ -9,12 +9,12 @@ Mocks KFP client and Kubernetes CoreV1Api to verify:
 """
 
 import json
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import MagicMock, patch
 
 import cogflow.core.pipelines.inspection as inspection
 from cogflow.utils.exceptions import CogflowConnectionError
-
 
 # ---------------------------------------------------------------------
 # HELPERS / FAKES
@@ -39,9 +39,7 @@ class FakeRun:
         self.status = status
         self.created_at = None
         self.finished_at = None
-        self.resource_references = [
-            FakeRef(FakeKey("EXPERIMENT", experiment_id))
-        ]
+        self.resource_references = [FakeRef(FakeKey("EXPERIMENT", experiment_id))]
 
 
 class FakeRunsResponse:
@@ -263,9 +261,7 @@ def test_get_pod_logs_raises_cogflow_connection_error_on_api_failure(monkeypatch
     fake_k8s.CoreV1Api = MagicMock(return_value=fake_v1)
 
     monkeypatch.setattr(inspection, "_load_k8s", lambda: fake_k8s)
-    monkeypatch.setattr(
-        inspection.common, "get_namespace", lambda: "test-ns", raising=True
-    )
+    monkeypatch.setattr(inspection.common, "get_namespace", lambda: "test-ns", raising=True)
 
     with pytest.raises(CogflowConnectionError, match="Failed to fetch pod logs"):
         inspection.get_pod_logs("my-pod")
@@ -284,9 +280,7 @@ def test_get_pod_definition_returns_json(monkeypatch):
     fake_k8s.CoreV1Api = MagicMock(return_value=fake_v1)
 
     monkeypatch.setattr(inspection, "_load_k8s", lambda: fake_k8s)
-    monkeypatch.setattr(
-        inspection.common, "get_namespace", lambda: "test-ns", raising=True
-    )
+    monkeypatch.setattr(inspection.common, "get_namespace", lambda: "test-ns", raising=True)
 
     result = inspection.get_pod_definition("p1")
     parsed = json.loads(result)
@@ -329,9 +323,7 @@ def test_get_pod_events_filters_by_pod_name(monkeypatch):
     fake_k8s.exceptions.ApiException = Exception
 
     monkeypatch.setattr(inspection, "_load_k8s", lambda: fake_k8s)
-    monkeypatch.setattr(
-        inspection.common, "get_namespace", lambda: "test-ns", raising=True
-    )
+    monkeypatch.setattr(inspection.common, "get_namespace", lambda: "test-ns", raising=True)
 
     result = inspection.get_pod_events("my-pod")
     assert result["count"] == 2

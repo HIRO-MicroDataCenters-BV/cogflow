@@ -68,7 +68,12 @@ dev = [
   "pytest-asyncio>=0.21.0",
   "coverage",
   "build",
-  "twine"
+  "twine",
+  # lint + format (single tool, replaces black/pycodestyle/pylint).
+  "ruff>=0.15,<0.16",
+  # runtime deps used only by specific test fixtures.
+  "kafka-python>=2.0",
+  "psutil>=5.9"
 ]
 
 docs = [
@@ -153,16 +158,25 @@ addopts = "-ra -q --cov=cogflow --cov-report=term-missing"
 testpaths = ["tests", "cogflow/agent/tests"]
 
 [tool.ruff]
-# Restrict Ruff to the agent submodule so a bare ``ruff check`` doesn't try to
-# lint the rest of cogflow (which is on black+autopep8+pylint). To lint /
-# format only this submodule, run ``ruff check cogflow/agent`` or
-# ``ruff format cogflow/agent``.
-include = ["cogflow/agent/**/*.py"]
-extend-exclude = ["kfp", "build", "dist"]
+# Project-wide ruff configuration. Replaces the prior black + autopep8 +
+# pycodestyle + pylint stack with a single tool. Vendored kfp is excluded
+# because it's a frozen fork we don't author; build/dist are output dirs.
+extend-exclude = [
+  "kfp",
+  "build",
+  "dist",
+  "cogflow.egg-info",
+  "mlruns",
+  "docker_image_variants",
+  "site",
+]
 line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
+# E/W: pycodestyle. F: pyflakes. I: import sorting (isort). UP: pyupgrade.
+# B: bugbear (likely-buggy patterns). E501 (line-too-long) is handled by the
+# formatter so we don't double-flag it.
 select = ["E", "F", "W", "I", "UP", "B"]
 ignore = ["E501"]
 per-file-ignores = { "cogflow/agent/tests/*" = ["B011"] }

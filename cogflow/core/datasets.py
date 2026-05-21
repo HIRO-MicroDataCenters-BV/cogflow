@@ -1,19 +1,18 @@
 """
 Dataset management service for Cogflow SDK."""
 
-from typing import Union
 from uuid import UUID
 
+from ..config import config
+from ..utils import common, network
 from ..utils.exceptions import (
-    CogflowErrorHandler,
-    CogflowConnectionError,
     CogflowArtifactError,
-    CogflowValidationError,
+    CogflowConnectionError,
     CogflowDatasetError,
+    CogflowErrorHandler,
+    CogflowValidationError,
 )
 from ..utils.logging import get_logger
-from ..utils import network, common
-from ..config import config
 
 logger = get_logger(__name__)
 
@@ -31,7 +30,7 @@ class DatasetManager:
         """
         self.base_url = f"{config.API_PATH}{config.DATASETS}"
 
-    def get_dataset(self, dataset_id: Union[str, UUID]):
+    def get_dataset(self, dataset_id: str | UUID):
         """
         Retrieve a dataset by its ID (UUID string path param).
 
@@ -93,14 +92,10 @@ class DatasetManager:
         # Validate response
         # ----------------------------------------------------------
         if not isinstance(resp, dict):
-            raise CogflowArtifactError(
-                f"Unexpected API response format for dataset '{dataset_id}': {type(resp)}"
-            )
+            raise CogflowArtifactError(f"Unexpected API response format for dataset '{dataset_id}': {type(resp)}")
 
         if "data" not in resp:
-            raise CogflowArtifactError(
-                f"Dataset API returned no 'data' field for dataset '{dataset_id}'"
-            )
+            raise CogflowArtifactError(f"Dataset API returned no 'data' field for dataset '{dataset_id}'")
 
         data = resp.get("data")
 
@@ -113,7 +108,7 @@ class DatasetManager:
         logger.info("Successfully retrieved dataset '%s'", dataset_id)
         return data
 
-    def get_prometheus_dataset(self, dataset_id: Union[str, UUID]):
+    def get_prometheus_dataset(self, dataset_id: str | UUID):
         """
         Retrieve a Prometheus dataset by its ID.
 
@@ -181,14 +176,10 @@ class DatasetManager:
         # Validate API Response
         # ----------------------------------------------------------
         if not isinstance(resp, dict):
-            raise CogflowArtifactError(
-                f"Unexpected API response format for Prometheus dataset '{dataset_id}'"
-            )
+            raise CogflowArtifactError(f"Unexpected API response format for Prometheus dataset '{dataset_id}'")
 
         if "data" not in resp:
-            raise CogflowArtifactError(
-                f"Prometheus dataset API returned no 'data' field for dataset '{dataset_id}'"
-            )
+            raise CogflowArtifactError(f"Prometheus dataset API returned no 'data' field for dataset '{dataset_id}'")
 
         data = resp.get("data")
 
@@ -294,14 +285,10 @@ class DatasetManager:
         # Validate response
         # ----------------------------------------------------------
         if not isinstance(resp, dict):
-            raise CogflowDatasetError(
-                f"Unexpected API response while registering dataset '{name}': {type(resp)}"
-            )
+            raise CogflowDatasetError(f"Unexpected API response while registering dataset '{name}': {type(resp)}")
 
         if "data" not in resp:
-            raise CogflowDatasetError(
-                f"Dataset registration API returned no 'data' for dataset '{name}'"
-            )
+            raise CogflowDatasetError(f"Dataset registration API returned no 'data' for dataset '{name}'")
 
         data = resp.get("data")
 
@@ -314,7 +301,7 @@ class DatasetManager:
         logger.info("Successfully registered dataset '%s'", name)
         return data
 
-    def delete_dataset(self, dataset_id: Union[str, UUID]) -> bool:
+    def delete_dataset(self, dataset_id: str | UUID) -> bool:
         """
         Silently delete dataset file.
 
@@ -346,7 +333,7 @@ class DatasetManager:
         logger.info("Dataset file deleted successfully (dataset_id=%s)", dataset_id)
         return True
 
-    async def async_get_dataset(self, dataset_id: Union[str, UUID]):
+    async def async_get_dataset(self, dataset_id: str | UUID):
         """Async mirror of :meth:`get_dataset`.
 
         Same UUID validation, request shape, and response handling as
@@ -385,14 +372,10 @@ class DatasetManager:
             )
 
         if not isinstance(resp, dict):
-            raise CogflowArtifactError(
-                f"Unexpected API response format for dataset '{dataset_id}': {type(resp)}"
-            )
+            raise CogflowArtifactError(f"Unexpected API response format for dataset '{dataset_id}': {type(resp)}")
 
         if "data" not in resp:
-            raise CogflowArtifactError(
-                f"Dataset API returned no 'data' field for dataset '{dataset_id}'"
-            )
+            raise CogflowArtifactError(f"Dataset API returned no 'data' field for dataset '{dataset_id}'")
 
         data = resp.get("data")
 
@@ -405,7 +388,7 @@ class DatasetManager:
         logger.info("Successfully retrieved dataset '%s'", dataset_id)
         return data
 
-    async def async_get_prometheus_dataset(self, dataset_id: Union[str, UUID]):
+    async def async_get_prometheus_dataset(self, dataset_id: str | UUID):
         """Async mirror of :meth:`get_prometheus_dataset`."""
         try:
             dataset_id = common.normalize_uuid(dataset_id)
@@ -438,14 +421,10 @@ class DatasetManager:
             )
 
         if not isinstance(resp, dict):
-            raise CogflowArtifactError(
-                f"Unexpected API response format for Prometheus dataset '{dataset_id}'"
-            )
+            raise CogflowArtifactError(f"Unexpected API response format for Prometheus dataset '{dataset_id}'")
 
         if "data" not in resp:
-            raise CogflowArtifactError(
-                f"Prometheus dataset API returned no 'data' field for dataset '{dataset_id}'"
-            )
+            raise CogflowArtifactError(f"Prometheus dataset API returned no 'data' field for dataset '{dataset_id}'")
 
         data = resp.get("data")
 
@@ -457,7 +436,7 @@ class DatasetManager:
         logger.info("Successfully retrieved Prometheus dataset '%s'", dataset_id)
         return data
 
-    async def async_delete_dataset(self, dataset_id: Union[str, UUID]) -> bool:
+    async def async_delete_dataset(self, dataset_id: str | UUID) -> bool:
         """Async mirror of :meth:`delete_dataset`."""
         try:
             dataset_id = common.normalize_uuid(dataset_id)
@@ -487,7 +466,7 @@ class DatasetManager:
 
     def download_dataset(
         self,
-        dataset_id: Union[str, UUID],
+        dataset_id: str | UUID,
         output_path: str | None = None,
     ) -> str:
         """

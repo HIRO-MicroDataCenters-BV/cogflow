@@ -11,22 +11,21 @@ All public methods mirror ServingManager but are async.
 from __future__ import annotations
 
 import asyncio
-import time
-from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Any
 
-from kubernetes_asyncio import client as async_client, config as async_config
+from kubernetes_asyncio import client as async_client
+from kubernetes_asyncio import config as async_config
 from kubernetes_asyncio.client.exceptions import ApiException
 
-from ..utils import common
 from ..config import config as cog_config
+from ..utils import common
 from ..utils.exceptions import (
-    CogflowErrorHandler,
-    CogflowValidationError,
-    CogflowModelError,
-    CogflowDatasetError,
     CogflowConnectionError,
+    CogflowDatasetError,
+    CogflowErrorHandler,
+    CogflowModelError,
     CogflowServingError,
+    CogflowValidationError,
 )
 from ..utils.logging import get_logger
 
@@ -36,7 +35,9 @@ logger = get_logger(__name__)
 def _get_serving_manager_class():
     """Lazy import to avoid circular dependency with serving.py."""
     from .serving import ServingManager
+
     return ServingManager
+
 
 # ---------------------------------------------------------------------
 # Global cache: Ensure async K8s config is only loaded once
@@ -99,10 +100,10 @@ class AsyncServingManager:
 
     def _get_transformer_env(
         self,
-        dataset_id: Optional[str],
-        transformer_image: Optional[str],
-        transformer_parameters: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        dataset_id: str | None,
+        transformer_image: str | None,
+        transformer_parameters: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         """Resolve transformer parameters (sync — no K8s I/O)."""
         # Reuse sync logic — this method does no K8s I/O
         if transformer_parameters:
@@ -139,7 +140,7 @@ class AsyncServingManager:
     # CRUD Operations (async)
     # -----------------------------------------------------------------
 
-    async def get_isvc(self, name: str, namespace: Optional[str] = None) -> dict:
+    async def get_isvc(self, name: str, namespace: str | None = None) -> dict:
         """Retrieve an InferenceService CRD by name (async)."""
         namespace = namespace or common.get_namespace()
         api = await self._get_api()
@@ -159,7 +160,7 @@ class AsyncServingManager:
                 re_raise=True,
             )
 
-    async def delete_isvc(self, name: str, namespace: Optional[str] = None) -> bool:
+    async def delete_isvc(self, name: str, namespace: str | None = None) -> bool:
         """Delete an InferenceService CRD (async)."""
         namespace = namespace or common.get_namespace()
         api = await self._get_api()
@@ -184,7 +185,7 @@ class AsyncServingManager:
                 re_raise=True,
             )
 
-    async def update_isvc(self, name: str, patch_body: dict, namespace: Optional[str] = None) -> dict:
+    async def update_isvc(self, name: str, patch_body: dict, namespace: str | None = None) -> dict:
         """Patch an existing InferenceService CRD (async)."""
         namespace = namespace or common.get_namespace()
         api = await self._get_api()
@@ -205,7 +206,7 @@ class AsyncServingManager:
                 re_raise=True,
             )
 
-    async def restart_isvc(self, name: str, namespace: Optional[str] = None) -> bool:
+    async def restart_isvc(self, name: str, namespace: str | None = None) -> bool:
         """Restart ISVC by scaling to 0 then back to 1 (async)."""
         namespace = namespace or common.get_namespace()
         try:
@@ -226,7 +227,7 @@ class AsyncServingManager:
         self,
         name: str,
         model_uri: str,
-        namespace: Optional[str] = None,
+        namespace: str | None = None,
         model_format: str = None,
         protocol_version: str = None,
         annot: dict = None,
@@ -238,7 +239,7 @@ class AsyncServingManager:
         api = await self._get_api()
 
         # Build model spec
-        model_spec: Dict[str, Any] = {"storageUri": model_uri}
+        model_spec: dict[str, Any] = {"storageUri": model_uri}
         if model_format:
             model_spec["modelFormat"] = {"name": model_format}
         if protocol_version:
@@ -250,13 +251,11 @@ class AsyncServingManager:
             "model": model_spec,
         }
 
-        spec: Dict[str, Any] = {"predictor": predictor_spec}
+        spec: dict[str, Any] = {"predictor": predictor_spec}
 
         # Transformer (top-level spec field, only when env is provided)
         if transformer_env:
-            env_list = [
-                {"name": k, "value": str(v)} for k, v in transformer_env.items()
-            ]
+            env_list = [{"name": k, "value": str(v)} for k, v in transformer_env.items()]
             spec["transformer"] = {
                 "containers": [
                     {
@@ -305,17 +304,17 @@ class AsyncServingManager:
     async def deploy_model(
         self,
         model_id: str = None,
-        isvc_name: Optional[str] = None,
+        isvc_name: str | None = None,
         artifact_path: str = None,
         model_name: str = None,
         model_version: str = None,
         dataset_id: str = None,
         transformer_image: str = cog_config.TRANSFORMER_BASE_IMAGE,
-        transformer_parameters: Dict[str, Any] = None,
+        transformer_parameters: dict[str, Any] = None,
         protocol_version: str = None,
         model_format: str = None,
-        namespace: Optional[str] = None,
-        model_type: Optional[str] = None,
+        namespace: str | None = None,
+        model_type: str | None = None,
     ):
         """Deploy a model as an InferenceService (async)."""
         namespace = namespace or common.get_namespace()
@@ -330,9 +329,7 @@ class AsyncServingManager:
             )
             model_uri = model_details["model_uri"]
 
-            transformer_env = self._get_transformer_env(
-                dataset_id, transformer_image, transformer_parameters
-            )
+            transformer_env = self._get_transformer_env(dataset_id, transformer_image, transformer_parameters)
 
             model_format = model_format or detect_model_format(model_uri=model_uri)
 
@@ -351,7 +348,9 @@ class AsyncServingManager:
 
             logger.info(
                 "Creating InferenceService '%s' for model_uri=%s in namespace=%s.",
-                isvc_name, model_uri, namespace,
+                isvc_name,
+                model_uri,
+                namespace,
             )
 
             return await self.create_isvc(
@@ -381,18 +380,18 @@ class AsyncServingManager:
     async def update_model(
         self,
         isvc_name: str,
-        model_id: Optional[str] = None,
-        artifact_path: Optional[str] = None,
-        model_name: Optional[str] = None,
-        model_version: Optional[str] = None,
-        dataset_id: Optional[str] = None,
-        transformer_image: Optional[str] = cog_config.TRANSFORMER_BASE_IMAGE,
-        transformer_parameters: Optional[dict] = None,
-        protocol_version: Optional[str] = None,
-        namespace: Optional[str] = None,
-        model_format: Optional[str] = None,
-        canary_traffic_percent: Optional[int] = None,
-        model_type: Optional[str] = None,
+        model_id: str | None = None,
+        artifact_path: str | None = None,
+        model_name: str | None = None,
+        model_version: str | None = None,
+        dataset_id: str | None = None,
+        transformer_image: str | None = cog_config.TRANSFORMER_BASE_IMAGE,
+        transformer_parameters: dict | None = None,
+        protocol_version: str | None = None,
+        namespace: str | None = None,
+        model_format: str | None = None,
+        canary_traffic_percent: int | None = None,
+        model_type: str | None = None,
     ) -> str:
         """Update an existing InferenceService (async)."""
         namespace = namespace or common.get_namespace()
@@ -403,13 +402,9 @@ class AsyncServingManager:
             isvc = await self.get_isvc(isvc_name, namespace)
 
             # Case 1: Traffic-only update
-            if canary_traffic_percent is not None and not (
-                model_id or model_name or model_version or artifact_path
-            ):
+            if canary_traffic_percent is not None and not (model_id or model_name or model_version or artifact_path):
                 self._validate_canary(isvc, isvc_name, canary_traffic_percent)
-                patch_body = {
-                    "spec": {"predictor": {"canaryTrafficPercent": canary_traffic_percent}}
-                }
+                patch_body = {"spec": {"predictor": {"canaryTrafficPercent": canary_traffic_percent}}}
                 await self.update_isvc(isvc_name, patch_body, namespace)
                 msg = f"Updated traffic to {canary_traffic_percent}% for '{isvc_name}'."
                 logger.info("%s", msg)
@@ -424,9 +419,7 @@ class AsyncServingManager:
                 model_version=model_version,
             )
 
-            transformer_env = self._get_transformer_env(
-                dataset_id, transformer_image, transformer_parameters
-            )
+            transformer_env = self._get_transformer_env(dataset_id, transformer_image, transformer_parameters)
 
             model_uri = model_details["model_uri"]
             model_format = model_format or detect_model_format(model_uri=model_uri)
@@ -442,7 +435,7 @@ class AsyncServingManager:
                 annot["model_type"] = model_type
 
             # Build model patch
-            model_patch: Dict[str, Any] = {}
+            model_patch: dict[str, Any] = {}
             if model_uri:
                 model_patch["storageUri"] = model_uri
             if model_format:
@@ -450,7 +443,7 @@ class AsyncServingManager:
             if protocol_version:
                 model_patch["protocolVersion"] = protocol_version
 
-            predictor_patch: Dict[str, Any] = {"model": model_patch}
+            predictor_patch: dict[str, Any] = {"model": model_patch}
 
             if canary_traffic_percent is not None:
                 if not 0 <= canary_traffic_percent <= 100:
@@ -461,16 +454,14 @@ class AsyncServingManager:
                 predictor_patch["canary"] = {"model": model_patch}
                 predictor_patch["canaryTrafficPercent"] = canary_traffic_percent
 
-            patch_body: Dict[str, Any] = {
+            patch_body: dict[str, Any] = {
                 "metadata": {"annotations": annot},
                 "spec": {"predictor": predictor_patch},
             }
 
             # Transformer update (top-level spec field, aligned with sync impl)
             if transformer_env:
-                env_list = [
-                    {"name": k, "value": str(v)} for k, v in transformer_env.items()
-                ]
+                env_list = [{"name": k, "value": str(v)} for k, v in transformer_env.items()]
                 patch_body["spec"]["transformer"] = {
                     "containers": [
                         {
@@ -508,9 +499,9 @@ class AsyncServingManager:
 
     async def list_models(
         self,
-        namespace: Optional[str] = None,
-        isvc_name: Optional[str] = None,
-    ) -> Optional[List[Dict[str, Any]]]:
+        namespace: str | None = None,
+        isvc_name: str | None = None,
+    ) -> list[dict[str, Any]] | None:
         """List served models / get a specific InferenceService (async)."""
         ns = namespace or common.get_namespace()
         api = await self._get_api()
@@ -553,7 +544,6 @@ class AsyncServingManager:
                 re_raise=True,
             )
 
-
     # -----------------------------------------------------------------
     # LLM SERVING (async)
     # -----------------------------------------------------------------
@@ -562,22 +552,22 @@ class AsyncServingManager:
         self,
         *,
         storage_uri: str,
-        isvc_name: Optional[str] = None,
-        served_model_name: Optional[str] = None,
-        namespace: Optional[str] = None,
-        max_model_len: Optional[int] = None,
-        dtype: Optional[str] = None,
-        tensor_parallel_size: Optional[int] = None,
+        isvc_name: str | None = None,
+        served_model_name: str | None = None,
+        namespace: str | None = None,
+        max_model_len: int | None = None,
+        dtype: str | None = None,
+        tensor_parallel_size: int | None = None,
         trust_remote_code: bool = False,
-        gpu_memory_utilization: Optional[float] = None,
-        max_num_seqs: Optional[int] = None,
-        resources: Optional[Dict[str, Dict[str, str]]] = None,
-        tolerations: Optional[List[Dict[str, Any]]] = None,
-        node_selector: Optional[Dict[str, str]] = None,
+        gpu_memory_utilization: float | None = None,
+        max_num_seqs: int | None = None,
+        resources: dict[str, dict[str, str]] | None = None,
+        tolerations: list[dict[str, Any]] | None = None,
+        node_selector: dict[str, str] | None = None,
         min_replicas: int = 1,
         max_replicas: int = 1,
-        hf_secret_name: Optional[str] = None,
-        annotations: Optional[Dict[str, str]] = None,
+        hf_secret_name: str | None = None,
+        annotations: dict[str, str] | None = None,
     ) -> dict:
         """Create a KServe HF-runtime InferenceService (async).
 
@@ -622,8 +612,8 @@ class AsyncServingManager:
             max_replicas=max_replicas,
             hf_secret_name=hf_secret_name,
         )
-        predictor_spec, effective_annotations = (
-            sync_manager_cls._apply_raw_deployment_defaults(predictor_spec, annotations)
+        predictor_spec, effective_annotations = sync_manager_cls._apply_raw_deployment_defaults(
+            predictor_spec, annotations
         )
 
         metadata = async_client.V1ObjectMeta(
@@ -656,58 +646,48 @@ class AsyncServingManager:
             if e.status == 409:
                 CogflowErrorHandler.handle_exception(
                     e,
-                    context=(
-                        f"LLM InferenceService '{isvc_name}' already exists in "
-                        f"namespace '{namespace}'."
-                    ),
+                    context=(f"LLM InferenceService '{isvc_name}' already exists in namespace '{namespace}'."),
                     raise_as=CogflowValidationError,
                     re_raise=True,
                 )
             CogflowErrorHandler.handle_exception(
                 e,
-                context=(
-                    f"Create LLM InferenceService '{isvc_name}' in namespace "
-                    f"'{namespace}'"
-                ),
+                context=(f"Create LLM InferenceService '{isvc_name}' in namespace '{namespace}'"),
                 raise_as=CogflowConnectionError,
                 re_raise=True,
             )
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
-                context=(
-                    f"Create LLM InferenceService '{isvc_name}' in namespace "
-                    f"'{namespace}'"
-                ),
+                context=(f"Create LLM InferenceService '{isvc_name}' in namespace '{namespace}'"),
                 raise_as=CogflowServingError,
                 re_raise=True,
             )
 
-
     async def serve_llm(
         self,
         *,
-        storage_uri: Optional[str] = None,
-        hf_model_id: Optional[str] = None,
-        isvc_name: Optional[str] = None,
-        served_model_name: Optional[str] = None,
-        namespace: Optional[str] = None,
-        max_model_len: Optional[int] = None,
-        dtype: Optional[str] = None,
-        tensor_parallel_size: Optional[int] = None,
+        storage_uri: str | None = None,
+        hf_model_id: str | None = None,
+        isvc_name: str | None = None,
+        served_model_name: str | None = None,
+        namespace: str | None = None,
+        max_model_len: int | None = None,
+        dtype: str | None = None,
+        tensor_parallel_size: int | None = None,
         trust_remote_code: bool = False,
-        gpu_memory_utilization: Optional[float] = None,
-        max_num_seqs: Optional[int] = None,
-        resources: Optional[Dict[str, Dict[str, str]]] = None,
-        tolerations: Optional[List[Dict[str, Any]]] = None,
-        node_selector: Optional[Dict[str, str]] = None,
+        gpu_memory_utilization: float | None = None,
+        max_num_seqs: int | None = None,
+        resources: dict[str, dict[str, str]] | None = None,
+        tolerations: list[dict[str, Any]] | None = None,
+        node_selector: dict[str, str] | None = None,
         min_replicas: int = 1,
         max_replicas: int = 1,
-        hf_secret_name: Optional[str] = None,
-        annotations: Optional[Dict[str, str]] = None,
-        user_id: Optional[str] = None,
-        extra_tags: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
+        hf_secret_name: str | None = None,
+        annotations: dict[str, str] | None = None,
+        user_id: str | None = None,
+        extra_tags: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Async variant of :meth:`ServingManager.serve_llm`.
 
         Catalog registration uses
@@ -731,20 +711,14 @@ class AsyncServingManager:
         # helpers as the sync path — keeps behaviour identical).
         if storage_uri is None and hf_model_id is None:
             # Use sync manager's typed validation error for parity.
-            raise CogflowValidationError(
-                "async_serve_llm requires either hf_model_id or storage_uri"
-            )
+            raise CogflowValidationError("async_serve_llm requires either hf_model_id or storage_uri")
         # See sync serve_llm — single-layer strip; validator rejects
         # deeper nesting.
         if hf_model_id is not None and hf_model_id.startswith("hf://"):
             hf_model_id = hf_model_id[len("hf://") :]
         # Reject non-HF storage_uri paired with hf_model_id — same
         # rationale as the sync path.
-        if (
-            storage_uri is not None
-            and not storage_uri.startswith("hf://")
-            and hf_model_id is not None
-        ):
+        if storage_uri is not None and not storage_uri.startswith("hf://") and hf_model_id is not None:
             raise CogflowValidationError(
                 f"hf_model_id={hf_model_id!r} was supplied alongside a "
                 f"non-HF storage_uri={storage_uri!r}; HuggingFace metadata "
@@ -753,9 +727,7 @@ class AsyncServingManager:
         if storage_uri is None:
             # Normalize / validate via the same helper the hf:// URI
             # path uses — see sync serve_llm for rationale.
-            hf_model_id = sync_manager_cls._extract_hf_model_id(
-                f"hf://{hf_model_id}"
-            )
+            hf_model_id = sync_manager_cls._extract_hf_model_id(f"hf://{hf_model_id}")
             storage_uri = f"hf://{hf_model_id}"
         elif storage_uri.startswith("hf://"):
             # See the sync serve_llm for the mismatch rationale — keep
@@ -765,9 +737,7 @@ class AsyncServingManager:
             if hf_model_id is None:
                 hf_model_id = extracted
             else:
-                normalized = sync_manager_cls._extract_hf_model_id(
-                    f"hf://{hf_model_id}"
-                )
+                normalized = sync_manager_cls._extract_hf_model_id(f"hf://{hf_model_id}")
                 if normalized != extracted:
                     raise CogflowValidationError(
                         f"hf_model_id={hf_model_id!r} does not match the id "
@@ -802,7 +772,7 @@ class AsyncServingManager:
 
         # Step 4: merge annotations. Identity keys are authoritative
         # — see sync serve_llm for rationale.
-        merged_annotations: Dict[str, str] = dict(annotations or {})
+        merged_annotations: dict[str, str] = dict(annotations or {})
         merged_annotations["model_type"] = "llm"
         merged_annotations["model_id"] = common.normalize_uuid(run_id)
         if hf_model_id:
