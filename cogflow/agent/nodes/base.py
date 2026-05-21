@@ -22,8 +22,19 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from typing import Any
 
+from langchain_core.runnables import Runnable
+
 from ..constants import IR_TYPE_TO_FLOWISE_CATEGORY, IR_TYPE_TO_FLOWISE_NAME
 from ..ir.model import IRNode, IRNodeType, IRPort
+
+# ``StateGraph.add_node`` accepts either a plain Python callable or any
+# LangChain ``Runnable`` (which is the supertype of ``ToolNode``,
+# ``CompiledStateGraph``, prebuilt agents, etc.). ``ToolFactory`` started
+# returning a ``ToolNode`` for ``@tool``-decorated inputs; ``ToolNode`` is
+# a Runnable but has no instance ``__call__``, so the older narrower
+# ``Callable[..., Any]`` annotation was technically a lie. The alias keeps
+# every other factory's plain-callable return shape unchanged.
+NodeRuntime = Callable[..., Any] | Runnable
 
 
 class NodeFactory(ABC):
@@ -56,8 +67,14 @@ class NodeFactory(ABC):
         )
 
     @abstractmethod
-    def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
-        """Return a Python function suitable for ``StateGraph.add_node``."""
+    def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> NodeRuntime:
+        """Return something ``StateGraph.add_node`` accepts.
+
+        Most factories return a plain Python callable. ``ToolFactory`` may
+        return a ``langgraph.prebuilt.ToolNode`` when the input is a
+        ``BaseTool`` (a Runnable, not a Python callable). Both shapes are
+        valid for ``add_node``; see ``NodeRuntime``.
+        """
 
     def flowise_inputs(self, node: IRNode) -> dict[str, Any]:
         """The ``data.inputs`` block emitted when there's no provenance to copy."""
