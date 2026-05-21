@@ -1831,7 +1831,7 @@ for attr_name in dir(ServingManager):
 # ``cogflow.serving`` → ``cogflow.core.serving``) get the full async
 # surface alongside the sync one — without this block, ``from cogflow
 # import serving as cogflow_serving; cogflow_serving.async_deploy_llm``
-# returns AttributeError. Test
+# raises AttributeError. Test
 # ``test_serving_module_reexports_async_deploy_llm`` defends this
 # contract by running an import in a fresh subprocess.
 from .async_serving import (  # noqa: E402
