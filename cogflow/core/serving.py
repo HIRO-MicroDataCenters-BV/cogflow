@@ -697,6 +697,8 @@ class ServingManager:
         trust_remote_code: bool,
         gpu_memory_utilization: float | None,
         max_num_seqs: int | None,
+        quantization: str | None = None,
+        kv_cache_dtype: str | None = None,
     ) -> list[str]:
         """Whitelisted runtime args passed into the HF runtime container.
 
@@ -712,7 +714,12 @@ class ServingManager:
           ``--max_model_len``, ``--dtype``, ``--trust_remote_code``.
         - Hyphen flags fall through to vLLM's CLI
           (``--tensor-parallel-size``, ``--gpu-memory-utilization``,
-          ``--max-num-seqs``).
+          ``--max-num-seqs``, ``--quantization``, ``--kv-cache-dtype``).
+
+        ``quantization`` and ``kv_cache_dtype`` are the runtime-cast knobs
+        the recommender's fallback ladder relies on (fp8/AWQ weights and
+        fp8 KV cache). Emitted only when set so unrelated callers keep
+        emitting diff-clean ISVCs.
         """
         args: list[str] = [f"--model_name={served_model_name}"]
         if max_model_len is not None:
@@ -727,6 +734,10 @@ class ServingManager:
             args.append(f"--gpu-memory-utilization={gpu_memory_utilization}")
         if max_num_seqs is not None:
             args.append(f"--max-num-seqs={max_num_seqs}")
+        if quantization is not None and quantization != "none":
+            args.append(f"--quantization={quantization}")
+        if kv_cache_dtype is not None and kv_cache_dtype != "auto":
+            args.append(f"--kv-cache-dtype={kv_cache_dtype}")
         return args
 
     @staticmethod
@@ -746,6 +757,8 @@ class ServingManager:
         min_replicas: int,
         max_replicas: int,
         hf_secret_name: str | None,
+        quantization: str | None = None,
+        kv_cache_dtype: str | None = None,
     ) -> dict[str, Any]:
         # Replica bounds must be internally consistent before we hand the
         # ISVC to KServe — otherwise the CRD is rejected at admission (or
@@ -793,6 +806,8 @@ class ServingManager:
             trust_remote_code=trust_remote_code,
             gpu_memory_utilization=gpu_memory_utilization,
             max_num_seqs=max_num_seqs,
+            quantization=quantization,
+            kv_cache_dtype=kv_cache_dtype,
         )
         if is_hf_source:
             # --model_id comes first for readability in the emitted YAML
@@ -878,6 +893,8 @@ class ServingManager:
         trust_remote_code: bool = False,
         gpu_memory_utilization: float | None = None,
         max_num_seqs: int | None = None,
+        quantization: str | None = None,
+        kv_cache_dtype: str | None = None,
         # scheduling / scaling
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
@@ -943,6 +960,8 @@ class ServingManager:
             min_replicas=min_replicas,
             max_replicas=max_replicas,
             hf_secret_name=hf_secret_name,
+            quantization=quantization,
+            kv_cache_dtype=kv_cache_dtype,
         )
         predictor_spec, effective_annotations = ServingManager._apply_raw_deployment_defaults(
             predictor_spec, annotations
@@ -1011,6 +1030,8 @@ class ServingManager:
         trust_remote_code: bool = False,
         gpu_memory_utilization: float | None = None,
         max_num_seqs: int | None = None,
+        quantization: str | None = None,
+        kv_cache_dtype: str | None = None,
         # scheduling / scaling
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
@@ -1158,6 +1179,8 @@ class ServingManager:
             trust_remote_code=trust_remote_code,
             gpu_memory_utilization=gpu_memory_utilization,
             max_num_seqs=max_num_seqs,
+            quantization=quantization,
+            kv_cache_dtype=kv_cache_dtype,
             resources=resources,
             tolerations=tolerations,
             node_selector=node_selector,
