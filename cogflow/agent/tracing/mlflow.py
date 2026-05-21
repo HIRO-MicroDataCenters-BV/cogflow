@@ -38,6 +38,7 @@ class MLflowAdapter(TracingAdapter):
             # to ``uri=None`` would mask real config bugs.
             try:
                 from cogflow.config import config as _cfg  # type: ignore  # noqa: WPS433
+
                 uri = getattr(_cfg, "MLFLOW_TRACKING_URI", None)
             except (ImportError, AttributeError):
                 uri = None

@@ -4,8 +4,8 @@ Provides a standardized logger configuration for all CogFlow modules.
 """
 
 import logging
-from functools import lru_cache
 import os
+from functools import lru_cache
 
 
 @lru_cache
@@ -26,14 +26,10 @@ def get_logger(name: str = "cogflow") -> logging.Logger:
         logger.addHandler(handler)
 
         # Resolve level from config or env
-        level_name = getattr(
-            config, "LOG_LEVEL", os.getenv("COGFLOW_LOG_LEVEL", "INFO")
-        ).upper()
+        level_name = getattr(config, "LOG_LEVEL", os.getenv("COGFLOW_LOG_LEVEL", "INFO")).upper()
         level = getattr(logging, level_name, logging.INFO)
         logger.setLevel(level)
 
-        logger.info(
-            "Logger initialized for '%s' at level: %s", name, level_name
-        )  # Use % formatting
+        logger.info("Logger initialized for '%s' at level: %s", name, level_name)  # Use % formatting
 
     return logger

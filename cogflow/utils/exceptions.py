@@ -27,9 +27,9 @@ all CogFlow subsystems — including models, pipelines, datasets, and connectors
 -------------------------------------------------------------------------------
 """
 
-from typing import Any, Dict, Optional, Type
-import traceback
 import logging
+import traceback
+from typing import Any
 
 logger = logging.getLogger("cogflow")
 
@@ -53,7 +53,7 @@ class CogflowError(Exception):
         >>> raise CogflowError("Failed to fetch model", cause=ValueError("Bad ID"))
     """
 
-    def __init__(self, message: str, cause: Optional[Exception] = None):
+    def __init__(self, message: str, cause: Exception | None = None):
         self.message = message
         self.cause = cause
         super().__init__(self.__str__())
@@ -144,7 +144,7 @@ class CogflowErrorHandler:
     """
 
     @staticmethod
-    def to_dict(error: Exception) -> Dict[str, Any]:
+    def to_dict(error: Exception) -> dict[str, Any]:
         """
         Convert a CogFlow exception to a serializable dictionary.
 
@@ -170,10 +170,10 @@ class CogflowErrorHandler:
     @staticmethod
     def handle_exception(
         error: Exception,
-        context: Optional[str] = None,
+        context: str | None = None,
         re_raise: bool = False,
-        raise_as: Optional[Type[CogflowError]] = None,
-    ) -> Dict[str, Any]:
+        raise_as: type[CogflowError] | None = None,
+    ) -> dict[str, Any]:
         """
         Handle and log an exception gracefully.
 
@@ -208,9 +208,7 @@ class CogflowErrorHandler:
         return CogflowErrorHandler.to_dict(error)
 
     @staticmethod
-    def log_and_raise(
-        message: str, raise_as: Type[CogflowError], cause: Optional[Exception] = None
-    ):
+    def log_and_raise(message: str, raise_as: type[CogflowError], cause: Exception | None = None):
         """
         Log and immediately raise a CogFlow error with structured information.
 

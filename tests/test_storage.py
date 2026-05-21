@@ -1,4 +1,5 @@
 import pytest
+
 from cogflow.utils import storage
 
 # ------------------------------------------------------------------

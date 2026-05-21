@@ -17,7 +17,6 @@ Two parallel surfaces live here:
   counterparts.
 """
 
-from typing import List, Optional, Union
 import httpx
 import requests
 from tenacity import (
@@ -43,10 +42,10 @@ DEFAULT_TIMEOUT = 15
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def make_post_request(
     url: str,
-    data: Optional[dict] = None,
-    params: Optional[dict] = None,
-    files: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    data: dict | None = None,
+    params: dict | None = None,
+    files: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> dict:
     """
@@ -64,21 +63,15 @@ def make_post_request(
                 timeout=timeout,
             )
         elif data:
-            response = requests.post(
-                url, json=data, params=params, headers=headers, timeout=timeout
-            )
+            response = requests.post(url, json=data, params=params, headers=headers, timeout=timeout)
         else:
-            response = requests.post(
-                url, params=params, headers=headers, timeout=timeout
-            )
+            response = requests.post(url, params=params, headers=headers, timeout=timeout)
 
         if response.ok:
             logger.info("POST %s succeeded with status %s", url, response.status_code)
             return response.json()
 
-        logger.warning(
-            "POST %s failed: %s - %s", url, response.status_code, response.text[:200]
-        )
+        logger.warning("POST %s failed: %s - %s", url, response.status_code, response.text[:200])
         response.raise_for_status()
 
     except requests.RequestException as exp:
@@ -97,9 +90,9 @@ def make_post_request(
 )
 async def make_async_post_request(
     url: str,
-    data: Optional[dict] = None,
-    params: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    data: dict | None = None,
+    params: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> dict:
     """Async POST mirror of :func:`make_post_request`.
@@ -121,9 +114,7 @@ async def make_async_post_request(
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             if data:
-                response = await client.post(
-                    url, json=data, params=params, headers=headers
-                )
+                response = await client.post(url, json=data, params=params, headers=headers)
             else:
                 response = await client.post(url, params=params, headers=headers)
 
@@ -151,28 +142,24 @@ async def make_async_post_request(
 )
 async def make_async_get_request(
     url: str,
-    path_params: Optional[str] = None,
-    query_params: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    path_params: str | None = None,
+    query_params: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
     paginate: bool = False,
-) -> Union[dict, List[dict]]:
+) -> dict | list[dict]:
     """Async GET mirror of :func:`make_get_request`.
 
     Same pagination semantics as the sync version. Retries on
     httpx-level transport errors only (decode bugs in the response
     body fall through to the caller).
     """
-    full_url = (
-        f"{url.rstrip('/')}/{str(path_params).lstrip('/')}" if path_params else url
-    )
+    full_url = f"{url.rstrip('/')}/{str(path_params).lstrip('/')}" if path_params else url
 
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             if not paginate:
-                response = await client.get(
-                    full_url, params=query_params, headers=headers
-                )
+                response = await client.get(full_url, params=query_params, headers=headers)
                 if not response.is_error:
                     logger.info(
                         "GET %s succeeded with status %s",
@@ -192,7 +179,7 @@ async def make_async_get_request(
                 # whatever partial pages do come back.
 
             # Pagination mode
-            all_data: List[dict] = []
+            all_data: list[dict] = []
             page = 1
             limit = (query_params or {}).get("limit", 10)
 
@@ -200,9 +187,7 @@ async def make_async_get_request(
                 page_params = dict(query_params or {})
                 page_params.update({"page": page, "limit": limit})
 
-                response = await client.get(
-                    full_url, params=page_params, headers=headers
-                )
+                response = await client.get(full_url, params=page_params, headers=headers)
                 if response.is_error:
                     logger.warning("GET pagination failed on page %s", page)
                     break
@@ -233,9 +218,9 @@ async def make_async_get_request(
 )
 async def make_async_delete_request(
     url: str,
-    path_params: Optional[str] = None,
-    query_params: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    path_params: str | None = None,
+    query_params: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> bool:
     """Async DELETE mirror of :func:`make_delete_request`.
@@ -246,9 +231,7 @@ async def make_async_delete_request(
     full_url = f"{url.rstrip('/')}/{path_params}" if path_params else url
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
-            response = await client.delete(
-                full_url, params=query_params, headers=headers
-            )
+            response = await client.delete(full_url, params=query_params, headers=headers)
 
         if response.status_code in (200, 202, 204):
             logger.info(
@@ -279,18 +262,16 @@ async def make_async_delete_request(
 )
 async def make_async_patch_request(
     url: str,
-    data: Optional[dict] = None,
-    params: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    data: dict | None = None,
+    params: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> dict:
     """Async PATCH mirror of :func:`make_patch_request`."""
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
             if data:
-                response = await client.patch(
-                    url, json=data, params=params, headers=headers
-                )
+                response = await client.patch(url, json=data, params=params, headers=headers)
             else:
                 response = await client.patch(url, params=params, headers=headers)
 
@@ -313,10 +294,10 @@ async def make_async_patch_request(
 
 async def make_async_get_request_raw(
     url: str,
-    params: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    params: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
-) -> Optional[dict]:
+) -> dict | None:
     """Async raw-GET mirror of :func:`make_get_request_raw`.
 
     Returns the parsed JSON body or ``None`` on transport failure —
@@ -336,7 +317,7 @@ async def make_async_get_request_raw(
 async def make_async_health_check_request(
     url: str,
     timeout: int = DEFAULT_TIMEOUT,
-    headers: Optional[dict] = None,
+    headers: dict | None = None,
 ) -> bool:
     """Async health-check mirror of :func:`make_health_check_request`.
 
@@ -367,28 +348,22 @@ async def make_async_health_check_request(
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def make_get_request(
     url: str,
-    path_params: Optional[str] = None,
-    query_params: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    path_params: str | None = None,
+    query_params: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
     paginate: bool = False,
-) -> Union[dict, List[dict]]:
+) -> dict | list[dict]:
     """
     Make a GET request (supports optional pagination).
     """
     try:
-        full_url = (
-            f"{url.rstrip('/')}/{str(path_params).lstrip('/')}" if path_params else url
-        )
+        full_url = f"{url.rstrip('/')}/{str(path_params).lstrip('/')}" if path_params else url
 
         if not paginate:
-            response = requests.get(
-                full_url, params=query_params, headers=headers, timeout=timeout
-            )
+            response = requests.get(full_url, params=query_params, headers=headers, timeout=timeout)
             if response.ok:
-                logger.info(
-                    "GET %s succeeded with status %s", full_url, response.status_code
-                )
+                logger.info("GET %s succeeded with status %s", full_url, response.status_code)
                 return response.json()
 
             logger.warning(
@@ -407,9 +382,7 @@ def make_get_request(
             page_params = dict(query_params or {})
             page_params.update({"page": page, "limit": limit})
 
-            response = requests.get(
-                full_url, params=page_params, headers=headers, timeout=timeout
-            )
+            response = requests.get(full_url, params=page_params, headers=headers, timeout=timeout)
             if not response.ok:
                 logger.warning("GET pagination failed on page %s", page)
                 break
@@ -436,8 +409,8 @@ def make_get_request(
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def make_get_request_stream(
     url: str,
-    params: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    params: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> requests.Response:
     """
@@ -484,9 +457,9 @@ def make_get_request_stream(
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def make_delete_request(
     url: str,
-    path_params: Optional[str] = None,
-    query_params: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    path_params: str | None = None,
+    query_params: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> bool:
     """
@@ -528,9 +501,9 @@ def make_delete_request(
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
 def make_patch_request(
     url: str,
-    data: Optional[dict] = None,
-    params: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    data: dict | None = None,
+    params: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> dict:
     """
@@ -578,8 +551,8 @@ def make_patch_request(
 
 def make_get_request_raw(
     url: str,
-    params: Optional[dict] = None,
-    headers: Optional[dict] = None,
+    params: dict | None = None,
+    headers: dict | None = None,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> requests.Response:
     """
@@ -603,7 +576,7 @@ def make_get_request_raw(
 def make_health_check_request(
     url: str,
     timeout: int = DEFAULT_TIMEOUT,
-    headers: Optional[dict] = None,
+    headers: dict | None = None,
 ) -> bool:
     """
     Lightweight GET request used only for health checks.

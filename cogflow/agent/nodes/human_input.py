@@ -12,7 +12,8 @@ revived.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from ..ir.model import IRNode
 from .base import NodeFactory
@@ -37,11 +38,7 @@ class HumanInputFactory(NodeFactory):
     def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
         # Accept either our Python-first ``humanInputPrompt`` key or Flowise's
         # native ``humanInputDescription`` so JSON-loaded nodes work too.
-        prompt = (
-            self.config.get("humanInputPrompt")
-            or self.config.get("humanInputDescription")
-            or ""
-        )
+        prompt = self.config.get("humanInputPrompt") or self.config.get("humanInputDescription") or ""
         output_key = self.config.get("humanInputOutputKey") or "human_input"
 
         def human_input_node(state: dict[str, Any]) -> dict[str, Any]:

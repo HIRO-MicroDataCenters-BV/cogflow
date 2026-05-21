@@ -87,13 +87,9 @@ def _node_to_dict(node: IRNode) -> dict[str, Any]:
             "category": "Agent Flows",
             "description": "",
             "inputParams": [],
-            "inputAnchors": [
-                {"id": p.id, "name": p.name, "label": p.label, "type": p.type_} for p in node.inputs
-            ],
+            "inputAnchors": [{"id": p.id, "name": p.name, "label": p.label, "type": p.type_} for p in node.inputs],
             "inputs": node.config or {},
-            "outputAnchors": [
-                {"id": p.id, "name": p.name, "label": p.label} for p in node.outputs
-            ],
+            "outputAnchors": [{"id": p.id, "name": p.name, "label": p.label} for p in node.outputs],
             "outputs": {},
             "selected": False,
         },
@@ -156,9 +152,7 @@ def _edge_to_dict(edge: IREdge, graph: IRGraph) -> dict[str, Any]:
 
 def _start_state_payload(graph: IRGraph) -> list[dict[str, Any]]:
     """``data.inputs.startState`` shape Flowise expects, derived from IR state."""
-    return [
-        {"key": f.key, "value": "" if f.default is None else f.default} for f in graph.state
-    ]
+    return [{"key": f.key, "value": "" if f.default is None else f.default} for f in graph.state]
 
 
 def to_dict(graph: IRGraph, *, analytics: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -185,7 +179,7 @@ def to_dict(graph: IRGraph, *, analytics: dict[str, Any] | None = None) -> dict[
     # schema. Provenance-backed Start nodes are left untouched to preserve
     # lossless round-trip on JSON-imported graphs.
     if graph.state:
-        for ir_node, emitted in zip(graph.nodes, out["nodes"]):
+        for ir_node, emitted in zip(graph.nodes, out["nodes"], strict=True):
             if ir_node.type != "start":
                 continue
             if ir_node.flowise_provenance and "node" in ir_node.flowise_provenance:

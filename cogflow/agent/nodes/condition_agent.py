@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -40,8 +41,7 @@ class ConditionAgentFactory(NodeFactory):
             if model is None or not scenarios:
                 return {"_condition_branch": "default"}
             scenario_text = "\n".join(
-                f"- {s.get('name', s.get('output', 'scenario'))}: {s.get('description', '')}"
-                for s in scenarios
+                f"- {s.get('name', s.get('output', 'scenario'))}: {s.get('description', '')}" for s in scenarios
             )
             prompt = [
                 SystemMessage(content=f"{instructions}\nChoose exactly one scenario name from:\n{scenario_text}"),

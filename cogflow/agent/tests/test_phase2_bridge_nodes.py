@@ -16,10 +16,7 @@ from cogflow.agent.ir.model import IRNode
 from cogflow.agent.nodes import (
     CustomFunctionFactory,
     ExecuteFlowFactory,
-    HTTPFactory,
     HumanInputFactory,
-    IterationFactory,
-    LoopFactory,
     RetrieverFactory,
     UnsupportedNodeError,
     custom_function,
@@ -66,7 +63,7 @@ def test_loop_increments_counter_each_invocation():
     for expected in (1, 2, 3):
         update = fn(state)
         state.update(update)
-        assert state[f"_loop_count__loop_0"] == expected
+        assert state["_loop_count__loop_0"] == expected
 
 
 def test_loop_factory_persists_target_and_max_in_config():
@@ -89,7 +86,7 @@ def test_iteration_emits_send_per_item():
     assert isinstance(sends, list)
     assert len(sends) == 3
     # Each Send object has a ``node`` attribute (LangGraph's Send API).
-    for send, expected_item in zip(sends, ["a", "b", "c"]):
+    for send, expected_item in zip(sends, ["a", "b", "c"], strict=True):
         assert send.node == "worker"
         assert send.arg["_iteration_item"] == expected_item
 
@@ -227,6 +224,7 @@ def test_custom_function_fn_does_not_leak_name_into_python_body():
     that would ``exec`` the bare identifier and raise NameError (or worse,
     silently execute it).
     """
+
     def my_named_function(state):
         return state["x"] + 1
 
@@ -346,9 +344,21 @@ def test_factory_registry_has_all_15_node_types():
     from cogflow.agent.nodes import FACTORY_BY_IR_TYPE
 
     expected = {
-        "start", "llm", "agent", "tool", "condition", "condition_agent",
-        "direct_reply", "loop", "iteration", "http", "retriever",
-        "custom_function", "human_input", "execute_flow", "sticky_note",
+        "start",
+        "llm",
+        "agent",
+        "tool",
+        "condition",
+        "condition_agent",
+        "direct_reply",
+        "loop",
+        "iteration",
+        "http",
+        "retriever",
+        "custom_function",
+        "human_input",
+        "execute_flow",
+        "sticky_note",
     }
     assert set(FACTORY_BY_IR_TYPE.keys()) == expected
 
@@ -364,12 +374,9 @@ def test_custom_function_from_ir_rejects_js_body():
 
 def test_human_input_reads_flowise_description_key(monkeypatch):
     """JSON-loaded HumanInput uses ``humanInputDescription``, not ``humanInputPrompt``."""
-    from cogflow.agent.nodes import HumanInputFactory
 
     _require_langgraph_symbol("interrupt")
-    bare = HumanInputFactory.from_ir(
-        _ir("hi_flowise", "human_input", {"humanInputDescription": "Approve?"})
-    )
+    bare = HumanInputFactory.from_ir(_ir("hi_flowise", "human_input", {"humanInputDescription": "Approve?"}))
     fn = bare.to_callable(_ir("hi_flowise", "human_input", bare.config))
 
     # Use monkeypatch so the patch is undone after the test — direct

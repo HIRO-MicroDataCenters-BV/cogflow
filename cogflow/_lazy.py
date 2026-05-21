@@ -15,7 +15,6 @@ class _LazyLoader(ModuleType):
 
         # Only lazy-load allowed names
         if name in self._lazy_submodules:
-
             # Try cogflow.core.<name>
             try:
                 module = import_module(f"cogflow.core.{name}")

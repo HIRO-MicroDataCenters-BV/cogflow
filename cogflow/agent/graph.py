@@ -17,7 +17,8 @@ Phase 1 behavior:
 from __future__ import annotations
 
 import itertools
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from langgraph.graph import END, START
 from langgraph.graph import StateGraph as _LangGraphStateGraph
@@ -27,7 +28,11 @@ from .ir import (
     IRGraph,
     IRNode,
     IRPort,
+)
+from .ir import (
     add_edge as _ir_add_edge,
+)
+from .ir import (
     add_node as _ir_add_node,
 )
 from .nodes.base import NodeFactory
@@ -77,7 +82,7 @@ class StateGraph(_LangGraphStateGraph):
     # ------------------------------------------------------------------
     # add_node
     # ------------------------------------------------------------------
-    def add_node(self, name: Any, node: Any = None, **kwargs: Any) -> "StateGraph":  # type: ignore[override]
+    def add_node(self, name: Any, node: Any = None, **kwargs: Any) -> StateGraph:  # type: ignore[override]
         # LangGraph supports ``add_node(fn)`` (name inferred from the callable).
         # Normalize that form here so IR capture works for both signatures.
         if node is None and callable(name) and not isinstance(name, NodeFactory):
@@ -122,7 +127,7 @@ class StateGraph(_LangGraphStateGraph):
     # ------------------------------------------------------------------
     # edges
     # ------------------------------------------------------------------
-    def add_edge(self, start_key: str, end_key: str) -> "StateGraph":  # type: ignore[override]
+    def add_edge(self, start_key: str, end_key: str) -> StateGraph:  # type: ignore[override]
         # Order matters: check END first so ``add_edge(START, END)`` doesn't
         # try to record an IR edge whose ``target`` is the LangGraph END
         # sentinel rather than a real node id.
@@ -150,7 +155,7 @@ class StateGraph(_LangGraphStateGraph):
         path: Callable[..., Any],
         path_map: Mapping[str, str] | list[str] | None = None,
         then: str | None = None,
-    ) -> "StateGraph":
+    ) -> StateGraph:
         mapping = path_map or {}
         if isinstance(mapping, list):
             mapping = {k: k for k in mapping}
@@ -168,7 +173,7 @@ class StateGraph(_LangGraphStateGraph):
             return super().add_conditional_edges(source, path, path_map)  # type: ignore[no-any-return]
         return super().add_conditional_edges(source, path, path_map, then=then)  # type: ignore[no-any-return]
 
-    def set_entry_point(self, key: str) -> "StateGraph":  # type: ignore[override]
+    def set_entry_point(self, key: str) -> StateGraph:  # type: ignore[override]
         start_node = _synthesize_start_node(self.ir)
         _ir_add_edge(
             self.ir,
@@ -178,6 +183,6 @@ class StateGraph(_LangGraphStateGraph):
         )
         return super().set_entry_point(key)  # type: ignore[no-any-return]
 
-    def set_finish_point(self, key: str) -> "StateGraph":  # type: ignore[override]
+    def set_finish_point(self, key: str) -> StateGraph:  # type: ignore[override]
         self.ir.finish.append(key)
         return super().set_finish_point(key)  # type: ignore[no-any-return]

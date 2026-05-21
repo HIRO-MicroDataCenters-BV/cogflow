@@ -13,11 +13,11 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Optional, Any, List, Dict
+from typing import Any
 
-from ...utils.logging import get_logger
-from ...utils.exceptions import CogflowConnectionError
 from ...utils import common
+from ...utils.exceptions import CogflowConnectionError
+from ...utils.logging import get_logger
 
 logger = get_logger(__name__)
 
@@ -26,9 +26,11 @@ logger = get_logger(__name__)
 # LAZY LOADERS
 # ================================================================
 
+
 def _load_k8s():
     """Lazy load sync Kubernetes client."""
-    from kubernetes import client, config
+    from kubernetes import client
+
     common.load_k8s_config()
     return client
 
@@ -36,17 +38,19 @@ def _load_k8s():
 def _load_k8s_async():
     """Lazy load async Kubernetes client."""
     from kubernetes_asyncio import client, config
+
     return client, config
 
 
 def _kfp_client(
-    api_url: Optional[str] = None,
+    api_url: str | None = None,
     skip_tls_verify: bool = False,
-    session_cookies: Optional[str] = None,
-    namespace: Optional[str] = None,
+    session_cookies: str | None = None,
+    namespace: str | None = None,
 ):
     """Create a KFP client using the orchestration module."""
     from . import orchestration
+
     return orchestration.client(
         api_url=api_url,
         skip_tls_verify=skip_tls_verify,
@@ -149,11 +153,11 @@ def _traverse_workflow_nodes(nodes: dict, namespace: str) -> tuple:
 
 
 def list_all_kfp_runs(
-    api_url: Optional[str] = None,
+    api_url: str | None = None,
     skip_tls_verify: bool = False,
-    session_cookies: Optional[str] = None,
-    namespace: Optional[str] = None,
-) -> List[dict]:
+    session_cookies: str | None = None,
+    namespace: str | None = None,
+) -> list[dict]:
     """
     List all KFP pipeline runs, handling pagination.
 
@@ -178,10 +182,10 @@ def list_all_kfp_runs(
 
 def list_pipelines_by_name(
     pipeline_name: str,
-    api_url: Optional[str] = None,
+    api_url: str | None = None,
     skip_tls_verify: bool = False,
-    session_cookies: Optional[str] = None,
-    namespace: Optional[str] = None,
+    session_cookies: str | None = None,
+    namespace: str | None = None,
 ) -> dict:
     """
     List all versions and runs of a pipeline by name.
@@ -192,9 +196,7 @@ def list_pipelines_by_name(
     kfp_client_instance = _kfp_client(api_url, skip_tls_verify, session_cookies, namespace)
 
     # Find pipeline ID by name
-    pipeline_id = _get_pipeline_id_by_name(
-        kfp_client_instance, pipeline_name
-    )
+    pipeline_id = _get_pipeline_id_by_name(kfp_client_instance, pipeline_name)
 
     # Get versions
     versions_response = kfp_client_instance.list_pipeline_versions(pipeline_id)
@@ -211,10 +213,10 @@ def list_pipelines_by_name(
 
 def get_pipeline_task_sequence_by_run_id(
     run_id: str,
-    api_url: Optional[str] = None,
+    api_url: str | None = None,
     skip_tls_verify: bool = False,
-    session_cookies: Optional[str] = None,
-    namespace: Optional[str] = None,
+    session_cookies: str | None = None,
+    namespace: str | None = None,
 ) -> dict:
     """
     Get pipeline workflow and task sequence for a given run ID.
@@ -241,10 +243,10 @@ def get_pipeline_task_sequence_by_run_id(
 
 def get_pipeline_task_sequence_by_run_name(
     run_name: str,
-    api_url: Optional[str] = None,
+    api_url: str | None = None,
     skip_tls_verify: bool = False,
-    session_cookies: Optional[str] = None,
-    namespace: Optional[str] = None,
+    session_cookies: str | None = None,
+    namespace: str | None = None,
 ) -> dict:
     """
     Get pipeline task sequence by run name (resolves to run_id first).
@@ -257,17 +259,15 @@ def get_pipeline_task_sequence_by_run_name(
     if not run_id:
         raise ValueError(f"Pipeline run with name '{run_name}' not found.")
 
-    return get_pipeline_task_sequence_by_run_id(
-        run_id, api_url, skip_tls_verify, session_cookies, namespace
-    )
+    return get_pipeline_task_sequence_by_run_id(run_id, api_url, skip_tls_verify, session_cookies, namespace)
 
 
 def get_pipeline_task_sequence_by_pipeline_id(
     pipeline_id: str,
-    api_url: Optional[str] = None,
+    api_url: str | None = None,
     skip_tls_verify: bool = False,
-    session_cookies: Optional[str] = None,
-    namespace: Optional[str] = None,
+    session_cookies: str | None = None,
+    namespace: str | None = None,
 ) -> dict:
     """
     Get task sequence for the latest run of a pipeline by pipeline ID.
@@ -278,28 +278,24 @@ def get_pipeline_task_sequence_by_pipeline_id(
     kfp_client_instance = _kfp_client(api_url, skip_tls_verify, session_cookies, namespace)
 
     # Get latest run for this specific pipeline
-    filter_str = json.dumps({
-        "predicates": [{"key": "pipeline_id", "op": "EQUALS", "string_value": pipeline_id}]
-    })
+    filter_str = json.dumps({"predicates": [{"key": "pipeline_id", "op": "EQUALS", "string_value": pipeline_id}]})
     runs = kfp_client_instance.list_runs(page_size=1, filter=filter_str)
     if not runs or not runs.runs:
         raise ValueError(f"No runs found for pipeline ID '{pipeline_id}'.")
 
     run_id = runs.runs[0].id
-    result = get_pipeline_task_sequence_by_run_id(
-        run_id, api_url, skip_tls_verify, session_cookies, namespace
-    )
+    result = get_pipeline_task_sequence_by_run_id(run_id, api_url, skip_tls_verify, session_cookies, namespace)
     result["pipeline_id"] = pipeline_id
     return result
 
 
 def get_pipeline_task_sequence(
-    pipeline_name: Optional[str] = None,
-    pipeline_workflow_name: Optional[str] = None,
-    api_url: Optional[str] = None,
+    pipeline_name: str | None = None,
+    pipeline_workflow_name: str | None = None,
+    api_url: str | None = None,
     skip_tls_verify: bool = False,
-    session_cookies: Optional[str] = None,
-    namespace: Optional[str] = None,
+    session_cookies: str | None = None,
+    namespace: str | None = None,
 ) -> dict:
     """
     Get pipeline task sequence by pipeline name or workflow name.
@@ -317,14 +313,10 @@ def get_pipeline_task_sequence(
 
     if pipeline_workflow_name:
         # Find run by workflow name
-        run_id = _get_run_id_by_workflow_name(
-            kfp_client_instance, pipeline_workflow_name
-        )
+        run_id = _get_run_id_by_workflow_name(kfp_client_instance, pipeline_workflow_name)
         if not run_id:
             raise ValueError(f"No run found for workflow name '{pipeline_workflow_name}'.")
-        return get_pipeline_task_sequence_by_run_id(
-            run_id, api_url, skip_tls_verify, session_cookies, namespace
-        )
+        return get_pipeline_task_sequence_by_run_id(run_id, api_url, skip_tls_verify, session_cookies, namespace)
 
     raise ValueError("Either pipeline_name or pipeline_workflow_name must be provided.")
 
@@ -332,10 +324,10 @@ def get_pipeline_task_sequence(
 def get_task_structure_by_task_id(
     task_id: str,
     run_id: str,
-    api_url: Optional[str] = None,
+    api_url: str | None = None,
     skip_tls_verify: bool = False,
-    session_cookies: Optional[str] = None,
-    namespace: Optional[str] = None,
+    session_cookies: str | None = None,
+    namespace: str | None = None,
 ) -> dict:
     """
     Get the task structure for a specific task within a run.
@@ -373,7 +365,7 @@ def get_task_structure_by_task_id(
 # ================================================================
 
 
-def get_pod_definition(podname: str, namespace: Optional[str] = None) -> str:
+def get_pod_definition(podname: str, namespace: str | None = None) -> str:
     """
     Fetch pod definition as JSON string.
 
@@ -394,7 +386,7 @@ def get_pod_definition(podname: str, namespace: Optional[str] = None) -> str:
         raise
 
 
-def get_pod_events(podname: str, namespace: Optional[str] = None) -> dict:
+def get_pod_events(podname: str, namespace: str | None = None) -> dict:
     """
     Fetch Kubernetes events for a specific pod.
 
@@ -425,27 +417,29 @@ def get_pod_events(podname: str, namespace: Optional[str] = None) -> dict:
             or getattr(getattr(ev, "metadata", None), "creation_timestamp", None)
         )
 
-        filtered.append({
-            "type": getattr(ev, "type", None),
-            "reason": getattr(ev, "reason", None),
-            "message": getattr(ev, "message", None),
-            "count": getattr(ev, "count", 1),
-            "firstTimestamp": to_iso(first_ts),
-            "lastTimestamp": to_iso(getattr(ev, "last_timestamp", None)),
-            "reportingComponent": getattr(ev, "reporting_component", None),
-            "source": getattr(getattr(ev, "source", None), "component", None),
-            "involvedKind": getattr(involved, "kind", None),
-            "involvedName": getattr(involved, "name", None),
-        })
+        filtered.append(
+            {
+                "type": getattr(ev, "type", None),
+                "reason": getattr(ev, "reason", None),
+                "message": getattr(ev, "message", None),
+                "count": getattr(ev, "count", 1),
+                "firstTimestamp": to_iso(first_ts),
+                "lastTimestamp": to_iso(getattr(ev, "last_timestamp", None)),
+                "reportingComponent": getattr(ev, "reporting_component", None),
+                "source": getattr(getattr(ev, "source", None), "component", None),
+                "involvedKind": getattr(involved, "kind", None),
+                "involvedName": getattr(involved, "name", None),
+            }
+        )
 
     return {"podname": podname, "namespace": namespace, "count": len(filtered), "events": filtered}
 
 
 def get_pod_logs(
     pod_name: str,
-    namespace: Optional[str] = None,
-    container_name: Optional[str] = None,
-) -> List[str]:
+    namespace: str | None = None,
+    container_name: str | None = None,
+) -> list[str]:
     """
     Fetch pod logs as a list of log lines.
 
@@ -478,9 +472,9 @@ def get_pod_logs(
 
 def get_inference_service_logs(
     inference_service_name: str,
-    namespace: Optional[str] = None,
+    namespace: str | None = None,
     container_name: str = "kserve-container",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Fetch logs for all pods matching an InferenceService name.
 
@@ -501,11 +495,13 @@ def get_inference_service_logs(
             namespace=namespace,
             container_name=container_name,
         )
-        log_entries.append({
-            "pod_name": pod.metadata.name,
-            "namespace": pod.metadata.namespace,
-            "logs": pod_logs,
-        })
+        log_entries.append(
+            {
+                "pod_name": pod.metadata.name,
+                "namespace": pod.metadata.namespace,
+                "logs": pod_logs,
+            }
+        )
 
     return log_entries
 
@@ -521,6 +517,7 @@ async def _ensure_async_k8s():
     global _async_k8s_loaded
     if not _async_k8s_loaded:
         from kubernetes_asyncio import config as async_config
+
         try:
             async_config.load_incluster_config()
         except Exception:
@@ -528,11 +525,12 @@ async def _ensure_async_k8s():
         _async_k8s_loaded = True
 
 
-async def async_get_pod_definition(podname: str, namespace: Optional[str] = None) -> str:
+async def async_get_pod_definition(podname: str, namespace: str | None = None) -> str:
     """Fetch pod definition (async)."""
     namespace = namespace or common.get_namespace()
     await _ensure_async_k8s()
     from kubernetes_asyncio import client as async_client
+
     v1 = async_client.CoreV1Api()
     try:
         pod = await v1.read_namespaced_pod(name=podname, namespace=namespace)
@@ -542,11 +540,12 @@ async def async_get_pod_definition(podname: str, namespace: Optional[str] = None
         return json.dumps({"error": f"Failed to fetch pod: {e}"})
 
 
-async def async_get_pod_events(podname: str, namespace: Optional[str] = None) -> dict:
+async def async_get_pod_events(podname: str, namespace: str | None = None) -> dict:
     """Fetch pod events (async)."""
     namespace = namespace or common.get_namespace()
     await _ensure_async_k8s()
     from kubernetes_asyncio import client as async_client
+
     v1 = async_client.CoreV1Api()
 
     def to_iso(ts):
@@ -563,28 +562,31 @@ async def async_get_pod_events(podname: str, namespace: Optional[str] = None) ->
         if not involved or involved.name != podname:
             continue
         first_ts = getattr(ev, "first_timestamp", None) or getattr(ev, "event_time", None)
-        filtered.append({
-            "type": getattr(ev, "type", None),
-            "reason": getattr(ev, "reason", None),
-            "message": getattr(ev, "message", None),
-            "count": getattr(ev, "count", 1),
-            "firstTimestamp": to_iso(first_ts),
-            "lastTimestamp": to_iso(getattr(ev, "last_timestamp", None)),
-            "source": getattr(getattr(ev, "source", None), "component", None),
-        })
+        filtered.append(
+            {
+                "type": getattr(ev, "type", None),
+                "reason": getattr(ev, "reason", None),
+                "message": getattr(ev, "message", None),
+                "count": getattr(ev, "count", 1),
+                "firstTimestamp": to_iso(first_ts),
+                "lastTimestamp": to_iso(getattr(ev, "last_timestamp", None)),
+                "source": getattr(getattr(ev, "source", None), "component", None),
+            }
+        )
 
     return {"podname": podname, "namespace": namespace, "count": len(filtered), "events": filtered}
 
 
 async def async_get_pod_logs(
     pod_name: str,
-    namespace: Optional[str] = None,
-    container_name: Optional[str] = None,
-) -> List[str]:
+    namespace: str | None = None,
+    container_name: str | None = None,
+) -> list[str]:
     """Fetch pod logs as list of lines (async)."""
     namespace = namespace or common.get_namespace()
     await _ensure_async_k8s()
     from kubernetes_asyncio import client as async_client
+
     v1 = async_client.CoreV1Api()
 
     if not container_name:
@@ -603,13 +605,14 @@ async def async_get_pod_logs(
 
 async def async_get_inference_service_logs(
     inference_service_name: str,
-    namespace: Optional[str] = None,
+    namespace: str | None = None,
     container_name: str = "kserve-container",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Fetch ISVC logs as structured list (async)."""
     namespace = namespace or common.get_namespace()
     await _ensure_async_k8s()
     from kubernetes_asyncio import client as async_client
+
     v1 = async_client.CoreV1Api()
 
     pods = await v1.list_namespaced_pod(namespace=namespace)
@@ -622,11 +625,13 @@ async def async_get_inference_service_logs(
             namespace=namespace,
             container_name=container_name,
         )
-        log_entries.append({
-            "pod_name": pod.metadata.name,
-            "namespace": pod.metadata.namespace,
-            "logs": pod_logs,
-        })
+        log_entries.append(
+            {
+                "pod_name": pod.metadata.name,
+                "namespace": pod.metadata.namespace,
+                "logs": pod_logs,
+            }
+        )
 
     return log_entries
 
@@ -666,9 +671,7 @@ def _list_runs_by_pipeline_id(kfp_client_instance, pipeline_id: str) -> list:
     """List all runs for a given pipeline ID."""
     parsed_runs = []
     next_page_token = None
-    filter_str = json.dumps({
-        "predicates": [{"key": "pipeline_id", "op": "EQUALS", "string_value": pipeline_id}]
-    })
+    filter_str = json.dumps({"predicates": [{"key": "pipeline_id", "op": "EQUALS", "string_value": pipeline_id}]})
     while True:
         runs = kfp_client_instance.list_runs(page_token=next_page_token, filter=filter_str)
         if runs and runs.runs:
@@ -680,7 +683,7 @@ def _list_runs_by_pipeline_id(kfp_client_instance, pipeline_id: str) -> list:
     return parsed_runs
 
 
-def _get_run_id_by_name(kfp_client_instance, run_name: str) -> Optional[str]:
+def _get_run_id_by_name(kfp_client_instance, run_name: str) -> str | None:
     """Find run ID by run name."""
     next_page_token = None
     while True:
@@ -695,7 +698,7 @@ def _get_run_id_by_name(kfp_client_instance, run_name: str) -> Optional[str]:
     return None
 
 
-def _get_run_id_by_workflow_name(kfp_client_instance, workflow_name: str) -> Optional[str]:
+def _get_run_id_by_workflow_name(kfp_client_instance, workflow_name: str) -> str | None:
     """Find run ID by workflow name."""
     next_page_token = None
     while True:

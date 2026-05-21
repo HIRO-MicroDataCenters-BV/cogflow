@@ -19,10 +19,11 @@ to Phase 2.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
-from ..ir.model import IRNode, IRNodeType, IRPort
 from ..constants import IR_TYPE_TO_FLOWISE_CATEGORY, IR_TYPE_TO_FLOWISE_NAME
+from ..ir.model import IRNode, IRNodeType, IRPort
 
 
 class NodeFactory(ABC):
@@ -66,7 +67,7 @@ class NodeFactory(ABC):
     # JSON-loaded hydration
     # ------------------------------------------------------------------
     @classmethod
-    def from_ir(cls, node: IRNode) -> "NodeFactory":
+    def from_ir(cls, node: IRNode) -> NodeFactory:
         """Construct a factory instance from an IR row.
 
         Used by ``compile.to_langgraph`` when no live factory was registered

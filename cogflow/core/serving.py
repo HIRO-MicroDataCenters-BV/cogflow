@@ -17,21 +17,21 @@ from __future__ import annotations
 import re
 import time
 from datetime import datetime
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Any
 
 from kubernetes import client
 from kubernetes.client.exceptions import ApiException
 from kubernetes.config.config_exception import ConfigException
 
-from ..utils import common
 from ..config import config as cog_config
+from ..utils import common
 from ..utils.exceptions import (
-    CogflowErrorHandler,
-    CogflowValidationError,
-    CogflowModelError,
-    CogflowDatasetError,
     CogflowConnectionError,
+    CogflowDatasetError,
+    CogflowErrorHandler,
+    CogflowModelError,
     CogflowServingError,
+    CogflowValidationError,
 )
 from ..utils.logging import get_logger
 
@@ -104,9 +104,7 @@ class ServingManager:
             _ensure_k8s_config_loaded()
             self._api = client.CustomObjectsApi()
         except (ConfigException, FileNotFoundError, OSError) as exc:
-            raise CogflowConnectionError(
-                f"Kubernetes config is not loaded: {exc}"
-            ) from exc
+            raise CogflowConnectionError(f"Kubernetes config is not loaded: {exc}") from exc
         return self._api
 
     # -----------------------------------------------------------------
@@ -136,10 +134,10 @@ class ServingManager:
 
     def _get_transformer_env(
         self,
-        dataset_id: Optional[str],
-        transformer_image: Optional[str],
-        transformer_parameters: Optional[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        dataset_id: str | None,
+        transformer_image: str | None,
+        transformer_parameters: dict[str, Any] | None,
+    ) -> dict[str, Any]:
         """
         Resolve transformer parameters:
 
@@ -173,22 +171,15 @@ class ServingManager:
             if dataset.get("data_source_type") == 20:
                 if not transformer_image:
                     CogflowErrorHandler.log_and_raise(
-                        (
-                            "Dataset is Prometheus type but no transformer_image was "
-                            "provided."
-                        ),
+                        ("Dataset is Prometheus type but no transformer_image was provided."),
                         raise_as=CogflowValidationError,
                     )
 
                 prom = dataset_mgr.get_prometheus_dataset(dataset_id_norm)
 
                 params = {
-                    "PROMETHEUS_URL": prom.get("connection_type", {}).get(
-                        "prometheus_url"
-                    ),
-                    "PROMETHEUS_METRICS": prom.get("metric_list", {}).get(
-                        "METRIC_FEATURES"
-                    ),
+                    "PROMETHEUS_URL": prom.get("connection_type", {}).get("prometheus_url"),
+                    "PROMETHEUS_METRICS": prom.get("metric_list", {}).get("METRIC_FEATURES"),
                 }
                 logger.info(
                     "Prometheus transformer parameters resolved for dataset_id=%s: %s",
@@ -250,10 +241,7 @@ class ServingManager:
         # First-time rollout rules
         if not 1 <= pct <= 100:
             CogflowErrorHandler.log_and_raise(
-                (
-                    f"Invalid canary_traffic_percent={pct}. "
-                    f"Initial rollout for '{isvc_name}' must be between 1 and 99."
-                ),
+                (f"Invalid canary_traffic_percent={pct}. Initial rollout for '{isvc_name}' must be between 1 and 99."),
                 raise_as=CogflowValidationError,
             )
         return
@@ -262,7 +250,7 @@ class ServingManager:
     # CRUD Operations
     # -----------------------------------------------------------------
 
-    def get_isvc(self, name: str, namespace: Optional[str] = None) -> dict:
+    def get_isvc(self, name: str, namespace: str | None = None) -> dict:
         """
         Retrieve an InferenceService CRD by name and namespace.
         Args:
@@ -297,7 +285,7 @@ class ServingManager:
                 re_raise=True,
             )
 
-    def delete_isvc(self, name: str, namespace: Optional[str] = None) -> bool:
+    def delete_isvc(self, name: str, namespace: str | None = None) -> bool:
         """
         Delete an InferenceService CRD by name and namespace.
         Args:
@@ -347,7 +335,7 @@ class ServingManager:
         self,
         name: str,
         patch_body: dict,
-        namespace: Optional[str] = None,
+        namespace: str | None = None,
     ) -> dict:
         """
         Patch an existing InferenceService CRD.
@@ -389,7 +377,7 @@ class ServingManager:
                 re_raise=True,
             )
 
-    def restart_isvc(self, name: str, namespace: Optional[str] = None) -> bool:
+    def restart_isvc(self, name: str, namespace: str | None = None) -> bool:
         """
         Restart ISVC by scaling minReplicas to 0 then back to 1.
         Args:
@@ -412,14 +400,10 @@ class ServingManager:
         )
         try:
             # Scale to 0
-            self.update_isvc(
-                name, {"spec": {"predictor": {"minReplicas": 0}}}, namespace
-            )
+            self.update_isvc(name, {"spec": {"predictor": {"minReplicas": 0}}}, namespace)
             time.sleep(1)
             # Scale back up
-            self.update_isvc(
-                name, {"spec": {"predictor": {"minReplicas": 1}}}, namespace
-            )
+            self.update_isvc(name, {"spec": {"predictor": {"minReplicas": 1}}}, namespace)
             logger.info(
                 "InferenceService '%s' restart patches applied successfully.",
                 name,
@@ -441,7 +425,7 @@ class ServingManager:
         self,
         name: str,
         model_uri: str,
-        namespace: Optional[str] = None,
+        namespace: str | None = None,
         model_format: str = None,
         protocol_version: str = None,
         annot: dict = None,
@@ -489,7 +473,7 @@ class ServingManager:
                 annotations=annot or {},
             )
 
-            model_spec: Dict[str, Any] = {"storageUri": model_uri}
+            model_spec: dict[str, Any] = {"storageUri": model_uri}
             if model_format:
                 model_spec["modelFormat"] = {"name": model_format}
             if protocol_version:
@@ -501,13 +485,11 @@ class ServingManager:
                 "model": model_spec,
             }
 
-            spec: Dict[str, Any] = {"predictor": predictor_spec}
+            spec: dict[str, Any] = {"predictor": predictor_spec}
 
             # Transformer
             if transformer_env:
-                env_list = [
-                    {"name": k, "value": str(v)} for k, v in transformer_env.items()
-                ]
+                env_list = [{"name": k, "value": str(v)} for k, v in transformer_env.items()]
                 spec["transformer"] = {
                     "containers": [
                         {
@@ -566,15 +548,15 @@ class ServingManager:
 
     # Defaults match a small-to-mid 7B model on a single GPU. Callers can
     # override per-field via the `resources` arg.
-    _LLM_DEFAULT_RESOURCES: Dict[str, Dict[str, str]] = {
+    _LLM_DEFAULT_RESOURCES: dict[str, dict[str, str]] = {
         "requests": {"cpu": "4", "memory": "7Gi", "nvidia.com/gpu": "1"},
         "limits": {"cpu": "8", "memory": "8Gi", "nvidia.com/gpu": "1"},
     }
 
     @staticmethod
     def _merge_resources(
-        override: Optional[Dict[str, Dict[str, str]]],
-    ) -> Dict[str, Dict[str, str]]:
+        override: dict[str, dict[str, str]] | None,
+    ) -> dict[str, dict[str, str]]:
         """Per-field merge of caller overrides onto the default block."""
         merged = {
             "requests": dict(ServingManager._LLM_DEFAULT_RESOURCES["requests"]),
@@ -594,7 +576,7 @@ class ServingManager:
     _DNS1123_LABEL_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
     @staticmethod
-    def _extract_hf_model_id(storage_uri: str) -> Optional[str]:
+    def _extract_hf_model_id(storage_uri: str) -> str | None:
         """Return the HF model id from an ``hf://`` URI, or ``None`` if
         the URI isn't an HF source.
 
@@ -643,10 +625,10 @@ class ServingManager:
     @staticmethod
     def derive_llm_names(
         *,
-        hf_model_id: Optional[str] = None,
-        served_model_name: Optional[str] = None,
-        isvc_name: Optional[str] = None,
-    ) -> Tuple[str, str]:
+        hf_model_id: str | None = None,
+        served_model_name: str | None = None,
+        isvc_name: str | None = None,
+    ) -> tuple[str, str]:
         """Fill in ``(isvc_name, served_model_name)`` from ``hf_model_id``
         when not supplied, and validate the final ``isvc_name``.
 
@@ -683,10 +665,7 @@ class ServingManager:
             # take the tail. A bare id with no slash is used directly.
             served_model_name = slug_source.rsplit("/", 1)[-1].strip()
             if not served_model_name:
-                raise CogflowValidationError(
-                    f"could not derive served_model_name from hf_model_id="
-                    f"{hf_model_id!r}"
-                )
+                raise CogflowValidationError(f"could not derive served_model_name from hf_model_id={hf_model_id!r}")
 
         if not isvc_name:
             isvc_name = ServingManager._k8s_slugify(served_model_name)
@@ -712,13 +691,13 @@ class ServingManager:
     def _build_llm_args(
         served_model_name: str,
         *,
-        max_model_len: Optional[int],
-        dtype: Optional[str],
-        tensor_parallel_size: Optional[int],
+        max_model_len: int | None,
+        dtype: str | None,
+        tensor_parallel_size: int | None,
         trust_remote_code: bool,
-        gpu_memory_utilization: Optional[float],
-        max_num_seqs: Optional[int],
-    ) -> List[str]:
+        gpu_memory_utilization: float | None,
+        max_num_seqs: int | None,
+    ) -> list[str]:
         """Whitelisted runtime args passed into the HF runtime container.
 
         Order is stable so the emitted ISVC is diff-friendly across reruns.
@@ -735,7 +714,7 @@ class ServingManager:
           (``--tensor-parallel-size``, ``--gpu-memory-utilization``,
           ``--max-num-seqs``).
         """
-        args: List[str] = [f"--model_name={served_model_name}"]
+        args: list[str] = [f"--model_name={served_model_name}"]
         if max_model_len is not None:
             args.append(f"--max_model_len={max_model_len}")
         if dtype is not None:
@@ -755,19 +734,19 @@ class ServingManager:
         *,
         storage_uri: str,
         served_model_name: str,
-        max_model_len: Optional[int],
-        dtype: Optional[str],
-        tensor_parallel_size: Optional[int],
+        max_model_len: int | None,
+        dtype: str | None,
+        tensor_parallel_size: int | None,
         trust_remote_code: bool,
-        gpu_memory_utilization: Optional[float],
-        max_num_seqs: Optional[int],
-        resources: Optional[Dict[str, Dict[str, str]]],
-        tolerations: Optional[List[Dict[str, Any]]],
-        node_selector: Optional[Dict[str, str]],
+        gpu_memory_utilization: float | None,
+        max_num_seqs: int | None,
+        resources: dict[str, dict[str, str]] | None,
+        tolerations: list[dict[str, Any]] | None,
+        node_selector: dict[str, str] | None,
         min_replicas: int,
         max_replicas: int,
-        hf_secret_name: Optional[str],
-    ) -> Dict[str, Any]:
+        hf_secret_name: str | None,
+    ) -> dict[str, Any]:
         # Replica bounds must be internally consistent before we hand the
         # ISVC to KServe — otherwise the CRD is rejected at admission (or
         # silently misbehaves if admission is permissive). Validate here
@@ -775,18 +754,11 @@ class ServingManager:
         # surface a clear CogflowValidationError instead of leaking a
         # K8s API error upstream.
         if min_replicas < 0:
-            raise CogflowValidationError(
-                f"min_replicas must be >= 0, got {min_replicas}"
-            )
+            raise CogflowValidationError(f"min_replicas must be >= 0, got {min_replicas}")
         if max_replicas < 1:
-            raise CogflowValidationError(
-                f"max_replicas must be >= 1, got {max_replicas}"
-            )
+            raise CogflowValidationError(f"max_replicas must be >= 1, got {max_replicas}")
         if min_replicas > max_replicas:
-            raise CogflowValidationError(
-                f"min_replicas ({min_replicas}) must be "
-                f"<= max_replicas ({max_replicas})"
-            )
+            raise CogflowValidationError(f"min_replicas ({min_replicas}) must be <= max_replicas ({max_replicas})")
 
         # Source plumbing — HF Hub vs MLflow/MinIO routes through
         # different KServe code paths:
@@ -826,7 +798,7 @@ class ServingManager:
             # --model_id comes first for readability in the emitted YAML
             runtime_args = [f"--model_id={hf_id}", *runtime_args]
 
-        model_block: Dict[str, Any] = {
+        model_block: dict[str, Any] = {
             "modelFormat": {"name": "huggingface"},
             "args": runtime_args,
             "resources": ServingManager._merge_resources(resources),
@@ -838,13 +810,11 @@ class ServingManager:
             model_block["env"] = [
                 {
                     "name": "HF_TOKEN",
-                    "valueFrom": {
-                        "secretKeyRef": {"name": hf_secret_name, "key": "HF_TOKEN"}
-                    },
+                    "valueFrom": {"secretKeyRef": {"name": hf_secret_name, "key": "HF_TOKEN"}},
                 }
             ]
 
-        predictor: Dict[str, Any] = {
+        predictor: dict[str, Any] = {
             "minReplicas": min_replicas,
             "maxReplicas": max_replicas,
             "model": model_block,
@@ -866,9 +836,9 @@ class ServingManager:
 
     @staticmethod
     def _apply_raw_deployment_defaults(
-        predictor: Dict[str, Any],
-        annotations: Optional[Dict[str, str]],
-    ) -> tuple[Dict[str, Any], Dict[str, str]]:
+        predictor: dict[str, Any],
+        annotations: dict[str, str] | None,
+    ) -> tuple[dict[str, Any], dict[str, str]]:
         """Default LLM ISVCs to RawDeployment + Recreate strategy.
 
         LLM pods are large, GPU-pinned, and almost always run as a single
@@ -883,17 +853,14 @@ class ServingManager:
         Returns the (possibly augmented) predictor and the merged
         annotations dict that should land on ``metadata.annotations``.
         """
-        effective_annotations: Dict[str, Any] = {
+        effective_annotations: dict[str, Any] = {
             ServingManager._DEPLOYMENT_MODE_ANNOTATION: "RawDeployment",
             **(annotations or {}),
         }
         # ``deploymentStrategy`` is rejected by the KServe webhook for
         # Serverless ISVCs, so only inject it when the resolved mode is
         # RawDeployment.
-        if (
-            effective_annotations.get(ServingManager._DEPLOYMENT_MODE_ANNOTATION)
-            == "RawDeployment"
-        ):
+        if effective_annotations.get(ServingManager._DEPLOYMENT_MODE_ANNOTATION) == "RawDeployment":
             predictor = {**predictor, "deploymentStrategy": {"type": "Recreate"}}
         return predictor, effective_annotations
 
@@ -901,25 +868,25 @@ class ServingManager:
         self,
         *,
         storage_uri: str,
-        isvc_name: Optional[str] = None,
-        served_model_name: Optional[str] = None,
-        namespace: Optional[str] = None,
+        isvc_name: str | None = None,
+        served_model_name: str | None = None,
+        namespace: str | None = None,
         # vLLM runtime args (whitelist)
-        max_model_len: Optional[int] = None,
-        dtype: Optional[str] = None,
-        tensor_parallel_size: Optional[int] = None,
+        max_model_len: int | None = None,
+        dtype: str | None = None,
+        tensor_parallel_size: int | None = None,
         trust_remote_code: bool = False,
-        gpu_memory_utilization: Optional[float] = None,
-        max_num_seqs: Optional[int] = None,
+        gpu_memory_utilization: float | None = None,
+        max_num_seqs: int | None = None,
         # scheduling / scaling
-        resources: Optional[Dict[str, Dict[str, str]]] = None,
-        tolerations: Optional[List[Dict[str, Any]]] = None,
-        node_selector: Optional[Dict[str, str]] = None,
+        resources: dict[str, dict[str, str]] | None = None,
+        tolerations: list[dict[str, Any]] | None = None,
+        node_selector: dict[str, str] | None = None,
         min_replicas: int = 1,
         max_replicas: int = 1,
         # auth
-        hf_secret_name: Optional[str] = None,
-        annotations: Optional[Dict[str, str]] = None,
+        hf_secret_name: str | None = None,
+        annotations: dict[str, str] | None = None,
     ) -> dict:
         """Create a KServe InferenceService backed by the built-in
         ``huggingface`` ClusterServingRuntime (KServe 0.15+).
@@ -977,8 +944,8 @@ class ServingManager:
             max_replicas=max_replicas,
             hf_secret_name=hf_secret_name,
         )
-        predictor_spec, effective_annotations = (
-            ServingManager._apply_raw_deployment_defaults(predictor_spec, annotations)
+        predictor_spec, effective_annotations = ServingManager._apply_raw_deployment_defaults(
+            predictor_spec, annotations
         )
 
         try:
@@ -1011,29 +978,20 @@ class ServingManager:
             if e.status == 409:
                 CogflowErrorHandler.handle_exception(
                     e,
-                    context=(
-                        f"LLM InferenceService '{isvc_name}' already exists in "
-                        f"namespace '{namespace}'."
-                    ),
+                    context=(f"LLM InferenceService '{isvc_name}' already exists in namespace '{namespace}'."),
                     raise_as=CogflowValidationError,
                     re_raise=True,
                 )
             CogflowErrorHandler.handle_exception(
                 e,
-                context=(
-                    f"Create LLM InferenceService '{isvc_name}' in namespace "
-                    f"'{namespace}'"
-                ),
+                context=(f"Create LLM InferenceService '{isvc_name}' in namespace '{namespace}'"),
                 raise_as=CogflowConnectionError,
                 re_raise=True,
             )
         except Exception as e:
             CogflowErrorHandler.handle_exception(
                 e,
-                context=(
-                    f"Create LLM InferenceService '{isvc_name}' in namespace "
-                    f"'{namespace}'"
-                ),
+                context=(f"Create LLM InferenceService '{isvc_name}' in namespace '{namespace}'"),
                 raise_as=CogflowServingError,
                 re_raise=True,
             )
@@ -1041,31 +999,31 @@ class ServingManager:
     def serve_llm(
         self,
         *,
-        storage_uri: Optional[str] = None,
-        hf_model_id: Optional[str] = None,
-        isvc_name: Optional[str] = None,
-        served_model_name: Optional[str] = None,
-        namespace: Optional[str] = None,
+        storage_uri: str | None = None,
+        hf_model_id: str | None = None,
+        isvc_name: str | None = None,
+        served_model_name: str | None = None,
+        namespace: str | None = None,
         # vLLM runtime args (whitelist)
-        max_model_len: Optional[int] = None,
-        dtype: Optional[str] = None,
-        tensor_parallel_size: Optional[int] = None,
+        max_model_len: int | None = None,
+        dtype: str | None = None,
+        tensor_parallel_size: int | None = None,
         trust_remote_code: bool = False,
-        gpu_memory_utilization: Optional[float] = None,
-        max_num_seqs: Optional[int] = None,
+        gpu_memory_utilization: float | None = None,
+        max_num_seqs: int | None = None,
         # scheduling / scaling
-        resources: Optional[Dict[str, Dict[str, str]]] = None,
-        tolerations: Optional[List[Dict[str, Any]]] = None,
-        node_selector: Optional[Dict[str, str]] = None,
+        resources: dict[str, dict[str, str]] | None = None,
+        tolerations: list[dict[str, Any]] | None = None,
+        node_selector: dict[str, str] | None = None,
         min_replicas: int = 1,
         max_replicas: int = 1,
         # auth
-        hf_secret_name: Optional[str] = None,
-        annotations: Optional[Dict[str, str]] = None,
+        hf_secret_name: str | None = None,
+        annotations: dict[str, str] | None = None,
         # catalog
-        user_id: Optional[str] = None,
-        extra_tags: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
+        user_id: str | None = None,
+        extra_tags: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """High-level LLM serving: MLflow-backed catalog registration
         **plus** KServe InferenceService create, in one call.
 
@@ -1107,9 +1065,7 @@ class ServingManager:
         # the other end so downstream steps (tagging, annotations, deploy)
         # see a consistent view regardless of which the caller supplied.
         if storage_uri is None and hf_model_id is None:
-            raise CogflowValidationError(
-                "serve_llm requires either hf_model_id or storage_uri"
-            )
+            raise CogflowValidationError("serve_llm requires either hf_model_id or storage_uri")
         # Tolerate an ``hf_model_id`` that a caller accidentally prefixed
         # with ``hf://`` (single layer only — ``_extract_hf_model_id``
         # rejects deeper ``hf://hf://…`` nesting at the validator layer
@@ -1119,11 +1075,7 @@ class ServingManager:
         # Reject inconsistent (s3://, file://, …) storage with an
         # ``hf_model_id`` — we'd catalog/tag HuggingFace while deploying
         # a non-HF artifact. MLflow-backed LLMs use ``storage_uri`` alone.
-        if (
-            storage_uri is not None
-            and not storage_uri.startswith("hf://")
-            and hf_model_id is not None
-        ):
+        if storage_uri is not None and not storage_uri.startswith("hf://") and hf_model_id is not None:
             raise CogflowValidationError(
                 f"hf_model_id={hf_model_id!r} was supplied alongside a "
                 f"non-HF storage_uri={storage_uri!r}; HuggingFace metadata "
@@ -1149,9 +1101,7 @@ class ServingManager:
             if hf_model_id is None:
                 hf_model_id = extracted
             else:
-                normalized = ServingManager._extract_hf_model_id(
-                    f"hf://{hf_model_id}"
-                )
+                normalized = ServingManager._extract_hf_model_id(f"hf://{hf_model_id}")
                 if normalized != extracted:
                     raise CogflowValidationError(
                         f"hf_model_id={hf_model_id!r} does not match the id "
@@ -1190,7 +1140,7 @@ class ServingManager:
         # caller-supplied values rather than defaulting — so the ISVC
         # metadata never drifts from the catalog entry. Unrelated
         # caller annotations (``my-custom=…``) still pass through.
-        merged_annotations: Dict[str, str] = dict(annotations or {})
+        merged_annotations: dict[str, str] = dict(annotations or {})
         merged_annotations["model_type"] = "llm"
         merged_annotations["model_id"] = common.normalize_uuid(run_id)
         if hf_model_id:
@@ -1225,7 +1175,7 @@ class ServingManager:
         }
 
     @staticmethod
-    def _process_isvc(isvc: dict) -> Dict[str, Any]:
+    def _process_isvc(isvc: dict) -> dict[str, Any]:
         """
         Process a KServe InferenceService object and extract detailed
         model rollout and canary traffic information.
@@ -1275,9 +1225,7 @@ class ServingManager:
 
         # --- Canary detection ---
         canary_spec = spec_dict.get("predictor", {}).get("canary")
-        canary_traffic_percent = spec_dict.get("predictor", {}).get(
-            "canaryTrafficPercent"
-        )
+        canary_traffic_percent = spec_dict.get("predictor", {}).get("canaryTrafficPercent")
         has_canary = canary_spec is not None or canary_traffic_percent is not None
 
         # --- Traffic computation ---
@@ -1330,9 +1278,7 @@ class ServingManager:
         # --- Age calculation ---
         if creation_timestamp:
             try:
-                creation_time = datetime.strptime(
-                    creation_timestamp, "%Y-%m-%dT%H:%M:%SZ"
-                )
+                creation_time = datetime.strptime(creation_timestamp, "%Y-%m-%dT%H:%M:%SZ")
                 age = str(datetime.utcnow() - creation_time).split(".", 1)[0]
             except Exception:
                 age = "Unknown"
@@ -1340,7 +1286,7 @@ class ServingManager:
             age = "Unknown"
 
         # --- Compose final object ---
-        model_info: Dict[str, Any] = {
+        model_info: dict[str, Any] = {
             "isvc_name": isvc_name,
             "served_model_url": served_model_url,
             "status": status,
@@ -1351,8 +1297,7 @@ class ServingManager:
             "model_type": model_type or None,
             "creation_timestamp": creation_timestamp,
             "age": age,
-            "latest_ready_revision": predictor.get("latestReadyRevision")
-            or transformer.get("latestReadyRevision"),
+            "latest_ready_revision": predictor.get("latestReadyRevision") or transformer.get("latestReadyRevision"),
             "traffic_percentage": total_traffic or stable_traffic or 100,
             "has_canary": bool(has_canary),
             # NOTE: these two mirror your original logic
@@ -1371,18 +1316,18 @@ class ServingManager:
     def update_model(
         self,
         isvc_name: str,
-        model_id: Optional[str] = None,
-        artifact_path: Optional[str] = None,
-        model_name: Optional[str] = None,
-        model_version: Optional[str] = None,
-        dataset_id: Optional[str] = None,
-        transformer_image: Optional[str] = cog_config.TRANSFORMER_BASE_IMAGE,
-        transformer_parameters: Optional[dict] = None,
-        protocol_version: Optional[str] = None,
-        namespace: Optional[str] = None,
-        model_format: Optional[str] = None,
-        canary_traffic_percent: Optional[int] = None,
-        model_type: Optional[str] = None,
+        model_id: str | None = None,
+        artifact_path: str | None = None,
+        model_name: str | None = None,
+        model_version: str | None = None,
+        dataset_id: str | None = None,
+        transformer_image: str | None = cog_config.TRANSFORMER_BASE_IMAGE,
+        transformer_parameters: dict | None = None,
+        protocol_version: str | None = None,
+        namespace: str | None = None,
+        model_format: str | None = None,
+        canary_traffic_percent: int | None = None,
+        model_type: str | None = None,
     ) -> str:
         """
         High-level update for an existing InferenceService.
@@ -1453,9 +1398,7 @@ class ServingManager:
                 raise
 
             # Case 1: Traffic-only update (promotion/disable)
-            if canary_traffic_percent is not None and not (
-                model_id or model_name or model_version or artifact_path
-            ):
+            if canary_traffic_percent is not None and not (model_id or model_name or model_version or artifact_path):
                 logger.info(
                     "Applying traffic-only update for InferenceService '%s' to %s%%.",
                     isvc_name,
@@ -1465,11 +1408,7 @@ class ServingManager:
                 # Validate canary before applying changes
                 self._validate_canary(isvc, isvc_name, canary_traffic_percent)
 
-                patch_body = {
-                    "spec": {
-                        "predictor": {"canaryTrafficPercent": canary_traffic_percent}
-                    }
-                }
+                patch_body = {"spec": {"predictor": {"canaryTrafficPercent": canary_traffic_percent}}}
                 self.update_isvc(isvc_name, patch_body, namespace)
                 msg = f"Updated traffic to {canary_traffic_percent}% for InferenceService '{isvc_name}'."
                 logger.info("%s", msg)
@@ -1484,9 +1423,7 @@ class ServingManager:
                 model_version=model_version,
             )
 
-            transformer_env = self._get_transformer_env(
-                dataset_id, transformer_image, transformer_parameters
-            )
+            transformer_env = self._get_transformer_env(dataset_id, transformer_image, transformer_parameters)
 
             model_uri = model_details["model_uri"]
             logger.info(
@@ -1509,7 +1446,7 @@ class ServingManager:
                 annot["model_type"] = model_type
 
             # --- Model patch ---
-            model_patch: Dict[str, Any] = {}
+            model_patch: dict[str, Any] = {}
             if model_uri:
                 model_patch["storageUri"] = model_uri
             if model_format:
@@ -1517,7 +1454,7 @@ class ServingManager:
             if protocol_version:
                 model_patch["protocolVersion"] = protocol_version
 
-            predictor_patch: Dict[str, Any] = {"model": model_patch}
+            predictor_patch: dict[str, Any] = {"model": model_patch}
 
             # Canary rollout
             if canary_traffic_percent is not None:
@@ -1529,16 +1466,14 @@ class ServingManager:
                 predictor_patch["canary"] = {"model": model_patch}
                 predictor_patch["canaryTrafficPercent"] = canary_traffic_percent
 
-            patch_body: Dict[str, Any] = {
+            patch_body: dict[str, Any] = {
                 "metadata": {"annotations": annot},
                 "spec": {"predictor": predictor_patch},
             }
 
             # Transformer
             if transformer_env:
-                env_list = [
-                    {"name": k, "value": str(v)} for k, v in transformer_env.items()
-                ]
+                env_list = [{"name": k, "value": str(v)} for k, v in transformer_env.items()]
                 patch_body["spec"]["transformer"] = {
                     "containers": [
                         {
@@ -1577,17 +1512,17 @@ class ServingManager:
     def deploy_model(
         self,
         model_id: str = None,
-        isvc_name: Optional[str] = None,
+        isvc_name: str | None = None,
         artifact_path: str = None,
         model_name: str = None,
         model_version: str = None,
         dataset_id: str = None,
         transformer_image: str = cog_config.TRANSFORMER_BASE_IMAGE,
-        transformer_parameters: Dict[str, Any] = None,
+        transformer_parameters: dict[str, Any] = None,
         protocol_version: str = None,
         model_format: str = None,
-        namespace: Optional[str] = None,
-        model_type: Optional[str] = None,
+        namespace: str | None = None,
+        model_type: str | None = None,
     ):
         """
         High-level entrypoint to serve a model:
@@ -1644,9 +1579,7 @@ class ServingManager:
             )
             model_uri = model_details["model_uri"]
 
-            transformer_env = self._get_transformer_env(
-                dataset_id, transformer_image, transformer_parameters
-            )
+            transformer_env = self._get_transformer_env(dataset_id, transformer_image, transformer_parameters)
 
             model_format = model_format or detect_model_format(model_uri=model_uri)
 
@@ -1697,9 +1630,9 @@ class ServingManager:
 
     def list_models(
         self,
-        namespace: Optional[str] = None,
-        isvc_name: Optional[str] = None,
-    ) -> Optional[List[Dict[str, Any]]]:
+        namespace: str | None = None,
+        isvc_name: str | None = None,
+    ) -> list[dict[str, Any]] | None:
         """
         Get served model(s) information from InferenceService CRDs.
 
@@ -1738,32 +1671,28 @@ class ServingManager:
             >>> print(model)
         """
         ns = namespace or common.get_namespace()
-        logger.info(
-            "Fetching served models in namespace=%s (isvc_name=%s)", ns, isvc_name
-        )
+        logger.info("Fetching served models in namespace=%s (isvc_name=%s)", ns, isvc_name)
 
-        def _get_single_isvc_info(isvc_obj: dict) -> Optional[List[Dict[str, Any]]]:
+        def _get_single_isvc_info(isvc_obj: dict) -> list[dict[str, Any]] | None:
             if not isvc_obj:
                 return None
             info = self._process_isvc(isvc_obj)
             return [info] if info else None
 
-        def _get_all_isvc_info(resp: dict) -> List[Dict[str, Any]]:
+        def _get_all_isvc_info(resp: dict) -> list[dict[str, Any]]:
             if isinstance(resp, dict) and "items" in resp:
                 isvc_list = resp["items"]
             else:
                 isvc_list = []
 
-            served_models: List[Dict[str, Any]] = []
+            served_models: list[dict[str, Any]] = []
             for isvc in isvc_list:
                 if isinstance(isvc, dict):
                     info = self._process_isvc(isvc)
                     if info:
                         served_models.append(info)
 
-            served_models.sort(
-                key=lambda x: x.get("creation_timestamp") or "", reverse=True
-            )
+            served_models.sort(key=lambda x: x.get("creation_timestamp") or "", reverse=True)
             return served_models
 
         try:
@@ -1782,10 +1711,7 @@ class ServingManager:
                     # Wrap any other API error
                     CogflowErrorHandler.handle_exception(
                         e,
-                        context=(
-                            f"Get InferenceService '{isvc_name}' "
-                            f"in namespace '{ns}' for get_served_models"
-                        ),
+                        context=(f"Get InferenceService '{isvc_name}' in namespace '{ns}' for get_served_models"),
                         raise_as=CogflowConnectionError,
                         re_raise=True,
                     )
@@ -1806,9 +1732,7 @@ class ServingManager:
 
         except ApiException as e:
             if getattr(e, "status", None) == 404:
-                logger.info(
-                    "No InferenceServices found in namespace '%s' (404 returned).", ns
-                )
+                logger.info("No InferenceServices found in namespace '%s' (404 returned).", ns)
                 return None
             CogflowErrorHandler.handle_exception(
                 e,
@@ -1842,15 +1766,3 @@ for attr_name in dir(ServingManager):
         globals()[attr_name] = getattr(_serving, attr_name)
 
 # Expose async methods from AsyncServingManager
-from .async_serving import (  # noqa: E402
-    async_deploy_model,
-    async_deploy_llm,
-    async_serve_llm,
-    async_update_model,
-    async_delete_isvc,
-    async_list_models,
-    async_get_isvc,
-    async_update_isvc,
-    async_restart_isvc,
-    async_create_isvc,
-)

@@ -18,7 +18,6 @@ from cogflow.agent.compile import to_python
 from cogflow.agent.ir.model import IREdge, IRGraph, IRNode, IRPort, IRStateField
 from cogflow.agent.parse.flowise import from_file
 
-
 _FAKE_MODULE_COUNTER = 0
 
 
@@ -196,7 +195,7 @@ def test_sticky_note_is_skipped():
     )
     src = to_python.to_source(graph)
     assert "sticky_0" not in src  # not registered as a node
-    assert "node_r0" in src       # the real reply node IS rendered
+    assert "node_r0" in src  # the real reply node IS rendered
 
 
 def test_unknown_node_is_passthrough_keeping_topology_flowing():

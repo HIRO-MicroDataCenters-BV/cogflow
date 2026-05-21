@@ -64,9 +64,7 @@ def test_runnables_reexports():
     inc: Runnable = RunnableLambda(lambda x: x + 1)
     assert inc.invoke(1) == 2
 
-    pair = RunnableParallel(
-        a=RunnableLambda(lambda x: x), b=RunnableLambda(lambda x: x * 2)
-    )
+    pair = RunnableParallel(a=RunnableLambda(lambda x: x), b=RunnableLambda(lambda x: x * 2))
     out = pair.invoke(3)
     assert out == {"a": 3, "b": 6}
 

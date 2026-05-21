@@ -22,8 +22,7 @@ try:
     from langgraph.graph import END, START
 except ModuleNotFoundError as _exc:  # pragma: no cover - install-time guard
     raise ModuleNotFoundError(
-        f"cogflow.agent requires `{_exc.name}`. "
-        "Install with `pip install cogflow[agent]`."
+        f"cogflow.agent requires `{_exc.name}`. Install with `pip install cogflow[agent]`."
     ) from _exc
 
 try:

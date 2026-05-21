@@ -1,12 +1,11 @@
 import pytest
-from uuid import UUID
 
 from cogflow.core.datasets import DatasetManager
 from cogflow.utils.exceptions import (
-    CogflowValidationError,
-    CogflowConnectionError,
     CogflowArtifactError,
+    CogflowConnectionError,
     CogflowDatasetError,
+    CogflowValidationError,
 )
 
 # ============================================================

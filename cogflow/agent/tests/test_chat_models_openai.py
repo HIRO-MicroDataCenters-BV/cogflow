@@ -59,8 +59,9 @@ def test_openai_reexport_resolves_to_real_chatopenai():
     # Defensive: clear any prior shadow before the real import.
     sys.modules.pop("cogflow.agent.chat_models.openai", None)
 
-    from cogflow.agent.chat_models.openai import ChatOpenAI
     from langchain_openai import ChatOpenAI as _Upstream
+
+    from cogflow.agent.chat_models.openai import ChatOpenAI
 
     assert ChatOpenAI is _Upstream
 

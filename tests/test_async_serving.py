@@ -5,12 +5,12 @@ All Kubernetes I/O is mocked via kubernetes_asyncio so tests
 do not require a real cluster.
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from cogflow.utils import common
 import cogflow.core.async_serving as async_serving_module
-
+from cogflow.utils import common
 
 # ---------------------------------------------------------------------
 # FIXTURES
@@ -86,9 +86,7 @@ def async_serving(monkeypatch, fake_async_api):
     monkeypatch.setattr(common, "get_namespace", lambda: "test-ns", raising=True)
     # Pre-mark the sync flag so the singleton doesn't try to load config
     common._k8s_loaded_flag = True
-    monkeypatch.setattr(
-        async_serving_module, "_ASYNC_K8S_CONFIG_LOADED", True, raising=True
-    )
+    monkeypatch.setattr(async_serving_module, "_ASYNC_K8S_CONFIG_LOADED", True, raising=True)
     mgr = async_serving_module.AsyncServingManager()
     mgr._api = fake_async_api  # Bypass _get_api()
     return mgr
@@ -138,9 +136,7 @@ async def test_async_restart_isvc(async_serving, fake_async_api):
 
 
 @pytest.mark.asyncio
-async def test_async_deploy_model_with_model_type(
-    monkeypatch, async_serving, fake_async_api
-):
+async def test_async_deploy_model_with_model_type(monkeypatch, async_serving, fake_async_api):
     """
     async deploy_model should set model_type as an ISVC annotation
     when provided.
@@ -189,9 +185,7 @@ async def test_async_deploy_model_with_model_type(
 
 
 @pytest.mark.asyncio
-async def test_async_deploy_model_without_model_type(
-    monkeypatch, async_serving, fake_async_api
-):
+async def test_async_deploy_model_without_model_type(monkeypatch, async_serving, fake_async_api):
     """
     async deploy_model should NOT set model_type annotation when not provided.
     """
@@ -210,9 +204,7 @@ async def test_async_deploy_model_without_model_type(
         lambda: (lambda **_: "onnx", fake_get_model_details),
         raising=True,
     )
-    monkeypatch.setattr(
-        async_serving, "_get_transformer_env", lambda *args, **kwargs: {}, raising=True
-    )
+    monkeypatch.setattr(async_serving, "_get_transformer_env", lambda *args, **kwargs: {}, raising=True)
 
     await async_serving.deploy_model(model_id="11111111-1111-1111-1111-111111111111")
 
@@ -278,10 +270,7 @@ async def test_async_deploy_llm_emits_expected_spec(async_serving, fake_async_ap
         isvc_name="qwen25-coder",
         served_model_name="qwen25-coder",
         max_model_len=4096,
-        tolerations=[
-            {"key": "storage-type", "operator": "Equal",
-             "value": "local", "effect": "NoSchedule"}
-        ],
+        tolerations=[{"key": "storage-type", "operator": "Equal", "value": "local", "effect": "NoSchedule"}],
         annotations={"model_type": "llm"},
     )
 
@@ -306,9 +295,7 @@ async def test_async_deploy_llm_emits_expected_spec(async_serving, fake_async_ap
 
 
 @pytest.mark.asyncio
-async def test_async_serve_llm_registers_and_deploys(
-    async_serving, fake_async_api, monkeypatch
-):
+async def test_async_serve_llm_registers_and_deploys(async_serving, fake_async_api, monkeypatch):
     """async_serve_llm should register the catalog entry (async, via
     async_register_llm_catalog_entry — sync version would deadlock the
     event loop when caller and /models/log share a worker) and then

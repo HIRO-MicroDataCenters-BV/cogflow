@@ -122,9 +122,7 @@ class FakeAsyncResponse:
             status_code=self.status_code,
             request=request,
         )
-        raise _httpx.HTTPStatusError(
-            f"{self.status_code} error", request=request, response=response
-        )
+        raise _httpx.HTTPStatusError(f"{self.status_code} error", request=request, response=response)
 
 
 class _FakeAsyncClient:
@@ -198,9 +196,7 @@ async def test_make_async_post_request_success_with_json(mocker):
     response = FakeAsyncResponse(is_success=True, json_data={"a": 1})
     mocker.patch(
         "cogflow.utils.network.httpx.AsyncClient",
-        side_effect=lambda **_: _FakeAsyncClient(
-            post_return=response, captured=captured
-        ),
+        side_effect=lambda **_: _FakeAsyncClient(post_return=response, captured=captured),
     )
 
     result = await network.make_async_post_request(
@@ -219,9 +215,7 @@ async def test_make_async_post_request_no_body(mocker):
     response = FakeAsyncResponse(is_success=True, json_data={})
     mocker.patch(
         "cogflow.utils.network.httpx.AsyncClient",
-        side_effect=lambda **_: _FakeAsyncClient(
-            post_return=response, captured=captured
-        ),
+        side_effect=lambda **_: _FakeAsyncClient(post_return=response, captured=captured),
     )
 
     await network.make_async_post_request(url="http://x")
@@ -236,9 +230,7 @@ async def test_make_async_post_request_retries_then_raises(mocker):
     response = FakeAsyncResponse(is_success=False, status_code=400, text="bad")
     mocker.patch(
         "cogflow.utils.network.httpx.AsyncClient",
-        side_effect=lambda **_: _FakeAsyncClient(
-            post_return=response, captured=captured
-        ),
+        side_effect=lambda **_: _FakeAsyncClient(post_return=response, captured=captured),
     )
 
     with pytest.raises(RetryError):
@@ -490,9 +482,7 @@ async def test_make_async_get_request_success(mocker):
     response = FakeAsyncResponse(is_success=True, json_data={"v": 1})
     mocker.patch(
         "cogflow.utils.network.httpx.AsyncClient",
-        side_effect=lambda **_: _FakeAsyncClient(
-            get_return=response, captured=captured
-        ),
+        side_effect=lambda **_: _FakeAsyncClient(get_return=response, captured=captured),
     )
     assert await network.make_async_get_request("http://x") == {"v": 1}
     assert captured[0]["verb"] == "get"
@@ -504,9 +494,7 @@ async def test_make_async_get_request_with_path_params(mocker):
     response = FakeAsyncResponse(is_success=True, json_data={})
     mocker.patch(
         "cogflow.utils.network.httpx.AsyncClient",
-        side_effect=lambda **_: _FakeAsyncClient(
-            get_return=response, captured=captured
-        ),
+        side_effect=lambda **_: _FakeAsyncClient(get_return=response, captured=captured),
     )
     await network.make_async_get_request("http://x", path_params="123")
     assert captured[0]["url"] == "http://x/123"
@@ -532,13 +520,9 @@ async def test_make_async_get_request_pagination(mocker):
     )
     mocker.patch(
         "cogflow.utils.network.httpx.AsyncClient",
-        side_effect=lambda **_: _FakeAsyncClient(
-            get_responses=[page1, page2], captured=captured
-        ),
+        side_effect=lambda **_: _FakeAsyncClient(get_responses=[page1, page2], captured=captured),
     )
-    result = await network.make_async_get_request(
-        "http://x", query_params={"limit": 2}, paginate=True
-    )
+    result = await network.make_async_get_request("http://x", query_params={"limit": 2}, paginate=True)
     assert result == [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]
     # Second request should carry page=2.
     assert captured[1]["params"]["page"] == 2
@@ -551,9 +535,7 @@ async def test_make_async_delete_request_success(mocker, status):
     response = FakeAsyncResponse(is_success=True, status_code=status)
     mocker.patch(
         "cogflow.utils.network.httpx.AsyncClient",
-        side_effect=lambda **_: _FakeAsyncClient(
-            delete_return=response, captured=captured
-        ),
+        side_effect=lambda **_: _FakeAsyncClient(delete_return=response, captured=captured),
     )
     assert await network.make_async_delete_request("http://x") is True
 
@@ -575,9 +557,7 @@ async def test_make_async_patch_request_success(mocker):
     response = FakeAsyncResponse(is_success=True, json_data={"updated": True})
     mocker.patch(
         "cogflow.utils.network.httpx.AsyncClient",
-        side_effect=lambda **_: _FakeAsyncClient(
-            patch_return=response, captured=captured
-        ),
+        side_effect=lambda **_: _FakeAsyncClient(patch_return=response, captured=captured),
     )
     result = await network.make_async_patch_request("http://x", data={"a": 1})
     assert result == {"updated": True}
@@ -612,9 +592,7 @@ async def test_make_async_get_request_raw_failure(mocker):
 
     mocker.patch(
         "cogflow.utils.network.httpx.AsyncClient",
-        side_effect=lambda **_: _FakeAsyncClient(
-            get_raises=_httpx.ConnectError("boom")
-        ),
+        side_effect=lambda **_: _FakeAsyncClient(get_raises=_httpx.ConnectError("boom")),
     )
     assert await network.make_async_get_request_raw("http://x") is None
 
@@ -646,9 +624,7 @@ async def test_make_async_health_check_request_exception(mocker):
 
     mocker.patch(
         "cogflow.utils.network.httpx.AsyncClient",
-        side_effect=lambda **_: _FakeAsyncClient(
-            get_raises=_httpx.ConnectError("boom")
-        ),
+        side_effect=lambda **_: _FakeAsyncClient(get_raises=_httpx.ConnectError("boom")),
     )
     assert await network.make_async_health_check_request("http://x") is False
 

@@ -17,9 +17,9 @@ to remain import-safe across all submodules.
 import os
 import re
 from datetime import datetime
-from typing import Any, Dict
-
+from typing import Any
 from uuid import UUID
+
 from kubernetes import client, config
 
 from .logging import get_logger
@@ -51,7 +51,7 @@ def custom_serializer(obj: Any) -> str:
     raise TypeError(f"Type {type(obj)} not serializable")
 
 
-def serialize_artifacts(artifacts: Dict[str, Any]) -> Dict[str, Any]:
+def serialize_artifacts(artifacts: dict[str, Any]) -> dict[str, Any]:
     """
     Convert artifacts into a JSON-serializable format for API transmission.
 
@@ -102,9 +102,7 @@ def is_valid_s3_uri(uri: str) -> bool:
 # 🔹 UUID Utilities
 # -------------------------------------------------------------------------
 UUID_COMPACT_RE = re.compile(r"^[0-9a-fA-F]{32}$")
-UUID_HYPHEN_RE = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
+UUID_HYPHEN_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 
 
 def normalize_uuid(value) -> str:
@@ -147,8 +145,8 @@ def normalize_uuid(value) -> str:
     # Final fallback — try parsing anyway
     try:
         return str(UUID(value))
-    except Exception:
-        raise ValueError(f"Invalid UUID value: {value}")
+    except Exception as exc:
+        raise ValueError(f"Invalid UUID value: {value}") from exc
 
 
 def uuid_to_hex(value: str) -> str:
@@ -172,9 +170,9 @@ def uuid_to_hex(value: str) -> str:
         hex_value = UUID(value).hex
         logger.debug("Converted UUID to hex: %s", hex_value)
         return hex_value
-    except (ValueError, AttributeError, TypeError):
+    except (ValueError, AttributeError, TypeError) as exc:
         logger.error("Invalid UUID value: %s", value)
-        raise ValueError(f"Invalid UUID value: {value!r}")
+        raise ValueError(f"Invalid UUID value: {value!r}") from exc
 
 
 # -------------------------------------------------------------------------
@@ -205,7 +203,6 @@ def get_namespace() -> str:
         try:
             with open(
                 "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
-                "r",
                 encoding="utf-8",
             ) as f:
                 namespace = f.read().strip()
@@ -244,7 +241,7 @@ def load_k8s_config() -> None:
         try:
             config.load_kube_config()
             logger.debug("Loaded local kubeconfig file.")
-        except config.config_exception.ConfigException as e:
+        except config.config_exception.ConfigException:
             logger.error("Failed to load Kubernetes configuration.")
             raise
 
@@ -274,9 +271,7 @@ def get_current_user() -> str:
         owner = annotations.get("owner")
 
         if not owner:
-            raise RuntimeError(
-                f"No owner annotation found in namespace: {namespace_name}"
-            )
+            raise RuntimeError(f"No owner annotation found in namespace: {namespace_name}")
 
         logger.debug("Resolved namespace owner: %s", owner)
         return owner

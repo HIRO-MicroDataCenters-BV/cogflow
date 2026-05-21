@@ -9,9 +9,7 @@ This aggregates the user-facing functions from:
 from uuid import UUID
 
 # Only import submodules — NOT functions
-from . import components
-from . import orchestration
-from . import inspection
+from . import components, inspection, orchestration
 
 # ===========================================================
 # Public API (manually exposed)

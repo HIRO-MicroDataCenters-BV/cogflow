@@ -9,7 +9,8 @@ declares state instead as a list of ``{key, value}`` pairs on the Start node's
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any, Iterable, get_args, get_origin, get_type_hints
+from collections.abc import Iterable
+from typing import Annotated, Any, get_args, get_origin, get_type_hints
 
 from langgraph.graph import MessagesState as _LangGraphMessagesState
 from langgraph.graph import add_messages as _add_messages

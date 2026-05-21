@@ -10,7 +10,8 @@ Two ways to supply the child graph:
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from collections.abc import Callable, Mapping
+from typing import Any
 
 from ..ir.model import IRNode
 from .base import NodeFactory
@@ -48,9 +49,7 @@ class ExecuteFlowFactory(NodeFactory):
             if live is None:
                 return {}
             child_input = (
-                {k: state.get(k) for k in input_keys}
-                if isinstance(input_keys, list) and input_keys
-                else dict(state)
+                {k: state.get(k) for k in input_keys} if isinstance(input_keys, list) and input_keys else dict(state)
             )
             result = live.invoke(child_input)
             return {output_key: result}

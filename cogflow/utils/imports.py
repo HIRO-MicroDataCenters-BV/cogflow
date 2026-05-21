@@ -6,6 +6,7 @@ until they're actually needed.
 """
 
 from importlib import import_module
+
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -29,9 +30,6 @@ def lazy_import(module_name: str):
         logger.debug("Lazily imported dependency: %s", module_name)
         return module
     except ModuleNotFoundError as e:
-        msg = (
-            f"⚠️ Missing optional dependency '{module_name}'.\n"
-            f"Install it with: pip install cogflow[{module_name}]"
-        )
+        msg = f"⚠️ Missing optional dependency '{module_name}'.\nInstall it with: pip install cogflow[{module_name}]"
         logger.error(msg)
         raise ImportError(msg) from e
