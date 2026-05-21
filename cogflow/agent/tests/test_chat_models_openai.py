@@ -18,6 +18,7 @@ in the SUT deterministically fails regardless of the test environment.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import sys
 import types
 
