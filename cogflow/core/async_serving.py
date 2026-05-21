@@ -561,6 +561,8 @@ class AsyncServingManager:
         trust_remote_code: bool = False,
         gpu_memory_utilization: float | None = None,
         max_num_seqs: int | None = None,
+        quantization: str | None = None,
+        kv_cache_dtype: str | None = None,
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
         node_selector: dict[str, str] | None = None,
@@ -611,6 +613,8 @@ class AsyncServingManager:
             min_replicas=min_replicas,
             max_replicas=max_replicas,
             hf_secret_name=hf_secret_name,
+            quantization=quantization,
+            kv_cache_dtype=kv_cache_dtype,
         )
         predictor_spec, effective_annotations = sync_manager_cls._apply_raw_deployment_defaults(
             predictor_spec, annotations
@@ -678,6 +682,8 @@ class AsyncServingManager:
         trust_remote_code: bool = False,
         gpu_memory_utilization: float | None = None,
         max_num_seqs: int | None = None,
+        quantization: str | None = None,
+        kv_cache_dtype: str | None = None,
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
         node_selector: dict[str, str] | None = None,
@@ -790,6 +796,8 @@ class AsyncServingManager:
             trust_remote_code=trust_remote_code,
             gpu_memory_utilization=gpu_memory_utilization,
             max_num_seqs=max_num_seqs,
+            quantization=quantization,
+            kv_cache_dtype=kv_cache_dtype,
             resources=resources,
             tolerations=tolerations,
             node_selector=node_selector,

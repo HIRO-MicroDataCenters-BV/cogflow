@@ -54,6 +54,29 @@ def _ensure_k8s_config_loaded():
     common._k8s_loaded_flag = True
 
 
+# Sentinel values that mean "no flag emitted" for quantization /
+# kv_cache_dtype runtime args. ``"none"`` and ``"auto"`` aren't real
+# vLLM CLI values — they're recommender-side labels for the absence of
+# a runtime cast — so emitting them would either no-op (best case) or
+# break model load (vLLM rejects ``--quantization=auto``). The empty
+# string is included because a stringly-typed config layer can
+# substitute it for unset.
+_LLM_ARG_SENTINELS = frozenset({"", "none", "auto"})
+
+
+def _is_unset_sentinel(value: str | None) -> bool:
+    """Return True when ``value`` should suppress the corresponding flag.
+
+    Matches case-insensitively and ignores surrounding whitespace so the
+    diff-clean guarantee holds when callers normalise to ``"AUTO"`` or
+    ``" none "``. Real CLI values (e.g. ``"fp8"``, ``"fp8_e4m3"``) are
+    preserved untouched and emitted verbatim.
+    """
+    if value is None:
+        return True
+    return value.strip().lower() in _LLM_ARG_SENTINELS
+
+
 # =====================================================================
 #   Serving Manager (Kubernetes-native)
 # =====================================================================
@@ -697,6 +720,8 @@ class ServingManager:
         trust_remote_code: bool,
         gpu_memory_utilization: float | None,
         max_num_seqs: int | None,
+        quantization: str | None = None,
+        kv_cache_dtype: str | None = None,
     ) -> list[str]:
         """Whitelisted runtime args passed into the HF runtime container.
 
@@ -712,7 +737,12 @@ class ServingManager:
           ``--max_model_len``, ``--dtype``, ``--trust_remote_code``.
         - Hyphen flags fall through to vLLM's CLI
           (``--tensor-parallel-size``, ``--gpu-memory-utilization``,
-          ``--max-num-seqs``).
+          ``--max-num-seqs``, ``--quantization``, ``--kv-cache-dtype``).
+
+        ``quantization`` and ``kv_cache_dtype`` are the runtime-cast knobs
+        the recommender's fallback ladder relies on (fp8/AWQ weights and
+        fp8 KV cache). Emitted only when set so unrelated callers keep
+        emitting diff-clean ISVCs.
         """
         args: list[str] = [f"--model_name={served_model_name}"]
         if max_model_len is not None:
@@ -727,6 +757,25 @@ class ServingManager:
             args.append(f"--gpu-memory-utilization={gpu_memory_utilization}")
         if max_num_seqs is not None:
             args.append(f"--max-num-seqs={max_num_seqs}")
+        # ``"none"`` / ``"auto"`` (and the empty string) are recommender-
+        # side sentinels for "vLLM should decide" — they aren't real
+        # vLLM CLI values, so treat them like an unset kwarg and emit
+        # nothing. Matched case-insensitively and after stripping
+        # surrounding whitespace so a slightly noisy config layer
+        # (``"AUTO"``, ``" none "``) still produces the same ISVC as an
+        # unset field. Applied symmetrically to both flags so the
+        # diff-clean guarantee holds regardless of which sentinel the
+        # caller picks.
+        normalized_quantization = (
+            quantization.strip() if quantization is not None else None
+        )
+        if not _is_unset_sentinel(normalized_quantization):
+            args.append(f"--quantization={normalized_quantization}")
+        normalized_kv_cache_dtype = (
+            kv_cache_dtype.strip() if kv_cache_dtype is not None else None
+        )
+        if not _is_unset_sentinel(normalized_kv_cache_dtype):
+            args.append(f"--kv-cache-dtype={normalized_kv_cache_dtype}")
         return args
 
     @staticmethod
@@ -746,6 +795,8 @@ class ServingManager:
         min_replicas: int,
         max_replicas: int,
         hf_secret_name: str | None,
+        quantization: str | None = None,
+        kv_cache_dtype: str | None = None,
     ) -> dict[str, Any]:
         # Replica bounds must be internally consistent before we hand the
         # ISVC to KServe — otherwise the CRD is rejected at admission (or
@@ -793,6 +844,8 @@ class ServingManager:
             trust_remote_code=trust_remote_code,
             gpu_memory_utilization=gpu_memory_utilization,
             max_num_seqs=max_num_seqs,
+            quantization=quantization,
+            kv_cache_dtype=kv_cache_dtype,
         )
         if is_hf_source:
             # --model_id comes first for readability in the emitted YAML
@@ -878,6 +931,8 @@ class ServingManager:
         trust_remote_code: bool = False,
         gpu_memory_utilization: float | None = None,
         max_num_seqs: int | None = None,
+        quantization: str | None = None,
+        kv_cache_dtype: str | None = None,
         # scheduling / scaling
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
@@ -943,6 +998,8 @@ class ServingManager:
             min_replicas=min_replicas,
             max_replicas=max_replicas,
             hf_secret_name=hf_secret_name,
+            quantization=quantization,
+            kv_cache_dtype=kv_cache_dtype,
         )
         predictor_spec, effective_annotations = ServingManager._apply_raw_deployment_defaults(
             predictor_spec, annotations
@@ -1011,6 +1068,8 @@ class ServingManager:
         trust_remote_code: bool = False,
         gpu_memory_utilization: float | None = None,
         max_num_seqs: int | None = None,
+        quantization: str | None = None,
+        kv_cache_dtype: str | None = None,
         # scheduling / scaling
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
@@ -1158,6 +1217,8 @@ class ServingManager:
             trust_remote_code=trust_remote_code,
             gpu_memory_utilization=gpu_memory_utilization,
             max_num_seqs=max_num_seqs,
+            quantization=quantization,
+            kv_cache_dtype=kv_cache_dtype,
             resources=resources,
             tolerations=tolerations,
             node_selector=node_selector,
