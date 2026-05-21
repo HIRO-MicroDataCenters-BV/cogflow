@@ -1,0 +1,60 @@
+"""Provider-gate tests for ``cogflow.agent.chat_models.openai``.
+
+Two cases:
+ 1. ``langchain-openai`` not installed: importing the module raises a
+    ``ModuleNotFoundError`` whose message contains the actionable hint
+    ``pip install cogflow[openai]``.
+ 2. ``langchain-openai`` is installed: the re-export resolves to the
+    real ``ChatOpenAI`` class.
+
+The "uninstalled" case is the same shape as the OTel adapter gate test
+(``test_tracing_otel.py``). ``sys.modules[X] = None`` is not reliable
+when X is actually present on the host — Python may re-import it. We
+shadow the top-level ``langchain_openai`` package with a plain
+``types.ModuleType`` so the ``from langchain_openai import ChatOpenAI``
+in the SUT deterministically fails regardless of the test environment.
+"""
+
+from __future__ import annotations
+
+import importlib
+import sys
+import types
+
+import pytest
+
+
+def _has_langchain_openai() -> bool:
+    try:
+        return importlib.util.find_spec("langchain_openai") is not None
+    except (ModuleNotFoundError, ImportError, ValueError):
+        return False
+
+
+def test_openai_reexport_raises_friendly_error_when_uninstalled(monkeypatch):
+    # Shadow the top-level package with a plain module (no ``__path__``)
+    # so any ``from langchain_openai import ChatOpenAI`` deterministically
+    # raises ``ModuleNotFoundError`` regardless of what's installed locally.
+    fake_root = types.ModuleType("langchain_openai")
+    monkeypatch.setitem(sys.modules, "langchain_openai", fake_root)
+
+    # Drop any cached cogflow.agent.chat_models.openai so the next import
+    # re-runs the module body against the shadowed langchain_openai.
+    monkeypatch.delitem(sys.modules, "cogflow.agent.chat_models.openai", raising=False)
+
+    with pytest.raises(ModuleNotFoundError, match=r"cogflow\[openai\]"):
+        importlib.import_module("cogflow.agent.chat_models.openai")
+
+
+@pytest.mark.skipif(
+    not _has_langchain_openai(),
+    reason="langchain-openai not installed; gated path is covered by the other test",
+)
+def test_openai_reexport_resolves_to_real_chatopenai():
+    # Defensive: clear any prior shadow before the real import.
+    sys.modules.pop("cogflow.agent.chat_models.openai", None)
+
+    from cogflow.agent.chat_models.openai import ChatOpenAI
+    from langchain_openai import ChatOpenAI as _Upstream
+
+    assert ChatOpenAI is _Upstream

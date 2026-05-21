@@ -23,6 +23,7 @@ The agent SDK ships as an optional extra of cogflow:
 ```bash
 pip install "cogflow[agent]"        # core: langgraph + langchain-core
 pip install "cogflow[agent-otel]"   # adds OpenTelemetry tracing (already depends on agent)
+pip install "cogflow[openai]"       # adds langchain-openai for cogflow.agent.chat_models.openai
 pip install "cogflow[full]"         # one-shot: everything above in a single command
 ```
 
