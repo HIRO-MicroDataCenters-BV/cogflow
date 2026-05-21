@@ -35,9 +35,9 @@ future cogflow agent) reach zero direct LangChain/LangGraph imports.
 | `langchain_core.messages.{BaseMessage, AIMessage, HumanMessage, SystemMessage, AIMessageChunk, ToolMessage}` | typing `chat_history`, constructing message records, filtering streamed chunks in CLI / Chainlit | **new** `cogflow.agent.messages` |
 | `langchain_core.prompts.{ChatPromptTemplate, MessagesPlaceholder, PromptTemplate}` | building `prompt | llm` chains in agent nodes | **new** `cogflow.agent.prompts` |
 | `langchain_core.runnables.{Runnable, RunnableConfig, RunnableLambda, RunnablePassthrough, RunnableParallel}` | return-type annotation for chain factories, composition primitives | **new** `cogflow.agent.runnables` |
-| `langchain_core.language_models.fake_chat_models.{FakeListChatModel, GenericFakeChatModel}` | scripted LLM responses in unit tests | **new** `cogflow.agent.testing` |
+| `langchain_core.language_models.fake_chat_models.{FakeListChatModel, GenericFakeChatModel}` | scripted LLM responses in unit tests | **new** `cogflow.agent.fakes` |
 | `langgraph.checkpoint.base.BaseCheckpointSaver` | `isinstance(checkpointer, BaseCheckpointSaver)` checks + type annotations for optional checkpointer kwargs | add to existing `cogflow.agent.runtime` |
-| `langchain_openai.ChatOpenAI` (parallel: `langchain_anthropic.ChatAnthropic`, `langchain_google_genai.ChatGoogleGenerativeAI`, `langchain_ollama.ChatOllama`, …) | the production chat model instantiated by the agent | **new** `cogflow.agent.models.<provider>` per-provider submodules, gated by `cogflow[<provider>]` install extras |
+| `langchain_openai.ChatOpenAI` (parallel: `langchain_anthropic.ChatAnthropic`, `langchain_google_genai.ChatGoogleGenerativeAI`, `langchain_ollama.ChatOllama`, …) | the production chat model instantiated by the agent | **new** `cogflow.agent.chat_models.<provider>` per-provider submodules, gated by `cogflow[<provider>]` install extras |
 
 ## Proposed code
 
@@ -102,7 +102,11 @@ __all__ = [
 ]
 ```
 
-### `cogflow/agent/testing.py` (new)
+### `cogflow/agent/fakes.py` (new)
+
+Named `fakes` rather than `testing` so the module name doesn't read as
+"the cogflow.agent test suite" — the actual test suite lives under
+`cogflow/agent/tests/`.
 
 ```python
 """Test doubles for cogflow.agent users."""
@@ -128,10 +132,15 @@ __all__ = [
 ]
 ```
 
-### `cogflow/agent/models/__init__.py` (new namespace)
+### `cogflow/agent/chat_models/__init__.py` (new namespace)
+
+Named `chat_models` rather than `models` to avoid colliding with
+cogflow's top-level `cogflow.models` namespace, which already serves the
+MLflow-tracked ML model registry. Two different concepts ("ML model"
+vs "LLM chat client") deserve two different names.
 
 ```python
-"""Chat model re-exports, one submodule per provider.
+"""Chat-model re-exports, one submodule per provider.
 
 Each provider lives behind an optional install extra so the bare
 ``cogflow[agent]`` install doesn't drag in every LangChain provider
@@ -139,14 +148,20 @@ package.
 """
 ```
 
-### `cogflow/agent/models/openai.py` (new)
+### `cogflow/agent/chat_models/openai.py` (new)
+
+Catches the broader `ImportError` (not just `ModuleNotFoundError`)
+because `from langchain_openai import ChatOpenAI` can fail two ways:
+the package isn't installed (`ModuleNotFoundError`) or it's installed
+but the symbol is missing from a broken/incompatible version
+(`ImportError`). Both should surface the same friendly install hint.
 
 ```python
 try:
     from langchain_openai import ChatOpenAI
-except ModuleNotFoundError as _exc:  # pragma: no cover - install-time guard
+except ImportError as _exc:  # pragma: no cover - install-time guard
     raise ModuleNotFoundError(
-        "cogflow.agent.models.openai requires `langchain-openai`. "
+        "cogflow.agent.chat_models.openai requires `langchain-openai`. "
         "Install with `pip install cogflow[openai]`."
     ) from _exc
 
@@ -157,13 +172,13 @@ Parallel one-file modules for the other providers (each gated the same way):
 
 | File | Import | Install extra |
 |---|---|---|
-| `cogflow/agent/models/anthropic.py` | `from langchain_anthropic import ChatAnthropic` | `cogflow[anthropic]` |
-| `cogflow/agent/models/google.py` | `from langchain_google_genai import ChatGoogleGenerativeAI` | `cogflow[google]` |
-| `cogflow/agent/models/ollama.py` | `from langchain_ollama import ChatOllama` | `cogflow[ollama]` |
-| `cogflow/agent/models/vertex.py` | `from langchain_google_vertexai import ChatVertexAI` | `cogflow[vertex]` |
+| `cogflow/agent/chat_models/anthropic.py` | `from langchain_anthropic import ChatAnthropic` | `cogflow[anthropic]` |
+| `cogflow/agent/chat_models/google.py` | `from langchain_google_genai import ChatGoogleGenerativeAI` | `cogflow[google]` |
+| `cogflow/agent/chat_models/ollama.py` | `from langchain_ollama import ChatOllama` | `cogflow[ollama]` |
+| `cogflow/agent/chat_models/vertex.py` | `from langchain_google_vertexai import ChatVertexAI` | `cogflow[vertex]` |
 
-(Add providers incrementally based on demand — start with `openai` and
-`anthropic`; the others can land in follow-up PRs.)
+(Add providers incrementally based on demand — `openai` shipped first
+to unblock the hiro-iac port; the others can land in follow-up PRs.)
 
 ### `cogflow/agent/__init__.py` (touch)
 
@@ -188,17 +203,19 @@ import. Optional — pick the convention that matches the rest of the project.
 
 ```toml
 [project.optional-dependencies]
-agent     = ["langchain-core>=0.3.0", "langgraph>=0.2.0"]
-openai    = ["langchain-openai>=0.2.0"]
-anthropic = ["langchain-anthropic>=0.2.0"]
-google    = ["langchain-google-genai>=2.0.0"]
-ollama    = ["langchain-ollama>=0.2.0"]
-vertex    = ["langchain-google-vertexai>=2.0.0"]
+agent     = ["langgraph >=0.2,<0.5", "langchain-core >=0.3,<0.4"]
+openai    = ["cogflow[agent]", "langchain-openai >=0.2,<0.4"]
+anthropic = ["cogflow[agent]", "langchain-anthropic >=0.2,<0.4"]   # future
+google    = ["cogflow[agent]", "langchain-google-genai >=2.0,<3.0"] # future
+ollama    = ["cogflow[agent]", "langchain-ollama >=0.2,<0.4"]       # future
+vertex    = ["cogflow[agent]", "langchain-google-vertexai >=2.0,<3.0"]  # future
+full      = ["cogflow[agent-otel]", "cogflow[openai]"]
 ```
 
-The existing `cogflow[agent]` extra is unchanged. Provider extras are
-additive: `pip install cogflow[agent,openai]` brings in the OpenAI chat model
-on top of the agent SDK.
+The existing `cogflow[agent]` extra is unchanged. Provider extras
+self-reference `cogflow[agent]` so the SDK runtime is pulled
+transitively. `cogflow[full]` is the one-shot "the works" command;
+when a new provider extra lands it should append to `[full]`.
 
 ## Caller-side diff after this PR lands
 
@@ -212,8 +229,8 @@ For the hiro-iac port, the audit becomes:
 | `from langchain_core.prompts import ChatPromptTemplate` | `from cogflow.agent.prompts import ChatPromptTemplate` |
 | `from langchain_core.runnables import Runnable` | `from cogflow.agent.runnables import Runnable` |
 | `from langgraph.checkpoint.base import BaseCheckpointSaver` | `from cogflow.agent.runtime import BaseCheckpointSaver` |
-| `from langchain_core.language_models.fake_chat_models import FakeListChatModel` | `from cogflow.agent.testing import FakeListChatModel` |
-| `from langchain_openai import ChatOpenAI` | `from cogflow.agent.models.openai import ChatOpenAI` |
+| `from langchain_core.language_models.fake_chat_models import FakeListChatModel` | `from cogflow.agent.fakes import FakeListChatModel` |
+| `from langchain_openai import ChatOpenAI` | `from cogflow.agent.chat_models.openai import ChatOpenAI` |
 
 Net: zero direct `langchain*` / `langgraph*` imports in the downstream agent.
 
@@ -241,8 +258,8 @@ def test_runnables_reexports():
     r: Runnable = RunnableLambda(lambda x: x + 1)
     assert r.invoke(1) == 2
 
-def test_testing_reexports():
-    from cogflow.agent.testing import FakeListChatModel
+def test_fakes_reexports():
+    from cogflow.agent.fakes import FakeListChatModel
     m = FakeListChatModel(responses=["a", "b"])
     assert m.invoke("x").content == "a"
 
@@ -255,24 +272,32 @@ Provider-model modules are tested only for the gated `ModuleNotFoundError`
 shape:
 
 ```python
-# tests/test_models_openai.py
+# tests/test_chat_models_openai.py
 def test_openai_reexport_raises_friendly_error_when_uninstalled(monkeypatch):
-    import sys
-    monkeypatch.setitem(sys.modules, "langchain_openai", None)  # simulate uninstall
-    with pytest.raises(ModuleNotFoundError, match="cogflow\\[openai\\]"):
-        import importlib
-        importlib.reload(importlib.import_module("cogflow.agent.models.openai"))
+    # Shadow the top-level langchain_openai package with a plain (non-
+    # package) module so ``from langchain_openai import ChatOpenAI``
+    # deterministically fails regardless of what's installed on the host.
+    # The older ``monkeypatch.setitem(sys.modules, "langchain_openai", None)``
+    # approach was caught as flaky in PR #96 R3 — Python can re-import past
+    # the None sentinel when the real package is present.
+    import importlib, sys, types
+    monkeypatch.setitem(sys.modules, "langchain_openai", types.ModuleType("langchain_openai"))
+    monkeypatch.delitem(sys.modules, "cogflow.agent.chat_models.openai", raising=False)
+    with pytest.raises(ModuleNotFoundError, match=r"cogflow\[openai\]"):
+        importlib.import_module("cogflow.agent.chat_models.openai")
 ```
 
 ## Rollout
 
 1. Land the four trivial re-export modules (`messages`, `prompts`,
-   `runnables`, `testing`) plus the `BaseCheckpointSaver` line — these have
-   no install-extra story and unblock the bulk of caller-side rewrites.
-2. Land `cogflow.agent.models.openai` + the `cogflow[openai]` extra so the
-   first downstream agent (hiro-iac) can finish the migration.
-3. Add other provider modules in follow-ups, driven by which providers
-   downstream cogflow agents actually use.
+   `runnables`, `fakes`) plus the `BaseCheckpointSaver` line and
+   `cogflow.agent.chat_models.openai` + the `cogflow[openai]` extra —
+   all in one PR so the first downstream agent (hiro-iac) can finish
+   the migration without waiting on a second PR. **(Implemented in
+   PR #100.)**
+2. Add other provider modules (`anthropic`, `google`, `ollama`,
+   `vertex`) in follow-ups, driven by which providers downstream
+   cogflow agents actually use.
 
 ## Non-goals
 
