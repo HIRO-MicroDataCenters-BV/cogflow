@@ -254,6 +254,60 @@ def test_agent_single_shot_when_no_tools():
     assert out["messages"][0].content == "hi there"
 
 
+def test_agent_falls_through_to_second_entrypoint_when_first_rejects_model(monkeypatch):
+    """If ``langchain.agents.create_agent`` imports but rejects the model,
+    ``langgraph.prebuilt.create_react_agent`` must still be tried.
+
+    Without the for-loop fallback, users with both packages installed
+    could silently lose tool dispatch when only one factory accepts
+    their model shape. Stubs a fake ``langchain.agents.create_agent``
+    that always raises ``TypeError``, then verifies the agent still
+    runs the ReAct loop (which requires the langgraph fallback to fire).
+    """
+    import sys
+    import types
+
+    from langchain_core.tools import tool
+
+    rejecting_calls: list[None] = []
+
+    def _always_rejects(_model: Any, _tools: Any) -> Any:
+        rejecting_calls.append(None)
+        raise TypeError("intentionally rejects every model in this test")
+
+    # Build a minimal stub for ``langchain.agents`` so the factory's first
+    # ``from langchain.agents import create_agent`` import succeeds and
+    # captures the rejecting stub. Install it into sys.modules before
+    # invoking ``to_callable`` — undone by monkeypatch on teardown.
+    fake_langchain = types.ModuleType("langchain")
+    fake_langchain_agents = types.ModuleType("langchain.agents")
+    fake_langchain_agents.create_agent = _always_rejects  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "langchain", fake_langchain)
+    monkeypatch.setitem(sys.modules, "langchain.agents", fake_langchain_agents)
+
+    @tool
+    def echo(value: str) -> str:
+        """Echo the value back."""
+        return f"echoed-{value}"
+
+    model = _ToolCallingFakeModel(
+        responses=[
+            AIMessage(content="", tool_calls=[{"name": "echo", "args": {"value": "x"}, "id": "tc-1"}]),
+            AIMessage(content="done"),
+        ]
+    )
+    factory = AgentFactory(model=model, tools=[echo])
+    fn = factory.to_callable(IRNode(id="agent", type="agent", label="agent"))
+    out = fn({"messages": [HumanMessage(content="go")]})
+
+    # The first entrypoint must have been tried and rejected.
+    assert len(rejecting_calls) == 1, "langchain.agents.create_agent stub should have been invoked"
+    # The langgraph fallback must have succeeded — the ReAct loop ran and
+    # produced a terminal "done" message.
+    contents = [m.content for m in out["messages"] if isinstance(m, BaseMessage)]
+    assert "done" in contents
+
+
 def test_agent_update_state_applies_after_react_loop():
     """``agentUpdateState`` must fire on the loop's terminal message."""
     from langchain_core.tools import tool

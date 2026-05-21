@@ -69,50 +69,64 @@ class AgentFactory(NodeFactory):
 
         # Construct the ReAct subgraph once per ``to_callable`` invocation
         # so each agent_node call doesn't re-build the inner graph. The
-        # import is lazy because langgraph is an optional extra; the
-        # single-shot fallback below covers the import-failed case.
+        # imports are lazy because langgraph is an optional extra; the
+        # single-shot fallback below covers the all-imports-failed case.
         #
-        # Two import paths tried in order:
+        # Two factory entrypoints tried in order:
         #   1. ``langchain.agents.create_agent`` — only present if the user
         #      installed the ``langchain`` package separately. Newer
         #      surface introduced after the ``langgraph.prebuilt`` API was
         #      deprecated.
         #   2. ``langgraph.prebuilt.create_react_agent`` — the supported
         #      home for the SDK's declared dep range
-        #      (``langgraph >=0.2,<0.5`` in ``pyproject.toml``). This is the
-        #      path 99% of users land on.
-        # Either entry point returns a CompiledStateGraph with the same
-        # ``.invoke`` contract, so the rest of this function is path-agnostic.
+        #      (``langgraph >=0.2,<0.5`` in ``pyproject.toml``). The path
+        #      99% of users land on.
+        # Both entrypoints return a CompiledStateGraph with the same
+        # ``.invoke`` contract, so the rest of this function is
+        # entrypoint-agnostic.
+        #
+        # The loop matters: if the first entrypoint imports cleanly but
+        # rejects our model/tools shape (a narrow set of construction
+        # errors caught below), we still try the second one — otherwise
+        # users with both packages installed could silently lose tool
+        # dispatch when only one factory accepts their model.
         react_app = None
         if model is not None and tools and hasattr(model, "bind_tools"):
-            create_react: Any | None = None
+            entrypoints: list[Any] = []
             try:
-                from langchain.agents import create_agent as create_react  # type: ignore[import-not-found,no-redef]
+                from langchain.agents import create_agent  # type: ignore[import-not-found]
+
+                entrypoints.append(create_agent)
             except ImportError:
-                try:
-                    from langgraph.prebuilt import (
-                        create_react_agent as create_react,  # type: ignore[attr-defined,no-redef]
-                    )
-                except ImportError:
-                    create_react = None
-            if create_react is not None:
+                pass
+            try:
+                from langgraph.prebuilt import create_react_agent  # type: ignore[attr-defined]
+
+                entrypoints.append(create_react_agent)
+            except ImportError:
+                pass
+
+            for create_react in entrypoints:
                 try:
                     react_app = create_react(model, tools)
+                    break
                 except (TypeError, ValueError, NotImplementedError, AttributeError):
-                    # Narrow tuple covers what ``create_react_agent`` raises
-                    # when it can't accept the model/tools shape:
+                    # Narrow tuple covers what these factories raise when
+                    # they can't accept the model/tools shape:
                     #   - ``TypeError`` — model isn't a Runnable
                     #     ("Expected a Runnable, callable or dict").
                     #   - ``NotImplementedError`` — ``bind_tools`` isn't
                     #     implemented for this chat-model class.
                     #   - ``AttributeError`` — duck-typed model missing
-                    #     a method ``create_react_agent`` introspects.
+                    #     a method the factory introspects.
                     #   - ``ValueError`` — malformed tool definition.
                     # Anything else (e.g. an OOMError, a network error
                     # from a model's eager init, an authentication
                     # failure) propagates so the user sees the real
-                    # problem instead of silently degrading.
-                    react_app = None
+                    # problem instead of silently degrading. Try the next
+                    # entrypoint — maybe a different factory accepts the
+                    # same model.
+                    continue
 
         def agent_node(state: dict[str, Any]) -> dict[str, Any]:
             if model is None:
