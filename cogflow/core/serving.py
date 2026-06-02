@@ -1835,14 +1835,14 @@ for attr_name in dir(ServingManager):
 # ``test_serving_module_reexports_async_deploy_llm`` defends this
 # contract by running an import in a fresh subprocess.
 from .async_serving import (  # noqa: E402, F401
-    async_deploy_model,
-    async_deploy_llm,
-    async_serve_llm,
-    async_update_model,
-    async_delete_isvc,
-    async_list_models,
-    async_get_isvc,
-    async_update_isvc,
-    async_restart_isvc,
     async_create_isvc,
+    async_delete_isvc,
+    async_deploy_llm,
+    async_deploy_model,
+    async_get_isvc,
+    async_list_models,
+    async_restart_isvc,
+    async_serve_llm,
+    async_update_isvc,
+    async_update_model,
 )
