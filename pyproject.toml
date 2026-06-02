@@ -54,7 +54,11 @@ dependencies = [
     "pydantic-settings >=2.0.0",
     "scikit-learn (==1.7.0)",
     "tenacity",
-    "kubernetes",
+    # kubernetes>=35 breaks in-cluster auth on the sync client:
+    # Configuration.auth_settings() now requires api_key["BearerToken"]
+    # while incluster_config still writes api_key["authorization"], so
+    # every in-cluster sync request 401s. kubernetes_asyncio is unaffected.
+    "kubernetes<35",
     "kubernetes_asyncio",
     "minio>=7.2.0",
     "httpx >=0.25,<1"
