@@ -603,7 +603,10 @@ def _normalize_data_products(data_input) -> list[dict]:
         return []
     if isinstance(data, Mapping):
         data = [data]
-
+    elif not isinstance(data, (list, tuple)):
+        raise ValueError(
+            "Data products must be a mapping, a list/tuple of mappings, or a JSON string of the same."
+        )
     normalized: list[dict] = []
     for item in data:
         if not isinstance(item, Mapping):
