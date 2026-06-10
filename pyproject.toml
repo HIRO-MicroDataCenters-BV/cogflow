@@ -43,7 +43,14 @@ dependencies = [
     "google-cloud-storage >=2.2.1,<3",
     "jsonschema >=3.0.1,<5",
     "protobuf >=3.13.0,<4",
-    "requests-toolbelt >=0.8.0,<1",
+    # <2 (was <1): vendored kfp 1.8.24 copied kfp's `<1` cap, which existed
+    # only because requests-toolbelt 1.0 dropped the `adapters.appengine`
+    # module. cogflow's vendored kfp imports it solely in kfp/_auth.py behind
+    # an `isinstance(creds, app_engine.Credentials)` branch — a Google App
+    # Engine code path never reached in-cluster. Relaxing to <2 lets the
+    # agent SDK's langchain-core 1.x stack (langsmith -> requests-toolbelt>=1)
+    # resolve without affecting any live pipeline path.
+    "requests-toolbelt >=0.8.0,<2",
     "strip-hints >=0.1.8,<1",
     "tabulate >=0.8.6,<1",
     "typer >=0.3.2,<1.0",
@@ -83,8 +90,13 @@ docs = [
 ]
 
 agent = [
-  "langgraph >=0.2,<0.5",
-  "langchain-core >=0.3,<0.4"
+  # langchain 1.0 generation. langgraph >=0.4 (resolves to 1.x) pulls
+  # langgraph-checkpoint 4.x, whose serializer needs langchain-core's
+  # `Reviver(allowed_objects=...)` API — present only in langchain-core 1.x
+  # (the ecosystem jumped 0.3 -> 1.0, there is no 0.4/0.5). The agent SDK
+  # code is forward-compatible with 1.x as-is (full test suite passes).
+  "langgraph >=0.4,<2",
+  "langchain-core >=1.0,<2"
 ]
 
 # Note: a LangSmith adapter was intentionally NOT shipped. LangSmith is a
@@ -106,7 +118,7 @@ agent-otel = [
 # downstream audit produces evidence one is actually used.
 openai = [
   "cogflow[agent]",
-  "langchain-openai>=0.2,<0.4"
+  "langchain-openai>=1.0,<2"
 ]
 
 # Single-command install for users who want the agent SDK + OTel tracing
