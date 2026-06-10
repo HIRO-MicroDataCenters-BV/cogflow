@@ -16,6 +16,7 @@ No plugin structure. No circular imports. SDK-style API.
 from __future__ import annotations
 
 import inspect
+import json
 import os
 from collections.abc import Mapping
 
@@ -575,6 +576,56 @@ def create_fl_pipeline(
 # ================================================================
 
 
+def _normalize_data_products(data_input) -> list[dict]:
+    """
+    Normalize dataspace data-product metadata into a flat list of
+    ``{"region": ..., "access_url": ...}`` dicts.
+
+    Accepts any of:
+      - a JSON string,
+      - a single dict or a list of dicts,
+      - items already flattened to ``{"region", "access_url"}``, or
+      - raw catalog items carrying ``region`` plus a ``distribution`` list
+        whose entries hold ``accessURL``.
+
+    Already-flat items pass through unchanged, so the function is idempotent
+    and safe to call regardless of which shape the caller supplies.
+    """
+    if isinstance(data_input, str):
+        try:
+            data = json.loads(data_input)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON string for data products: {exc}") from exc
+    else:
+        data = data_input
+
+    if data is None:
+        return []
+    if isinstance(data, Mapping):
+        data = [data]
+    elif not isinstance(data, (list, tuple)):
+        raise ValueError(
+            "Data products must be a mapping, a list/tuple of mappings, or a JSON string of the same."
+        )
+    normalized: list[dict] = []
+    for item in data:
+        if not isinstance(item, Mapping):
+            continue
+        region = item.get("region", "")
+        access_url = item.get("access_url")
+        if access_url:
+            # Already-flat form — pass through unchanged.
+            normalized.append({"region": region, "access_url": access_url})
+            continue
+        # Raw catalog form — pull URLs out of ``distribution``.
+        for dist in item.get("distribution", []) or []:
+            dist_url = dist.get("accessURL") if isinstance(dist, Mapping) else None
+            if region and dist_url:
+                normalized.append({"region": region, "access_url": dist_url})
+
+    return normalized
+
+
 def create_fl_pipeline_dataspace(
     fl_client,
     fl_server,
@@ -589,8 +640,10 @@ def create_fl_pipeline_dataspace(
     Args:
         fl_client:   KFP component for FL client
         fl_server:   KFP component for FL server
-        data_products: List of dicts containing:
-                       { "access_url": "<url>", "region": "<region>" }
+        data_products: Either already-flat dicts
+                       ``{ "access_url": "<url>", "region": "<region>" }`` or
+                       raw catalog items (``region`` + ``distribution[].accessURL``),
+                       or a JSON string of the same. Normalized internally.
         node_enforce (bool): Enforce node selector for region.
         pipeline_name (str, optional): Custom pipeline name.
         description (str, optional): Pipeline description text.
@@ -600,6 +653,11 @@ def create_fl_pipeline_dataspace(
     """
     kfp, dsl = _load_kfp()
     cfg = _load_config()
+
+    # Accept raw catalog payloads (region + distribution[].accessURL) as well
+    # as already-flat {region, access_url} lists, so callers that forward the
+    # dataspace checkout response verbatim keep working.
+    data_products = _normalize_data_products(data_products)
 
     # Default names
     pipeline_name = pipeline_name or "Federated Learning Pipeline (Dataspace)"
