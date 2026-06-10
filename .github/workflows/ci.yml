@@ -19,16 +19,17 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Upgrade pip
-        run: pip install --upgrade pip
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
       # Install the in-tree cogflow plus every extras group the test suite
       # touches: ``[dev]`` (pytest + ruff + coverage), ``[full]`` (agent SDK
-      # + OTel tracing + openai chat-model gate). Replaces the older
-      # ``pip install -r requirements.txt`` flow that pulled cogflow itself
-      # from PyPI and so didn't actually test the branch's code.
+      # + OTel tracing + openai chat-model gate). uv's resolver handles the
+      # deep openinference/langchain dependency graph that made pip's legacy
+      # resolver hit ``resolution-too-deep``; ``--system`` installs into the
+      # ``actions/setup-python`` interpreter so ruff/pytest land on PATH.
       - name: Install package + extras
-        run: pip install -e ".[dev,full]"
+        run: uv pip install --system -e ".[dev,full]"
 
       # Single tool replaces the prior black + pycodestyle + pylint stack.
       # ``ruff check`` covers the lint surface (E/W/F/I/UP/B rules at
