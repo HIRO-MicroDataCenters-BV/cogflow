@@ -4,9 +4,10 @@ FROM python:3.10-slim
 # Install Python packages
 RUN python3 -m pip install --no-cache-dir --upgrade pip
 
-# Install specific version of cogflow
+ARG COGFLOW_VERSION=1.11.14
 
-RUN pip3 install --ignore-installed cogflow==1.11.24
+# Install specific version of cogflow
+RUN pip3 install --ignore-installed cogflow==${COGFLOW_VERSION}
 
 # Install additional Python packages
 RUN pip3 install \

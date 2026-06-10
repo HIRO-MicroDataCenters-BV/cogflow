@@ -1,0 +1,40 @@
+"""Start node — entry point of an agentflow."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from typing import Any
+
+from ..ir.model import IRNode
+from .base import NodeFactory, passthrough
+
+
+class StartFactory(NodeFactory):
+    ir_type = "start"
+
+    def __init__(
+        self,
+        *,
+        input_type: str = "chatInput",
+        ephemeral_memory: bool = False,
+        persist_state: bool = False,
+        state: list[dict[str, Any]] | None = None,
+        **extra: Any,
+    ) -> None:
+        # Flowise represents an unset ``startState`` as an empty string but an
+        # explicitly empty array as ``[]``. Only fall back to "" when the user
+        # didn't pass anything; preserve the empty-list shape when they did.
+        super().__init__(
+            startInputType=input_type,
+            startEphemeralMemory=ephemeral_memory,
+            startPersistState=persist_state,
+            startState=state if state is not None else "",
+            **extra,
+        )
+
+    def to_callable(self, node: IRNode, ctx: Mapping[str, Any] | None = None) -> Callable[..., Any]:
+        return passthrough
+
+
+def start(**kwargs: Any) -> StartFactory:
+    return StartFactory(**kwargs)

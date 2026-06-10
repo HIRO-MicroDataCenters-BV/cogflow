@@ -1,0 +1,272 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - 'release/**'
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'cogflow version to build & publish the image for (must already be on PyPI, e.g. 2.0.1b4)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install build dependencies
+        run: pip install --upgrade pip build pytest pytest-mock
+
+      - name: Install package
+        run: pip install -e ".[dev]"
+
+      - name: Run tests
+        run: pytest tests/
+
+      - name: Build package
+        run: python -m build
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(python -c "import cogflow; print(cogflow.__version__)")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if [[ "$VERSION" == *b* || "$VERSION" == *rc* || "$VERSION" == *a* ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Built version: $VERSION"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v5
+        with:
+          name: cogflow-${{ steps.version.outputs.version }}
+          path: dist/
+
+  publish-pypi:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/cogflow/
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: cogflow-${{ needs.build.outputs.version }}
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: [build, publish-pypi]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.publish-pypi.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: cogflow-${{ needs.build.outputs.version }}
+          path: dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          prerelease: ${{ needs.build.outputs.is_prerelease == 'true' }}
+          generate_release_notes: true
+
+  docker-publish:
+    needs: [build, publish-pypi]
+    # Two triggers, both land here:
+    #   1. Tag push  — `build` and `publish-pypi` ran; gate on pypi success.
+    #   2. workflow_dispatch (manual rebuild of an already-published version)
+    #      — `build` and `publish-pypi` were skipped because their `if` gates
+    #      require `event_name == 'push'`, so the default needs-success gate
+    #      would skip this job too. `always()` overrides that; the inner
+    #      condition then chooses the mode.
+    if: >-
+      always() && (
+        github.event_name == 'workflow_dispatch'
+        || (startsWith(github.ref, 'refs/tags/v') && needs.publish-pypi.result == 'success')
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Determine channel, image tags, and build platforms
+        id: tags
+        env:
+          VERSION: ${{ github.event.inputs.version || needs.build.outputs.version }}
+        run: |
+          REGISTRY="hiroregistry/cogflow"
+          if [[ "$VERSION" == *b* ]]; then
+            CHANNEL="beta"
+          elif [[ "$VERSION" == *rc* ]]; then
+            CHANNEL="rc"
+          elif [[ "$VERSION" == *a* ]]; then
+            CHANNEL="alpha"
+          else
+            CHANNEL="stable"
+          fi
+          if [[ "$CHANNEL" == "stable" ]]; then
+            TAGS="$REGISTRY:$VERSION,$REGISTRY:latest"
+            # Stable channel is consumer-facing (main branch images,
+            # downstream charm releases, external users) and must work
+            # on arm64 too.
+            PLATFORMS="linux/amd64,linux/arm64"
+          else
+            TAGS="$REGISTRY:$VERSION,$REGISTRY:latest-$CHANNEL"
+            # Pre-release channels (beta/rc/alpha) are consumed only by
+            # our own dev-cluster CD which runs on amd64 nodes. Skipping
+            # the arm64 build saves ~8–10 min per release (QEMU emulation
+            # is the slow step) and matches the documented arch policy.
+            PLATFORMS="linux/amd64"
+          fi
+          {
+            echo "tags=$TAGS"
+            echo "channel=$CHANNEL"
+            echo "platforms=$PLATFORMS"
+            echo "version_tag=$REGISTRY:$VERSION"
+          } >> "$GITHUB_OUTPUT"
+          echo "Channel: $CHANNEL"
+          echo "Tags: $TAGS"
+          echo "Platforms: $PLATFORMS"
+
+      # Build context always has a ``dist/`` directory. On the tag-push
+      # path we populate it with the wheel that ``build`` already uploaded
+      # as an artifact — no PyPI round-trip, no CDN race. On the
+      # workflow_dispatch path the ``build`` job was skipped (different
+      # ``if`` gate) so no artifact exists; the Dockerfile falls back to
+      # ``pip install cogflow==$VERSION`` from PyPI and the wait step
+      # below handles any lingering propagation.
+      - name: Prepare wheel directory in build context
+        run: mkdir -p docker_image_variants/latest/dist
+
+      - name: Download cogflow wheel from build artifact (tag-push path)
+        if: github.event_name == 'push'
+        uses: actions/download-artifact@v5
+        with:
+          name: cogflow-${{ needs.build.outputs.version }}
+          path: ./docker_image_variants/latest/dist/
+
+      - name: Set up Python (dispatch-only, for PyPI wait)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Wait for PyPI simple index (dispatch-only)
+        # Tag-push doesn't hit PyPI at all during the image build — the
+        # wheel comes from the artifact downloaded above — so the wait
+        # is only needed on workflow_dispatch, where we rebuild the
+        # image for a version that's already published on PyPI.
+        # ``workflow_dispatch`` targets stable/long-published versions,
+        # so propagation is usually a non-issue, but keep the poll as
+        # a safety net in case someone triggers it seconds after upload.
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ github.event.inputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os, sys, time
+          from urllib.request import urlopen
+          from urllib.error import URLError
+
+          version = os.environ["VERSION"]
+          url = "https://pypi.org/simple/cogflow/"
+          needles = (f"cogflow-{version}-", f"cogflow-{version}.")
+
+          attempts = 12  # ~4 minutes total
+          for attempt in range(1, attempts + 1):
+              try:
+                  with urlopen(url, timeout=10) as resp:
+                      html = resp.read().decode("utf-8", errors="replace")
+                  if any(n in html for n in needles):
+                      print(f"cogflow=={version} visible on simple index")
+                      sys.exit(0)
+              except URLError as exc:
+                  print(f"simple-index request failed ({attempt}/{attempts}): {exc}")
+              print(f"Waiting for simple index to list {version} ({attempt}/{attempts})...")
+              if attempt < attempts:
+                  time.sleep(20)
+
+          print(f"::error::cogflow=={version} not on simple index after ~4 min")
+          sys.exit(1)
+          PY
+
+      - name: Set up QEMU
+        # Only needed when the platform list includes a non-native arch
+        # (runners are amd64, so arm64 is what actually needs emulation).
+        # Drive `with.platforms` from the same step so the QEMU and build
+        # platform lists can't drift if we later add/remove archs.
+        if: contains(steps.tags.outputs.platforms, 'arm64')
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: ${{ steps.tags.outputs.platforms }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push cogflow image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker_image_variants/latest
+          # Platforms come from the tags step so stable builds multi-arch
+          # and pre-release builds amd64-only. Even for amd64-only we keep
+          # the explicit platform list — build-push-action@v6 otherwise
+          # wraps the output in a manifest index that downstream
+          # `--platform linux/arm64` consumers reject outright.
+          platforms: ${{ steps.tags.outputs.platforms }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: |
+            COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
+          # Buildx GitHub-Actions cache: layer reuse across runs when
+          # only requirements.txt / cogflow version changes. `mode=max`
+          # includes intermediate layers so later runs benefit too.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test pushed image
+        run: |
+          docker pull "${{ steps.tags.outputs.version_tag }}"
+          docker run --rm "${{ steps.tags.outputs.version_tag }}" \
+            python3 -c "import cogflow, kfp; print('cogflow', cogflow.__version__, 'kfp', kfp.__version__)"

@@ -1,3 +1,5 @@
+name: Lint and Test
+
 on:
   pull_request:
     branches:
@@ -10,29 +12,38 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
-      - name: Upgrade pip
-        run: pip install --upgrade pip
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
+      # Install the in-tree cogflow plus every extras group the test suite
+      # touches: ``[dev]`` (pytest + ruff + coverage), ``[full]`` (agent SDK
+      # + OTel tracing + openai chat-model gate). uv's resolver handles the
+      # deep openinference/langchain dependency graph that made pip's legacy
+      # resolver hit ``resolution-too-deep``; ``--system`` installs into the
+      # ``actions/setup-python`` interpreter so ruff/pytest land on PATH.
+      - name: Install package + extras
+        run: uv pip install --system -e ".[dev,full]"
 
-      - name: Run Black
-        run: black --check .
+      # Single tool replaces the prior black + pycodestyle + pylint stack.
+      # ``ruff check`` covers the lint surface (E/W/F/I/UP/B rules at
+      # line-length=120, configured in pyproject.toml). ``ruff format
+      # --check`` enforces the formatter the way ``black --check`` did.
+      - name: Run ruff lint
+        run: ruff check .
 
-      - name: Run PEP8
-        run: pycodestyle --max-line-length=120  --exclude=examples,venv,pvenv,wrapper .
+      - name: Run ruff format check
+        run: ruff format --check .
 
-      - name: Run Pylint
-        run: |
-          find . -name '*.py' | xargs pylint --rcfile=./.pylintrc --max-line-length=120
-        continue-on-error: false
-
-#      - name: Run tests
-#        run: pytest tests/
+      # ``pytest`` (no path) honours ``testpaths`` from pytest.ini, which
+      # includes both ``tests/`` (base cogflow) and ``cogflow/agent/tests/``
+      # (agent SDK). The agent suite needs the langgraph + langchain-core
+      # deps brought in by the ``[full]`` extra above.
+      - name: Run tests
+        run: pytest

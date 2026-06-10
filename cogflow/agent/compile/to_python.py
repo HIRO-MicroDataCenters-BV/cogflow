@@ -1,0 +1,506 @@
+"""IR -> standalone LangGraph Python source. **Migration tool, not a runtime.**
+
+Scope
+-----
+
+This module exists for **one** use case: porting a Flowise-authored agent
+out of Flowise into a maintainable Python codebase. It is *not* a parallel
+runtime — for graphs built in Python with ``cogflow.agent.StateGraph``,
+calling ``g.compile()`` already returns a real
+``langgraph.graph.CompiledStateGraph`` (the SDK's ``StateGraph`` is a
+literal subclass of LangGraph's, IR is captured as a side-effect via
+``add_node``/``add_edge`` overrides). Calling ``to_python`` on a
+Python-first graph would just hand you a less-readable version of your
+own source.
+
+When this is useful::
+
+    # Got a Flowise JSON from a visual designer? Migrate to maintainable code:
+    from cogflow.agent.parse import flowise
+    from cogflow.agent.compile import to_python
+    ir = flowise.from_file("my_flow.json")
+    to_python.to_file(ir, "my_agent.py")  # cogflow-free, langgraph-only source
+
+When this is *not* useful::
+
+    # Already authored in Python — you don't need this, ``g.compile()`` is enough:
+    g = StateGraph(MyState)
+    g.add_node(...)
+    g.add_edge(START, END)
+    app = g.compile()         # ← real CompiledStateGraph, no further emit needed
+    app.invoke({...})         # ← runs on LangGraph directly
+
+Coverage and semantics
+----------------------
+
+The emitted file always produces a valid ``CompiledStateGraph`` (the
+"output is always syntactically valid Python that execs cleanly" contract
+holds for every Flowise V2 node type). MVP-7 nodes (Start, LLM, Agent,
+Tool, Condition, ConditionAgent, DirectReply) plus Loop and HumanInput
+emit working bodies because they have clean LangGraph mappings. Bridge
+nodes with opaque runtime semantics (HTTP, Retriever, CustomFunction
+body, ExecuteFlow, Iteration) emit a clearly-marked ``TODO`` stub —
+secrets in the dumped config are redacted — so the user knows where to
+wire their own implementation. StickyNote nodes are skipped entirely.
+Unknown nodes compile as passthrough runtime nodes so surrounding edges
+keep flowing (matches ``compile.to_langgraph`` and the IR contract).
+
+Public entry points::
+
+    cogflow.agent.compile.to_python.to_source(graph) -> str
+    cogflow.agent.compile.to_python.to_file(graph, path) -> Path
+"""
+
+from __future__ import annotations
+
+import keyword as _kw
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+from ..ir.model import IRGraph, IRNode, IRStateField
+from ..ir.validate import END_SENTINEL, validate
+from .topo import edges_from
+
+# ---------------------------------------------------------------------------
+# State schema
+# ---------------------------------------------------------------------------
+
+
+_PY_TYPE_FOR_STATE: dict[str, str] = {
+    "str": "str",
+    "int": "int",
+    "float": "float",
+    "bool": "bool",
+    "list": "list",
+    "dict": "dict",
+    "messages": "list",
+}
+
+
+def _state_field_annotation(f: IRStateField) -> str:
+    py = _PY_TYPE_FOR_STATE.get(f.type_, "Any")
+    if f.reducer == "add_messages" or f.type_ == "messages":
+        return "Annotated[list, add_messages]"
+    if f.reducer == "operator.add":
+        return f"Annotated[{py}, operator.add]"
+    return py
+
+
+def _state_typeddict(fields: list[IRStateField]) -> str:
+    """Render the IR state as a TypedDict.
+
+    Uses the **functional** ``TypedDict('FlowState', {...}, total=False)``
+    form so keys can be arbitrary strings — Flowise's ``startState`` JSON
+    permits keys like ``"user id"`` or ``"foo-bar"`` that would otherwise
+    produce invalid Python with the class syntax.
+    """
+    if not fields:
+        return (
+            "FlowState = TypedDict(\n"
+            '    "FlowState",\n'
+            '    {"messages": Annotated[list, add_messages]},\n'
+            "    total=False,\n"
+            ")\n"
+        )
+    items = ",\n".join(f"        {f.key!r}: {_state_field_annotation(f)}" for f in fields)
+    return f'FlowState = TypedDict(\n    "FlowState",\n    {{\n{items},\n    }},\n    total=False,\n)\n'
+
+
+# ---------------------------------------------------------------------------
+# Per-node-type body renderers
+# ---------------------------------------------------------------------------
+
+
+def _render_passthrough(node: IRNode) -> str:
+    return (
+        f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
+        f'    """{node.type} node — runtime is a no-op."""\n'
+        f"    return {{}}\n"
+    )
+
+
+def _render_direct_reply(node: IRNode) -> str:
+    # Coerce to ``str`` — partially-populated IRs (or imported flows with
+    # an explicit ``null``) can carry ``directReplyMessage: None``, and the
+    # emitted code would otherwise call ``None.format(...)`` and crash.
+    raw = node.config.get("directReplyMessage")
+    message = raw if isinstance(raw, str) else ""
+    # ``.format(**state)`` can raise:
+    #   - KeyError / IndexError: template references a missing key
+    #   - ValueError: malformed template (unmatched braces — common when the
+    #     user's reply text literally contains a ``{`` or ``}``)
+    #   - TypeError: ``state`` contains keys that aren't valid Python
+    #     identifiers (Flowise startState legitimately allows ``"user id"`` /
+    #     ``"step-count"`` since R3 switched to the functional TypedDict).
+    # In every case, fall back to the unrendered template — the node still
+    # produces output and the graph doesn't crash.
+    return (
+        f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
+        f"    rendered = {message!r}\n"
+        f"    try:\n"
+        f"        rendered = {message!r}.format(**state)\n"
+        f"    except (KeyError, IndexError, ValueError, TypeError):\n"
+        f"        pass\n"
+        f"    return {{'messages': [AIMessage(content=rendered)] }} if rendered else {{}}\n"
+    )
+
+
+def _render_llm(node: IRNode) -> str:
+    return (
+        f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
+        f'    """LLM node — wire your ChatModel via the ``MODEL`` symbol."""\n'
+        f"    if MODEL is None:\n"
+        f"        return {{}}\n"
+        f"    history = list(state.get('messages') or [])\n"
+        f"    response = MODEL.invoke(history)\n"
+        f"    return {{'messages': [response]}}\n"
+    )
+
+
+def _render_agent(node: IRNode) -> str:
+    return (
+        f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
+        f'    """Agent node — bind tools via ``TOOLS`` and a model via ``MODEL``."""\n'
+        f"    if MODEL is None:\n"
+        f"        return {{}}\n"
+        f"    bound = MODEL.bind_tools(TOOLS) if TOOLS and hasattr(MODEL, 'bind_tools') else MODEL\n"
+        f"    response = bound.invoke(list(state.get('messages') or []))\n"
+        f"    return {{'messages': [response]}}\n"
+    )
+
+
+def _render_tool(node: IRNode) -> str:
+    return (
+        f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
+        f'    """Tool node — replace with your @tool function."""\n'
+        f"    return {{}}\n"
+    )
+
+
+def _render_condition(node: IRNode) -> str:
+    return (
+        f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
+        f'    """Condition node — populates `_condition_branch` for routing."""\n'
+        f"    # TODO: implement rule evaluation; ``add_conditional_edges`` reads\n"
+        f"    # the returned ``_condition_branch`` value.\n"
+        f"    return {{'_condition_branch': 'default'}}\n"
+    )
+
+
+def _render_loop(node: IRNode) -> str:
+    counter_key = f"_loop_count__{node.id}"
+    return (
+        f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
+        f'    """Loop node — increments a per-node counter; routing wired below."""\n'
+        f"    current = int(state.get({counter_key!r}, 0) or 0)\n"
+        f"    return {{{counter_key!r}: current + 1}}\n"
+    )
+
+
+def _render_human_input(node: IRNode) -> str:
+    prompt = node.config.get("humanInputPrompt") or node.config.get("humanInputDescription") or ""
+    # Honour the configured output key (defaulting to ``human_input``) so the
+    # emitted graph agrees with ``HumanInputFactory.to_callable``.
+    output_key = node.config.get("humanInputOutputKey") or "human_input"
+    return (
+        f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
+        f'    """HumanInput node — pauses for user input via ``interrupt``."""\n'
+        f"    rendered = {prompt!r}\n"
+        f"    try:\n"
+        f"        rendered = {prompt!r}.format(**state)\n"
+        f"    except (KeyError, IndexError, ValueError, TypeError):\n"
+        f"        pass\n"
+        f"    reply = interrupt({{'prompt': rendered, 'node': {node.id!r}}})\n"
+        f"    return {{{output_key!r}: reply}}\n"
+    )
+
+
+# Substrings (case-insensitive) that mark a config key as potentially holding
+# a secret. Conservative: better to redact something harmless than leak a token.
+_SECRET_HINTS = (
+    "key",
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "auth",
+    "authorization",
+    "credential",
+    "apikey",
+    "bearer",
+    "private",
+)
+
+
+def _looks_like_secret(key: str) -> bool:
+    k = key.lower()
+    return any(hint in k for hint in _SECRET_HINTS)
+
+
+def _redact_value(key: str, value: Any) -> Any:
+    """Replace a single field with ``<REDACTED>`` when its key looks sensitive.
+
+    Recurses into dicts and lists so nested secrets (``httpHeaders.x-api-key``)
+    are caught too. Lists are walked element-wise; non-string keys in nested
+    structures are passed through untouched.
+    """
+    if _looks_like_secret(key) and value not in (None, "", [], {}):
+        return "<REDACTED>"
+    if isinstance(value, dict):
+        return {k: _redact_value(str(k), v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(key, item) for item in value]
+    return value
+
+
+def _redacted_config(config: dict[str, Any]) -> dict[str, Any]:
+    """Replace likely-secret values with ``<REDACTED>`` for emit (recursive)."""
+    return {k: _redact_value(k, v) for k, v in config.items()}
+
+
+def _render_todo(node: IRNode) -> str:
+    """Bridge nodes whose runtime body is too domain-specific to auto-emit.
+
+    The original IR config is dumped into a comment so the user can port
+    the body manually, but values keyed on ``*key``/``*token``/``*secret``/
+    ``*auth``/``*password``/``*credential`` are redacted. Flowise inputs
+    legitimately contain auth headers + API keys; emitting them verbatim
+    into checked-in files would leak credentials.
+    """
+    redacted = _redacted_config(dict(node.config))
+    return (
+        f"def {_node_fn(node.id)}(state: FlowState) -> dict:\n"
+        f"    # TODO: cogflow.agent bridge node `{node.type}` — implement manually.\n"
+        f"    # IR config (secrets redacted): {redacted!r}\n"
+        f"    return {{}}\n"
+    )
+
+
+_RENDERERS: dict[str, Callable[[IRNode], str]] = {
+    "llm": _render_llm,
+    "agent": _render_agent,
+    "tool": _render_tool,
+    "condition": _render_condition,
+    "condition_agent": _render_condition,  # same shape: writes _condition_branch
+    "direct_reply": _render_direct_reply,
+    "loop": _render_loop,
+    "human_input": _render_human_input,
+    "iteration": _render_todo,
+    "http": _render_todo,
+    "retriever": _render_todo,
+    "custom_function": _render_todo,
+    "execute_flow": _render_todo,
+}
+
+
+def _node_fn(node_id: str) -> str:
+    """Convert an IR node id to a valid Python identifier.
+
+    Naive char-replacement collides on ids like ``a-b`` vs ``a_b`` (both
+    become ``node_a_b``). Append a short deterministic hash of the raw id
+    whenever sanitization changes anything, so distinct ids always produce
+    distinct function names.
+    """
+    sanitized = "".join(c if c.isalnum() or c == "_" else "_" for c in node_id)
+    if sanitized != node_id:
+        # Use blake2b for a short, stable, dependency-free suffix.
+        import hashlib
+
+        suffix = hashlib.blake2b(node_id.encode("utf-8"), digest_size=4).hexdigest()
+        sanitized = f"{sanitized}__{suffix}"
+    if sanitized and sanitized[0].isdigit():
+        sanitized = "n_" + sanitized
+    return f"node_{sanitized}"
+
+
+# ---------------------------------------------------------------------------
+# Edge wiring
+# ---------------------------------------------------------------------------
+
+
+# Mirror ``compile.to_langgraph``: only ``sticky_note`` and ``start`` are
+# excluded from the runtime set. ``unknown`` nodes get a passthrough body so
+# surrounding edges keep flowing (matches the IR contract documented in
+# ``ir/model.py`` and the parse/import path).
+_SKIP_TYPES = {"sticky_note", "start"}
+_CONDITION_TYPES = {"condition", "condition_agent"}
+
+
+def _render_edges(graph: IRGraph, runtime_nodes: list[IRNode]) -> list[str]:
+    lines: list[str] = []
+    runtime_ids = {n.id for n in runtime_nodes}
+
+    # Entry edge from START.
+    start_id = graph.entry
+    start_wired = False
+    if start_id is not None:
+        entry_node = graph.node_by_id(start_id)
+        if entry_node is not None and entry_node.type == "start":
+            for e in edges_from(graph, start_id):
+                if e.target in runtime_ids:
+                    lines.append(f"builder.add_edge(START, {e.target!r})")
+                    start_wired = True
+        elif start_id in runtime_ids:
+            lines.append(f"builder.add_edge(START, {start_id!r})")
+            start_wired = True
+
+    if not start_wired and not runtime_nodes:
+        lines.append("builder.add_edge(START, END)")
+    elif not start_wired and runtime_nodes:
+        # Mirror ``compile.to_langgraph``: use declaration order (the first
+        # runtime node in ``graph.nodes``), not alphabetical sort. The two
+        # emit paths should agree on entry behaviour for malformed graphs.
+        lines.append(f"builder.add_edge(START, {runtime_nodes[0].id!r})")
+
+    routed: set[str] = set()
+    ended: set[str] = set()
+
+    for node in graph.nodes:
+        if node.id not in runtime_ids:
+            continue
+
+        if node.type == "loop":
+            target = node.config.get("loopTarget") or node.config.get("loopBackToNode") or ""
+            if target and "-" in target and target not in runtime_ids:
+                target = target.split("-", 1)[0]
+            if target and target not in runtime_ids:
+                target = ""
+            max_iters = int(node.config.get("loopMaxIterations") or node.config.get("maxLoopCount") or 5)
+            counter_key = f"_loop_count__{node.id}"
+            # Walk outgoing edges in order, accepting the first eligible exit:
+            # an explicit END edge (END_SENTINEL) or a non-target runtime edge.
+            # Mirrors ``compile.to_langgraph``'s scan so the two emit paths
+            # don't diverge based on edge ordering.
+            exit_target_repr = "END"
+            for e in edges_from(graph, node.id):
+                if e.target == END_SENTINEL:
+                    exit_target_repr = "END"
+                    break
+                if e.target in runtime_ids and e.target != target:
+                    exit_target_repr = repr(e.target)
+                    break
+            lines.append(
+                f"def _{_node_fn(node.id)}_router(state, "
+                f"_k={counter_key!r}, _max={max_iters!r}, _t={target!r}, _exit={exit_target_repr}):\n"
+                f"    return _t if (_t and int(state.get(_k, 0) or 0) < _max) else _exit"
+            )
+            lines.append(f"builder.add_conditional_edges({node.id!r}, _{_node_fn(node.id)}_router)")
+            routed.add(node.id)
+            if exit_target_repr == "END":
+                ended.add(node.id)
+            continue
+
+        outs = [e for e in edges_from(graph, node.id) if e.target in runtime_ids or e.target == END_SENTINEL]
+        if not outs:
+            lines.append(f"builder.add_edge({node.id!r}, END)")
+            ended.add(node.id)
+            continue
+
+        if node.type in _CONDITION_TYPES and len(outs) > 1:
+            mapping_items = []
+            for e in outs:
+                key = e.label or e.target_handle or e.target
+                value = "END" if e.target == END_SENTINEL else repr(e.target)
+                mapping_items.append(f"    {key!r}: {value}")
+            mapping_body = ",\n".join(mapping_items)
+            router_name = f"_{_node_fn(node.id)}_router"
+            lines.append(
+                f"def {router_name}(state):\n"
+                f"    _mapping = {{\n{mapping_body},\n    }}\n"
+                f"    branch = state.get('_condition_branch')\n"
+                f"    return _mapping[branch] if isinstance(branch, str) and branch in _mapping else next(iter(_mapping.values()))"
+            )
+            lines.append(f"builder.add_conditional_edges({node.id!r}, {router_name})")
+            routed.add(node.id)
+        else:
+            for e in outs:
+                target_repr = "END" if e.target == END_SENTINEL else repr(e.target)
+                lines.append(f"builder.add_edge({node.id!r}, {target_repr})")
+                if e.target == END_SENTINEL:
+                    ended.add(node.id)
+
+    for fid in graph.finish:
+        if fid in runtime_ids and fid not in ended and fid not in routed:
+            lines.append(f"builder.add_edge({fid!r}, END)")
+
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Top-level emit
+# ---------------------------------------------------------------------------
+
+
+_HEADER = '''\
+"""Auto-generated from a cogflow.agent IRGraph via compile.to_python.
+
+Edit by hand at your own risk — re-emitting will overwrite this file.
+"""
+
+# Note: no ``from __future__ import annotations`` — LangGraph's TypedDict
+# introspection (``get_type_hints``) needs the ``Annotated`` symbol bound
+# in the module's globalns at evaluation time, which only works when
+# annotations stay non-string at class-definition time.
+
+import operator
+from typing import Annotated, Any, TypedDict
+
+from langchain_core.messages import AIMessage
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph import add_messages
+
+try:
+    from langgraph.types import interrupt
+except ImportError:  # older langgraph
+    def interrupt(payload):
+        raise RuntimeError("langgraph.types.interrupt not available")
+
+
+# Wire your model / tools here before invoking ``app``.
+MODEL: Any = None
+TOOLS: list[Any] = []
+
+'''
+
+
+def to_source(graph: IRGraph, *, app_var: str = "app") -> str:
+    """Render an IRGraph as a self-contained Python module string."""
+    # ``app_var`` is interpolated verbatim into the emitted source; refuse
+    # anything that isn't a bare identifier so the contract ("output is
+    # always valid Python") holds even if the caller passes a hostile value.
+    if not isinstance(app_var, str) or not app_var.isidentifier() or _kw.iskeyword(app_var):
+        raise ValueError(f"app_var must be a valid non-keyword Python identifier; got {app_var!r}")
+    validate(graph)
+
+    runtime_nodes = [n for n in graph.nodes if n.type not in _SKIP_TYPES]
+
+    parts: list[str] = [_HEADER, _state_typeddict(graph.state), "\n"]
+
+    for node in runtime_nodes:
+        renderer = _RENDERERS.get(node.type, _render_passthrough)
+        parts.append(renderer(node))
+        parts.append("\n")
+
+    parts.append("builder = StateGraph(FlowState)\n")
+    for node in runtime_nodes:
+        parts.append(f"builder.add_node({node.id!r}, {_node_fn(node.id)})\n")
+    parts.append("\n")
+
+    edge_lines = _render_edges(graph, runtime_nodes)
+    for line in edge_lines:
+        parts.append(line + "\n")
+    parts.append("\n")
+    parts.append(f"{app_var} = builder.compile()\n")
+
+    return "".join(parts)
+
+
+def to_file(graph: IRGraph, path: str | Path, *, app_var: str = "app") -> Path:
+    """Write the rendered source to ``path`` and return the Path."""
+    out = Path(path)
+    out.write_text(to_source(graph, app_var=app_var))
+    return out
+
+
+__all__ = ["to_source", "to_file"]
