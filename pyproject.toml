@@ -66,6 +66,15 @@ dependencies = [
     "kubernetes<35",
     "kubernetes_asyncio",
     "minio>=7.2.0",
+    # mlflow's S3 artifact store imports boto3 lazily inside
+    # log_artifact / log_artifacts when the artifact backend is an
+    # S3-compatible store — which is the platform default (MinIO).
+    # Without boto3 in the dependency tree, every kfp / notebook /
+    # service that calls ``cogflow.core.models.log_artifact`` (or
+    # any path that uploads run artifacts through MLflow) fails
+    # with ``ModuleNotFoundError: No module named 'boto3'``.
+    # See ``mlflow/store/artifact/s3_artifact_repo.py:59``.
+    "boto3 >=1.34",
     "httpx >=0.25,<1"
 ]
 
