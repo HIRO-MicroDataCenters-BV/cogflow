@@ -755,9 +755,7 @@ _LLM_ARG_UNSET_SENTINELS = [
 
 
 @pytest.mark.parametrize("quant_sentinel", _LLM_ARG_UNSET_SENTINELS)
-def test_deploy_llm_quantization_sentinels_emit_no_flag(
-    serving, serving_module, quant_sentinel
-):
+def test_deploy_llm_quantization_sentinels_emit_no_flag(serving, serving_module, quant_sentinel):
     """``None`` (unset), ``"none"`` (recommender's "unquantized" label),
     and ``"auto"`` (vLLM-decides) — plus their case/whitespace variants
     and the empty string — all mean "don't emit ``--quantization``" so
@@ -778,9 +776,7 @@ def test_deploy_llm_quantization_sentinels_emit_no_flag(
 
 
 @pytest.mark.parametrize("kv_sentinel", _LLM_ARG_UNSET_SENTINELS)
-def test_deploy_llm_kv_cache_dtype_sentinels_emit_no_flag(
-    serving, serving_module, kv_sentinel
-):
+def test_deploy_llm_kv_cache_dtype_sentinels_emit_no_flag(serving, serving_module, kv_sentinel):
     """Same sentinel handling as ``quantization`` — applied symmetrically
     so the diff-clean guarantee is field-agnostic. ``"none"`` was added
     in response to Copilot review #2 on PR #103: a stringly-typed
