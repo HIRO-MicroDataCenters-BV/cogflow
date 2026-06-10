@@ -22,11 +22,36 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v5
 
-      # Install the in-tree cogflow plus every extras group the test suite
-      # touches: ``[dev]`` (pytest + ruff + coverage), ``[full]`` (agent SDK
-      # + OTel tracing + openai chat-model gate). uv's resolver handles the
-      # deep openinference/langchain dependency graph that made pip's legacy
-      # resolver hit ``resolution-too-deep``; ``--system`` installs into the
+      # Cache the pip wheel cache so ``torch`` / ``safetensors`` (pulled
+      # by ``[llm]`` and used by the ntkmirror exporter round-trip
+      # tests) don't get redownloaded on every CI run. CPU-only torch
+      # wheels are ~200MB; the first warm-up after a pyproject change
+      # eats that cost, every subsequent run hits the cache.
+      #
+      # Key on a hash of pyproject.toml so the cache invalidates only
+      # when extras change. ``~/.cache/uv`` covers uv's wheel cache;
+      # ``~/.cache/pip`` is included as a safety net for any step that
+      # bypasses uv.
+      - name: Cache pip/uv wheels
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/uv
+            ~/.cache/pip
+          key: ${{ runner.os }}-py3.10-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-py3.10-pip-
+
+      # Install the in-tree cogflow plus every extras group the test
+      # suite touches: ``[dev]`` (pytest + ruff + coverage) and
+      # ``[full]`` ("the works" — agent SDK + OTel tracing + openai
+      # gate + LLM-side transformations via ``[llm]``). The wheel
+      # cache above keeps the torch/safetensors pull from running on
+      # every PR.
+      #
+      # uv's resolver handles the deep openinference/langchain
+      # dependency graph that made pip's legacy resolver hit
+      # ``resolution-too-deep``; ``--system`` installs into the
       # ``actions/setup-python`` interpreter so ruff/pytest land on PATH.
       - name: Install package + extras
         run: uv pip install --system -e ".[dev,full]"

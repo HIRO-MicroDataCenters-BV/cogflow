@@ -123,16 +123,30 @@ openai = [
   "langchain-openai>=1.0,<2"
 ]
 
-# Single-command install for users who want the agent SDK + OTel tracing
-# + the providers we ship gates for. Keeps the base ``pip install cogflow``
-# lean (pipeline-only users don't pull LangChain) while giving "give me
-# everything" users one command instead of remembering the composition.
+# Heavy LLM-side deps. Lazy-imported inside the call sites that need
+# them (e.g. ``cogflow.transformers.ntkmirror_export.controller_to_lora``)
+# so ``import cogflow`` stays cheap for pipeline-only users, but those
+# call sites do nothing without them. CPU wheels are fine for the
+# transformations we ship today — no GPU required.
+llm = [
+  "torch>=2.0",
+  "safetensors>=0.4"
+]
+
+# Single-command install for the agent SDK + OTel tracing + provider
+# gates + LLM-side transformations (torch + safetensors). Keeps the
+# base ``pip install cogflow`` lean (pipeline-only users don't pull
+# any of this) while giving "the works" users one command instead of
+# remembering the composition.
 #
-# Whenever a new provider extra lands above, append ``cogflow[<provider>]``
-# here so ``[full]`` continues to mean "the works."
+# Whenever a new optional extra lands above, append
+# ``cogflow[<extra>]`` here so ``[full]`` keeps meaning "everything
+# cogflow can do." The first-run install cost in CI (~200MB of torch
+# CPU wheels) is amortised by the wheel cache in ``.github/workflows/ci.yml``.
 full = [
   "cogflow[agent-otel]",
-  "cogflow[openai]"
+  "cogflow[openai]",
+  "cogflow[llm]"
 ]
 
 [project.urls]
