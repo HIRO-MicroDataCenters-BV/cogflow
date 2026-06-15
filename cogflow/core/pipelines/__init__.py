@@ -81,6 +81,7 @@ def load_component(
         # Inject env only if this is a real container-backed op
         if hasattr(op, "add_env_variable"):
             orchestration._inject_env_into_container_op(op)
+        return op
 
     wrapped.__signature__ = getattr(base, "__signature__", None)
     wrapped.component_spec = getattr(base, "component_spec", None)
