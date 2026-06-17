@@ -844,6 +844,20 @@ class ServingManager:
         # SDK users) still get the same validation.
         hf_id = ServingManager._extract_hf_model_id(storage_uri)
         is_hf_source = hf_id is not None
+
+        # A predictor has exactly one ``storageUri`` — one storage-initializer
+        # download into ``/mnt/models``. The HF-base hybrid only works because
+        # the base loads from the Hub via ``--model_id`` (the HF runtime's
+        # ``get_model_id_or_path`` prefers it), leaving that single slot free
+        # to stage the controller. With a non-HF base the base already claims
+        # the slot, so a ``controller_storage_uri`` would be silently dropped.
+        # Fail fast instead.
+        if controller_storage_uri and not is_hf_source:
+            raise CogflowValidationError(
+                "controller_storage_uri is only supported with an hf:// base "
+                f"(the base loads via --model_id, freeing the single storageUri "
+                f"slot for the controller); got base storage_uri={storage_uri!r}."
+            )
         runtime_args = ServingManager._build_llm_args(
             served_model_name,
             max_model_len=max_model_len,
@@ -1107,6 +1121,8 @@ class ServingManager:
         max_num_seqs: int | None = None,
         quantization: str | None = None,
         kv_cache_dtype: str | None = None,
+        hf_overrides: dict[str, Any] | None = None,
+        controller_storage_uri: str | None = None,
         # scheduling / scaling
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
@@ -1122,6 +1138,10 @@ class ServingManager:
     ) -> dict[str, Any]:
         """High-level LLM serving: MLflow-backed catalog registration
         **plus** KServe InferenceService create, in one call.
+
+        ``hf_overrides`` and ``controller_storage_uri`` carry through to
+        :meth:`deploy_llm` — see its docstring; they enable serving a
+        native adapter (e.g. an ntkmirror controller) on an HF base.
 
         This is the entry point notebook users should reach for — analogous
         to ``cogflow.log_model`` for classical artifacts. It:
@@ -1256,6 +1276,8 @@ class ServingManager:
             max_num_seqs=max_num_seqs,
             quantization=quantization,
             kv_cache_dtype=kv_cache_dtype,
+            hf_overrides=hf_overrides,
+            controller_storage_uri=controller_storage_uri,
             resources=resources,
             tolerations=tolerations,
             node_selector=node_selector,

@@ -591,6 +591,21 @@ def test_deploy_llm_hf_base_with_controller_storage_uri(serving, serving_module)
     assert '--hf-overrides={"architectures": ["NTKQwen2ForCausalLM"]}' in model["args"]
 
 
+def test_deploy_llm_controller_uri_rejects_non_hf_base(serving, serving_module):
+    """controller_storage_uri needs an hf:// base — with an s3 base the
+    base already claims the single storageUri slot, so fail fast rather
+    than silently dropping the controller."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="controller_storage_uri"):
+        serving.deploy_llm(
+            storage_uri="s3://mlflow/0/abc/artifacts/model",
+            isvc_name="bad-hybrid",
+            served_model_name="bad-hybrid",
+            controller_storage_uri="s3://mlflow/0/abc/artifacts/controller/controller.pt",
+        )
+
+
 def test_deploy_llm_default_resources(serving, serving_module):
     """No resources override → defaults: 4/7Gi/1gpu requests, 8/8Gi/1gpu limits."""
     _, fake_api, _ = serving_module
@@ -1039,6 +1054,27 @@ def test_serve_llm_end_to_end_happy_path(serving, serving_module, monkeypatch):
     assert meta_annotations["model_id"] == common.normalize_uuid(fake_run_id)
     assert meta_annotations["model_type"] == "llm"
     assert meta_annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
+
+
+def test_serve_llm_threads_hf_overrides_and_controller(serving, serving_module, monkeypatch):
+    """The high-level sync serve_llm forwards hf_overrides +
+    controller_storage_uri down to the emitted ISVC (the HF-base + native
+    adapter hybrid is reachable from the notebook entry point, not just
+    the lower-level deploy_llm / async path)."""
+    fake_run_id = "abcdef01234567890123456789abcde0"
+    _patch_llm_catalog(monkeypatch, run_id=fake_run_id)
+    _, fake_api, _ = serving_module
+
+    serving.serve_llm(
+        hf_model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        hf_overrides={"architectures": ["NTKQwen2ForCausalLM"]},
+        controller_storage_uri="s3://mlflow/0/abc/artifacts/controller/controller.pt",
+    )
+
+    model = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]
+    assert "--model_id=Qwen/Qwen2.5-0.5B-Instruct" in model["args"]
+    assert '--hf-overrides={"architectures": ["NTKQwen2ForCausalLM"]}' in model["args"]
+    assert model["storageUri"] == "s3://mlflow/0/abc/artifacts/controller/controller.pt"
 
 
 def test_serve_llm_storage_uri_hf_shorthand_populates_hf_model_id(serving, serving_module, monkeypatch):
