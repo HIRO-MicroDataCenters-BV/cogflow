@@ -782,17 +782,22 @@ class ServingManager:
         # emitted JSON byte-stable so reruns produce a diff-clean ISVC.
         # vLLM requires a JSON *object*, so reject non-dicts and
         # non-serializable values up-front with a clear error rather than
-        # emitting a bad flag or leaking a raw TypeError.
-        if hf_overrides:
+        # emitting a bad flag or leaking a raw TypeError. ``is not None``
+        # (not truthiness) so a supplied-but-falsey value (``[]``, ``""``,
+        # ``0``) still gets type-checked instead of being silently ignored.
+        if hf_overrides is not None:
             if not isinstance(hf_overrides, dict):
                 raise CogflowValidationError(
                     f"hf_overrides must be a JSON object (dict), got {type(hf_overrides).__name__}"
                 )
-            try:
-                rendered = json.dumps(hf_overrides, sort_keys=True)
-            except (TypeError, ValueError) as exc:
-                raise CogflowValidationError(f"hf_overrides must be JSON-serializable: {exc}") from exc
-            args.append(f"--hf-overrides={rendered}")
+            # An empty object is a valid "no overrides" value — accept it
+            # but don't emit a pointless ``--hf-overrides={}`` flag.
+            if hf_overrides:
+                try:
+                    rendered = json.dumps(hf_overrides, sort_keys=True)
+                except (TypeError, ValueError) as exc:
+                    raise CogflowValidationError(f"hf_overrides must be JSON-serializable: {exc}") from exc
+                args.append(f"--hf-overrides={rendered}")
         return args
 
     @staticmethod
