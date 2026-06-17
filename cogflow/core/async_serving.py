@@ -563,6 +563,8 @@ class AsyncServingManager:
         max_num_seqs: int | None = None,
         quantization: str | None = None,
         kv_cache_dtype: str | None = None,
+        hf_overrides: dict[str, Any] | None = None,
+        controller_storage_uri: str | None = None,
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
         node_selector: dict[str, str] | None = None,
@@ -615,6 +617,8 @@ class AsyncServingManager:
             hf_secret_name=hf_secret_name,
             quantization=quantization,
             kv_cache_dtype=kv_cache_dtype,
+            hf_overrides=hf_overrides,
+            controller_storage_uri=controller_storage_uri,
         )
         predictor_spec, effective_annotations = sync_manager_cls._apply_raw_deployment_defaults(
             predictor_spec, annotations
@@ -684,6 +688,8 @@ class AsyncServingManager:
         max_num_seqs: int | None = None,
         quantization: str | None = None,
         kv_cache_dtype: str | None = None,
+        hf_overrides: dict[str, Any] | None = None,
+        controller_storage_uri: str | None = None,
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
         node_selector: dict[str, str] | None = None,
@@ -695,6 +701,10 @@ class AsyncServingManager:
         extra_tags: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Async variant of :meth:`ServingManager.serve_llm`.
+
+        ``hf_overrides`` and ``controller_storage_uri`` carry through to
+        :meth:`deploy_llm` — see its docstring; they enable serving an
+        adapter (e.g. an ntkmirror controller) on an HF base.
 
         Catalog registration uses
         :meth:`ModelManager.async_register_llm_catalog_entry`, so the
@@ -798,6 +808,8 @@ class AsyncServingManager:
             max_num_seqs=max_num_seqs,
             quantization=quantization,
             kv_cache_dtype=kv_cache_dtype,
+            hf_overrides=hf_overrides,
+            controller_storage_uri=controller_storage_uri,
             resources=resources,
             tolerations=tolerations,
             node_selector=node_selector,
