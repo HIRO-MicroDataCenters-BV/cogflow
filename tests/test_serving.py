@@ -591,6 +591,20 @@ def test_deploy_llm_hf_base_with_controller_storage_uri(serving, serving_module)
     assert '--hf-overrides={"architectures": ["NTKQwen2ForCausalLM"]}' in model["args"]
 
 
+def test_deploy_llm_rejects_non_object_hf_overrides(serving, serving_module):
+    """hf_overrides must be a JSON object — a non-dict fails fast with a
+    clear CogflowValidationError, not a bad flag or a raw TypeError."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="hf_overrides must be a JSON object"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+            isvc_name="bad-overrides",
+            served_model_name="bad-overrides",
+            hf_overrides=["NTKQwen2ForCausalLM"],  # list, not an object
+        )
+
+
 def test_deploy_llm_controller_uri_rejects_non_hf_base(serving, serving_module):
     """controller_storage_uri needs an hf:// base — with an s3 base the
     base already claims the single storageUri slot, so fail fast rather
@@ -1494,7 +1508,7 @@ def test_register_finetuned_catalog_entry_posts_adapter_row(serving_module, monk
     assert payload["model_id"] == common.normalize_uuid(run_id)
     assert payload["type"] == "ntk_controller"
     assert payload["model_name"] == "my-ntk-controller"
-    assert payload["base_model_id"] == base_id
+    assert payload["base_model_id"] == common.normalize_uuid(base_id)
     assert payload["hf_model_id"] == "Qwen/Qwen2.5-0.5B-Instruct"
     assert payload["user_id"] == "user@example.com"
     assert payload["register_date"]  # populated from register_date_ms

@@ -780,8 +780,19 @@ class ServingManager:
         # subclass (e.g. an adapter-aware ``NTK<Arch>ForCausalLM``)
         # without re-uploading the base weights. ``sort_keys`` keeps the
         # emitted JSON byte-stable so reruns produce a diff-clean ISVC.
+        # vLLM requires a JSON *object*, so reject non-dicts and
+        # non-serializable values up-front with a clear error rather than
+        # emitting a bad flag or leaking a raw TypeError.
         if hf_overrides:
-            args.append(f"--hf-overrides={json.dumps(hf_overrides, sort_keys=True)}")
+            if not isinstance(hf_overrides, dict):
+                raise CogflowValidationError(
+                    f"hf_overrides must be a JSON object (dict), got {type(hf_overrides).__name__}"
+                )
+            try:
+                rendered = json.dumps(hf_overrides, sort_keys=True)
+            except (TypeError, ValueError) as exc:
+                raise CogflowValidationError(f"hf_overrides must be JSON-serializable: {exc}") from exc
+            args.append(f"--hf-overrides={rendered}")
         return args
 
     @staticmethod

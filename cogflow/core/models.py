@@ -1087,10 +1087,13 @@ class ModelManager:
             "type": adapter_type,
             "description": description,
             "user_id": resolved_user,
-            # The self-FK to the base. The catalog service requires this
-            # for adapter rows (an adapter is meaningless without the
-            # base it modifies) and rejects the row otherwise.
-            "base_model_id": base_model_id,
+            # The self-FK to the base. Normalized to the canonical
+            # hyphenated UUID form (same as ``model_id`` above) so the FK
+            # lookup doesn't depend on whether the caller passed a compact
+            # or hyphenated id. The catalog service requires this for
+            # adapter rows (an adapter is meaningless without the base it
+            # modifies) and rejects the row otherwise.
+            "base_model_id": common.normalize_uuid(base_model_id),
         }
         if base_model_hf_id:
             # Carries the base's HuggingFace id onto the adapter row so

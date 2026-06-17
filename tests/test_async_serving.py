@@ -358,5 +358,5 @@ async def test_async_register_finetuned_catalog_entry_posts_adapter_row(monkeypa
     payload = post_mock.call_args.kwargs["data"]
     assert payload["model_id"] == common.normalize_uuid(run_id)
     assert payload["type"] == "lora"
-    assert payload["base_model_id"] == base_id
+    assert payload["base_model_id"] == common.normalize_uuid(base_id)
     assert payload["hf_model_id"] == "Qwen/Qwen2.5-0.5B-Instruct"
