@@ -1121,8 +1121,7 @@ class ModelManager:
         """
         if adapter_type not in self.FINETUNED_ADAPTER_TYPES:
             raise ValueError(
-                f"adapter_type must be one of "
-                f"{sorted(self.FINETUNED_ADAPTER_TYPES)}; got {adapter_type!r}."
+                f"adapter_type must be one of {sorted(self.FINETUNED_ADAPTER_TYPES)}; got {adapter_type!r}."
             )
         if not base_model_id:
             raise ValueError(
@@ -1227,8 +1226,7 @@ class ModelManager:
             )
         except Exception as post_err:
             logger.warning(
-                "Failed to post %s adapter catalog entry to CogFlow backend "
-                "(caller proceeds regardless): %s",
+                "Failed to post %s adapter catalog entry to CogFlow backend (caller proceeds regardless): %s",
                 adapter_type,
                 str(post_err),
             )
@@ -1284,8 +1282,7 @@ class ModelManager:
             )
         except Exception as post_err:
             logger.warning(
-                "Failed to post %s adapter catalog entry to CogFlow backend "
-                "(caller proceeds regardless): %s",
+                "Failed to post %s adapter catalog entry to CogFlow backend (caller proceeds regardless): %s",
                 adapter_type,
                 str(post_err),
             )

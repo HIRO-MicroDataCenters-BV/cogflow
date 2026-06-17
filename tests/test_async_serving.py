@@ -341,12 +341,8 @@ async def test_async_register_finetuned_catalog_entry_posts_adapter_row(monkeypa
     run_id = "abcdef000000abcdef000000abcdef00"
     base_id = "22222222222222222222222222222222"
     post_mock = AsyncMock()
-    monkeypatch.setattr(
-        core_models_module.network, "make_async_post_request", post_mock, raising=True
-    )
-    monkeypatch.setattr(
-        core_models_module.common, "get_current_user", lambda: "u@example.com", raising=True
-    )
+    monkeypatch.setattr(core_models_module.network, "make_async_post_request", post_mock, raising=True)
+    monkeypatch.setattr(core_models_module.common, "get_current_user", lambda: "u@example.com", raising=True)
 
     returned = await core_models_module.async_register_finetuned_catalog_entry(
         run_id=run_id,

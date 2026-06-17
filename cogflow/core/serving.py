@@ -900,8 +900,7 @@ class ServingManager:
         # side controller artifact (``controller_storage_uri``) is also
         # S3-staged, so an HF base + S3 controller still needs the SA.
         if storage_uri.startswith("s3://") or (
-            controller_storage_uri is not None
-            and controller_storage_uri.startswith("s3://")
+            controller_storage_uri is not None and controller_storage_uri.startswith("s3://")
         ):
             predictor["serviceAccountName"] = "kserve-controller-s3"
 
