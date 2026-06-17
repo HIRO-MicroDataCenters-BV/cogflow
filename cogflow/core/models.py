@@ -1044,6 +1044,254 @@ class ModelManager:
 
         return run_id
 
+    # Fine-tuned adapter rows (LoRA, NTK controller, …) all share one
+    # catalog shape: a child row in the model registry that points at
+    # the base it was trained against (``base_model_id``) and carries
+    # the base's HuggingFace id so the serving runtime can load the
+    # base. The accepted adapter ``type`` strings are kept here as the
+    # single source of truth so notebook callers and the platform's
+    # fine-tune pipeline agree on the vocabulary.
+    FINETUNED_ADAPTER_TYPES = frozenset({"lora", "ntk_controller"})
+
+    def _build_finetuned_catalog_payload(
+        self,
+        *,
+        run_id: str,
+        register_date_ms: int,
+        served_model_name: str,
+        adapter_type: str,
+        base_model_id: str,
+        base_model_hf_id: str | None,
+        description: str,
+        user_id: str | None,
+    ):
+        """Shape the catalog-service payload for a fine-tuned adapter.
+
+        Returns ``(url, model_dict, headers, resolved_user)`` so both
+        the sync and async registration methods reuse one body. The
+        catalog row's id is the tracking ``run_id`` that already holds
+        the adapter artifact — the same identity invariant every other
+        registration path respects — so the serving side can resolve
+        the artifact location straight from the row id.
+        """
+        resolved_user = user_id or common.get_current_user()
+        model_dict: dict[str, Any] = {
+            "model_id": common.normalize_uuid(run_id),
+            "model_name": served_model_name,
+            # The adapter artifact is logged to the run, not registered
+            # as a versioned registry entry, so there is no version
+            # number to report. 0 is the established "unknown version"
+            # sentinel (see the LLM-catalog and classical log paths).
+            "model_version": 0,
+            "register_date": datetime.fromtimestamp(register_date_ms / 1000).isoformat(),
+            "type": adapter_type,
+            "description": description,
+            "user_id": resolved_user,
+            # The self-FK to the base. Normalized to the canonical
+            # hyphenated UUID form (same as ``model_id`` above) so the FK
+            # lookup doesn't depend on whether the caller passed a compact
+            # or hyphenated id. The catalog service requires this for
+            # adapter rows (an adapter is meaningless without the base it
+            # modifies) and rejects the row otherwise.
+            "base_model_id": common.normalize_uuid(base_model_id),
+        }
+        if base_model_hf_id:
+            # Carries the base's HuggingFace id onto the adapter row so
+            # the serving runtime can pull the base weights without a
+            # second lookup. Older catalog schemas ignore unknown keys.
+            model_dict["hf_model_id"] = base_model_hf_id
+
+        url = f"{config.API_PATH}{config.LOG_MODEL}"
+        headers = {"kubeflow-userid": resolved_user}
+        return url, model_dict, headers, resolved_user
+
+    def _resolve_finetuned_catalog_run(
+        self,
+        *,
+        run_id: str,
+        adapter_type: str,
+        base_model_id: str,
+        register_date_ms: int | None,
+    ):
+        """Validate inputs + resolve the row's register date.
+
+        Shared front half of the sync/async fine-tuned registration
+        methods. ``adapter_type`` is checked against
+        :data:`FINETUNED_ADAPTER_TYPES` and ``base_model_id`` is
+        required up-front so a bad call fails before the catalog POST.
+        When ``register_date_ms`` is not supplied it is read from the
+        tracking run that holds the artifact.
+        """
+        if adapter_type not in self.FINETUNED_ADAPTER_TYPES:
+            raise ValueError(
+                f"adapter_type must be one of {sorted(self.FINETUNED_ADAPTER_TYPES)}; got {adapter_type!r}."
+            )
+        if not base_model_id:
+            raise ValueError(
+                "base_model_id is required for a fine-tuned adapter — the "
+                "row points at the base it was trained against."
+            )
+        if register_date_ms is None:
+            # The run already exists (the caller logged the adapter
+            # artifact into it); read its start time so the catalog
+            # row's register_date matches the run that produced it.
+            register_date_ms = self.client.get_run(run_id).info.start_time
+        return register_date_ms
+
+    def register_finetuned_catalog_entry(
+        self,
+        *,
+        run_id: str,
+        served_model_name: str,
+        adapter_type: str,
+        base_model_id: str,
+        base_model_hf_id: str | None = None,
+        register_date_ms: int | None = None,
+        description: str | None = None,
+        user_id: str | None = None,
+    ) -> str:
+        """Register a fine-tuned adapter (LoRA, NTK controller, …) in the catalog.
+
+        Use this after logging the adapter artifact to a tracking run:
+        the run's id becomes the catalog row's id, and this call adds
+        the catalog metadata that links the adapter to its base
+        (``base_model_id`` + the base's HuggingFace id). It is the
+        shared registration entry-point for every fine-tuned export
+        format, so notebook users and the platform fine-tune pipeline
+        produce identical rows.
+
+        Steps:
+
+        - Validate ``adapter_type`` and ``base_model_id``.
+        - Resolve the row's register date from the run (unless given).
+        - Best-effort POST to the catalog service: failures are logged
+          as warnings and do **not** raise, matching the LLM-catalog
+          and classical log paths — a transient backend outage should
+          not abort a pipeline that otherwise succeeded.
+
+        For callers already inside an async coroutine, prefer
+        :meth:`async_register_finetuned_catalog_entry` — the backend
+        POST here is synchronous and would deadlock the event loop if
+        the target URL resolves back to the same process.
+
+        Args:
+            run_id: Tracking run that holds the adapter artifact. Also
+                becomes the catalog row's primary key.
+            served_model_name: Logical name for the catalog row.
+            adapter_type: One of :data:`FINETUNED_ADAPTER_TYPES`
+                (``"lora"`` or ``"ntk_controller"``).
+            base_model_id: Catalog id of the base the adapter was
+                trained against. Required.
+            base_model_hf_id: HuggingFace Hub id of the base, so the
+                serving runtime can load the base weights. Optional for
+                checkpoint-backed bases.
+            register_date_ms: Override for the row's register date in
+                epoch milliseconds. Defaults to the run's start time.
+            description: Human-readable description; a sensible default
+                is generated from the adapter type and base when omitted.
+            user_id: Override for the row owner. Falls back to
+                :func:`common.get_current_user`.
+
+        Returns:
+            The ``run_id`` — which is also the catalog row's id.
+
+        Raises:
+            ValueError: If ``adapter_type`` is unknown or
+                ``base_model_id`` is empty. Backend POST failures are
+                *not* raised (warn-only).
+        """
+        register_date_ms = self._resolve_finetuned_catalog_run(
+            run_id=run_id,
+            adapter_type=adapter_type,
+            base_model_id=base_model_id,
+            register_date_ms=register_date_ms,
+        )
+        description = description or f"{adapter_type} adapter fine-tuned from base {base_model_id}"
+
+        url, model_dict, headers, _ = self._build_finetuned_catalog_payload(
+            run_id=run_id,
+            register_date_ms=register_date_ms,
+            served_model_name=served_model_name,
+            adapter_type=adapter_type,
+            base_model_id=base_model_id,
+            base_model_hf_id=base_model_hf_id,
+            description=description,
+            user_id=user_id,
+        )
+
+        try:
+            network.make_post_request(url=url, data=model_dict, headers=headers)
+            logger.info(
+                "Registered %s adapter catalog entry via CogFlow backend: %s (run_id=%s)",
+                adapter_type,
+                url,
+                run_id,
+            )
+        except Exception as post_err:
+            logger.warning(
+                "Failed to post %s adapter catalog entry to CogFlow backend (caller proceeds regardless): %s",
+                adapter_type,
+                str(post_err),
+            )
+
+        return run_id
+
+    async def async_register_finetuned_catalog_entry(
+        self,
+        *,
+        run_id: str,
+        served_model_name: str,
+        adapter_type: str,
+        base_model_id: str,
+        base_model_hf_id: str | None = None,
+        register_date_ms: int | None = None,
+        description: str | None = None,
+        user_id: str | None = None,
+    ) -> str:
+        """Async variant of :meth:`register_finetuned_catalog_entry`.
+
+        Identical semantics; the backend POST uses an async HTTP client
+        so the event loop stays free during the call (which is what
+        lets a self-call from the service that also hosts the catalog
+        endpoint terminate instead of deadlocking). Return value and
+        exception semantics match the sync variant.
+        """
+        register_date_ms = self._resolve_finetuned_catalog_run(
+            run_id=run_id,
+            adapter_type=adapter_type,
+            base_model_id=base_model_id,
+            register_date_ms=register_date_ms,
+        )
+        description = description or f"{adapter_type} adapter fine-tuned from base {base_model_id}"
+
+        url, model_dict, headers, _ = self._build_finetuned_catalog_payload(
+            run_id=run_id,
+            register_date_ms=register_date_ms,
+            served_model_name=served_model_name,
+            adapter_type=adapter_type,
+            base_model_id=base_model_id,
+            base_model_hf_id=base_model_hf_id,
+            description=description,
+            user_id=user_id,
+        )
+
+        try:
+            await network.make_async_post_request(url=url, data=model_dict, headers=headers)
+            logger.info(
+                "Registered %s adapter catalog entry via CogFlow backend: %s (run_id=%s)",
+                adapter_type,
+                url,
+                run_id,
+            )
+        except Exception as post_err:
+            logger.warning(
+                "Failed to post %s adapter catalog entry to CogFlow backend (caller proceeds regardless): %s",
+                adapter_type,
+                str(post_err),
+            )
+
+        return run_id
+
     def search_model_versions(self, filter_string: str | None = None):
         """
         Search for model versions in the MLflow Model Registry.

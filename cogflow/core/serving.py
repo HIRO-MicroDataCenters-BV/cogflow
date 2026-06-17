@@ -14,6 +14,7 @@ No circular imports occur because we load them lazily.
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from datetime import datetime
@@ -722,6 +723,7 @@ class ServingManager:
         max_num_seqs: int | None,
         quantization: str | None = None,
         kv_cache_dtype: str | None = None,
+        hf_overrides: dict[str, Any] | None = None,
     ) -> list[str]:
         """Whitelisted runtime args passed into the HF runtime container.
 
@@ -772,6 +774,30 @@ class ServingManager:
         normalized_kv_cache_dtype = kv_cache_dtype.strip() if kv_cache_dtype is not None else None
         if not _is_unset_sentinel(normalized_kv_cache_dtype):
             args.append(f"--kv-cache-dtype={normalized_kv_cache_dtype}")
+        # ``--hf-overrides`` is a vLLM hyphen-style flag taking a JSON
+        # object that patches the loaded model's HF config. The platform
+        # uses it to redirect the architecture to a runtime-registered
+        # subclass (e.g. an adapter-aware ``NTK<Arch>ForCausalLM``)
+        # without re-uploading the base weights. ``sort_keys`` keeps the
+        # emitted JSON byte-stable so reruns produce a diff-clean ISVC.
+        # vLLM requires a JSON *object*, so reject non-dicts and
+        # non-serializable values up-front with a clear error rather than
+        # emitting a bad flag or leaking a raw TypeError. ``is not None``
+        # (not truthiness) so a supplied-but-falsey value (``[]``, ``""``,
+        # ``0``) still gets type-checked instead of being silently ignored.
+        if hf_overrides is not None:
+            if not isinstance(hf_overrides, dict):
+                raise CogflowValidationError(
+                    f"hf_overrides must be a JSON object (dict), got {type(hf_overrides).__name__}"
+                )
+            # An empty object is a valid "no overrides" value — accept it
+            # but don't emit a pointless ``--hf-overrides={}`` flag.
+            if hf_overrides:
+                try:
+                    rendered = json.dumps(hf_overrides, sort_keys=True)
+                except (TypeError, ValueError) as exc:
+                    raise CogflowValidationError(f"hf_overrides must be JSON-serializable: {exc}") from exc
+                args.append(f"--hf-overrides={rendered}")
         return args
 
     @staticmethod
@@ -793,6 +819,8 @@ class ServingManager:
         hf_secret_name: str | None,
         quantization: str | None = None,
         kv_cache_dtype: str | None = None,
+        hf_overrides: dict[str, Any] | None = None,
+        controller_storage_uri: str | None = None,
     ) -> dict[str, Any]:
         # Replica bounds must be internally consistent before we hand the
         # ISVC to KServe — otherwise the CRD is rejected at admission (or
@@ -832,6 +860,20 @@ class ServingManager:
         # SDK users) still get the same validation.
         hf_id = ServingManager._extract_hf_model_id(storage_uri)
         is_hf_source = hf_id is not None
+
+        # A predictor has exactly one ``storageUri`` — one storage-initializer
+        # download into ``/mnt/models``. The HF-base hybrid only works because
+        # the base loads from the Hub via ``--model_id`` (the HF runtime's
+        # ``get_model_id_or_path`` prefers it), leaving that single slot free
+        # to stage the controller. With a non-HF base the base already claims
+        # the slot, so a ``controller_storage_uri`` would be silently dropped.
+        # Fail fast instead.
+        if controller_storage_uri and not is_hf_source:
+            raise CogflowValidationError(
+                "controller_storage_uri is only supported with an hf:// base "
+                f"(the base loads via --model_id, freeing the single storageUri "
+                f"slot for the controller); got base storage_uri={storage_uri!r}."
+            )
         runtime_args = ServingManager._build_llm_args(
             served_model_name,
             max_model_len=max_model_len,
@@ -842,6 +884,7 @@ class ServingManager:
             max_num_seqs=max_num_seqs,
             quantization=quantization,
             kv_cache_dtype=kv_cache_dtype,
+            hf_overrides=hf_overrides,
         )
         if is_hf_source:
             # --model_id comes first for readability in the emitted YAML
@@ -854,6 +897,19 @@ class ServingManager:
         }
         if not is_hf_source:
             model_block["storageUri"] = storage_uri
+        elif controller_storage_uri:
+            # Adapter-on-HF-base hybrid: the base weights load from the
+            # HF Hub via ``--model_id`` (above), while a small side
+            # artifact — e.g. an ntkmirror controller — is staged by
+            # KServe's storage-initializer to the predictor's model
+            # mount (``/mnt/models``). The runtime ignores the mount for
+            # the base (``--model_id`` wins in the HF server's
+            # ``get_model_id_or_path``), and the adapter-aware model
+            # subclass reads its artifact from there. Only valid in
+            # RawDeployment mode (the LLM default) — the storage-
+            # initializer's fieldRef env is rejected by the Knative
+            # webhook in Serverless mode.
+            model_block["storageUri"] = controller_storage_uri
 
         if hf_secret_name:
             model_block["env"] = [
@@ -869,9 +925,13 @@ class ServingManager:
             "model": model_block,
         }
 
-        # S3-backed artifacts need the cluster-provisioned S3 SA.
-        # HF Hub pulls do not — omitting the SA keeps the pod token-free.
-        if storage_uri.startswith("s3://"):
+        # S3-backed artifacts need the cluster-provisioned S3 SA. HF Hub
+        # pulls do not — omitting the SA keeps the pod token-free. The
+        # side controller artifact (``controller_storage_uri``) is also
+        # S3-staged, so an HF base + S3 controller still needs the SA.
+        if storage_uri.startswith("s3://") or (
+            controller_storage_uri is not None and controller_storage_uri.startswith("s3://")
+        ):
             predictor["serviceAccountName"] = "kserve-controller-s3"
 
         if tolerations:
@@ -913,6 +973,32 @@ class ServingManager:
             predictor = {**predictor, "deploymentStrategy": {"type": "Recreate"}}
         return predictor, effective_annotations
 
+    @staticmethod
+    def _assert_controller_compatible_mode(
+        controller_storage_uri: str | None,
+        effective_annotations: dict[str, str],
+    ) -> None:
+        """Reject the controller hybrid in non-RawDeployment mode.
+
+        The hybrid stages the controller via ``model.storageUri``, whose
+        storage-initializer injects ``POD_NAME``/``POD_NAMESPACE`` env via
+        ``fieldRef`` — shapes the Knative admission webhook rejects in
+        Serverless mode. The LLM default is RawDeployment, but a caller
+        can override via the ``deploymentMode`` annotation, so fail fast
+        with a clear error here instead of leaking a late, opaque Knative
+        admission rejection.
+        """
+        if not controller_storage_uri:
+            return
+        mode = effective_annotations.get(ServingManager._DEPLOYMENT_MODE_ANNOTATION)
+        if mode != "RawDeployment":
+            raise CogflowValidationError(
+                "controller_storage_uri requires RawDeployment mode — the "
+                "controller is staged via storageUri, whose fieldRef env "
+                "the Knative webhook rejects in Serverless mode; got "
+                f"deploymentMode={mode!r}."
+            )
+
     def deploy_llm(
         self,
         *,
@@ -929,6 +1015,8 @@ class ServingManager:
         max_num_seqs: int | None = None,
         quantization: str | None = None,
         kv_cache_dtype: str | None = None,
+        hf_overrides: dict[str, Any] | None = None,
+        controller_storage_uri: str | None = None,
         # scheduling / scaling
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
@@ -941,6 +1029,13 @@ class ServingManager:
     ) -> dict:
         """Create a KServe InferenceService backed by the built-in
         ``huggingface`` ClusterServingRuntime (KServe 0.15+).
+
+        ``hf_overrides`` patches the loaded model's HF config (emitted as
+        the vLLM ``--hf-overrides`` flag) — used to redirect the
+        architecture to a runtime-registered adapter-aware subclass.
+        ``controller_storage_uri``, when set alongside an ``hf://`` base,
+        stages a side artifact (e.g. an ntkmirror controller) to the
+        predictor's model mount while the base still loads from the Hub.
 
         The ``storage_uri`` is used verbatim — pass ``hf://<org>/<model>``
         for a direct HF Hub pull or ``s3://mlflow/...`` for an MLflow-stored
@@ -996,10 +1091,13 @@ class ServingManager:
             hf_secret_name=hf_secret_name,
             quantization=quantization,
             kv_cache_dtype=kv_cache_dtype,
+            hf_overrides=hf_overrides,
+            controller_storage_uri=controller_storage_uri,
         )
         predictor_spec, effective_annotations = ServingManager._apply_raw_deployment_defaults(
             predictor_spec, annotations
         )
+        ServingManager._assert_controller_compatible_mode(controller_storage_uri, effective_annotations)
 
         try:
             metadata = client.V1ObjectMeta(
@@ -1066,6 +1164,8 @@ class ServingManager:
         max_num_seqs: int | None = None,
         quantization: str | None = None,
         kv_cache_dtype: str | None = None,
+        hf_overrides: dict[str, Any] | None = None,
+        controller_storage_uri: str | None = None,
         # scheduling / scaling
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
@@ -1081,6 +1181,10 @@ class ServingManager:
     ) -> dict[str, Any]:
         """High-level LLM serving: MLflow-backed catalog registration
         **plus** KServe InferenceService create, in one call.
+
+        ``hf_overrides`` and ``controller_storage_uri`` carry through to
+        :meth:`deploy_llm` — see its docstring; they enable serving a
+        native adapter (e.g. an ntkmirror controller) on an HF base.
 
         This is the entry point notebook users should reach for — analogous
         to ``cogflow.log_model`` for classical artifacts. It:
@@ -1215,6 +1319,8 @@ class ServingManager:
             max_num_seqs=max_num_seqs,
             quantization=quantization,
             kv_cache_dtype=kv_cache_dtype,
+            hf_overrides=hf_overrides,
+            controller_storage_uri=controller_storage_uri,
             resources=resources,
             tolerations=tolerations,
             node_selector=node_selector,

@@ -550,6 +550,93 @@ def test_deploy_llm_s3_uri_sets_service_account(serving, serving_module):
     assert not any(a.startswith("--model_id=") for a in model["args"])
 
 
+def test_deploy_llm_hf_overrides_emits_flag(serving, serving_module):
+    """``hf_overrides`` is emitted as a single JSON --hf-overrides arg
+    (sorted keys, diff-stable)."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+        isvc_name="q",
+        served_model_name="q",
+        hf_overrides={"architectures": ["NTKQwen2ForCausalLM"]},
+    )
+
+    args = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]["args"]
+    assert '--hf-overrides={"architectures": ["NTKQwen2ForCausalLM"]}' in args
+
+
+def test_deploy_llm_hf_base_with_controller_storage_uri(serving, serving_module):
+    """Adapter-on-HF-base hybrid: base via --model_id (HF), controller via
+    storageUri (S3-staged to /mnt/models), S3 SA present."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+        isvc_name="ntk-q",
+        served_model_name="ntk-q",
+        hf_overrides={"architectures": ["NTKQwen2ForCausalLM"]},
+        controller_storage_uri="s3://mlflow/0/abc/artifacts/controller/controller.pt",
+    )
+
+    body = _deploy_llm_create_call(fake_api)
+    predictor = body["spec"]["predictor"]
+    model = predictor["model"]
+    # Base still loads from the Hub via --model_id …
+    assert "--model_id=Qwen/Qwen2.5-0.5B-Instruct" in model["args"]
+    # … while the controller is staged via storageUri to /mnt/models.
+    assert model["storageUri"] == "s3://mlflow/0/abc/artifacts/controller/controller.pt"
+    # S3-staged controller needs the cluster S3 SA even on an HF base.
+    assert predictor["serviceAccountName"] == "kserve-controller-s3"
+    assert '--hf-overrides={"architectures": ["NTKQwen2ForCausalLM"]}' in model["args"]
+
+
+def test_deploy_llm_rejects_non_object_hf_overrides(serving, serving_module):
+    """hf_overrides must be a JSON object — a non-dict fails fast with a
+    clear CogflowValidationError, not a bad flag or a raw TypeError."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="hf_overrides must be a JSON object"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+            isvc_name="bad-overrides",
+            served_model_name="bad-overrides",
+            hf_overrides=["NTKQwen2ForCausalLM"],  # list, not an object
+        )
+
+
+def test_deploy_llm_controller_uri_rejects_serverless_mode(serving, serving_module):
+    """The controller hybrid stages via storageUri, whose fieldRef env
+    Knative rejects in Serverless mode. A caller-forced Serverless
+    deploymentMode must fail fast rather than reconcile-fail later."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="RawDeployment"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+            isvc_name="ntk-serverless",
+            served_model_name="ntk-serverless",
+            hf_overrides={"architectures": ["NTKQwen2ForCausalLM"]},
+            controller_storage_uri="s3://mlflow/0/abc/artifacts/controller/controller.pt",
+            annotations={"serving.kserve.io/deploymentMode": "Serverless"},
+        )
+
+
+def test_deploy_llm_controller_uri_rejects_non_hf_base(serving, serving_module):
+    """controller_storage_uri needs an hf:// base — with an s3 base the
+    base already claims the single storageUri slot, so fail fast rather
+    than silently dropping the controller."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="controller_storage_uri"):
+        serving.deploy_llm(
+            storage_uri="s3://mlflow/0/abc/artifacts/model",
+            isvc_name="bad-hybrid",
+            served_model_name="bad-hybrid",
+            controller_storage_uri="s3://mlflow/0/abc/artifacts/controller/controller.pt",
+        )
+
+
 def test_deploy_llm_default_resources(serving, serving_module):
     """No resources override → defaults: 4/7Gi/1gpu requests, 8/8Gi/1gpu limits."""
     _, fake_api, _ = serving_module
@@ -1000,6 +1087,27 @@ def test_serve_llm_end_to_end_happy_path(serving, serving_module, monkeypatch):
     assert meta_annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
 
 
+def test_serve_llm_threads_hf_overrides_and_controller(serving, serving_module, monkeypatch):
+    """The high-level sync serve_llm forwards hf_overrides +
+    controller_storage_uri down to the emitted ISVC (the HF-base + native
+    adapter hybrid is reachable from the notebook entry point, not just
+    the lower-level deploy_llm / async path)."""
+    fake_run_id = "abcdef01234567890123456789abcde0"
+    _patch_llm_catalog(monkeypatch, run_id=fake_run_id)
+    _, fake_api, _ = serving_module
+
+    serving.serve_llm(
+        hf_model_id="Qwen/Qwen2.5-0.5B-Instruct",
+        hf_overrides={"architectures": ["NTKQwen2ForCausalLM"]},
+        controller_storage_uri="s3://mlflow/0/abc/artifacts/controller/controller.pt",
+    )
+
+    model = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]
+    assert "--model_id=Qwen/Qwen2.5-0.5B-Instruct" in model["args"]
+    assert '--hf-overrides={"architectures": ["NTKQwen2ForCausalLM"]}' in model["args"]
+    assert model["storageUri"] == "s3://mlflow/0/abc/artifacts/controller/controller.pt"
+
+
 def test_serve_llm_storage_uri_hf_shorthand_populates_hf_model_id(serving, serving_module, monkeypatch):
     """Passing ``storage_uri='hf://org/name'`` instead of ``hf_model_id``
     still tags and annotates with the HF id — the wrapper extracts it."""
@@ -1378,6 +1486,148 @@ def test_register_llm_catalog_entry_swallows_post_failure(serving_module, monkey
     )
 
     assert run_id == fake_run_id
+
+
+def test_register_finetuned_catalog_entry_posts_adapter_row(serving_module, monkeypatch):
+    """Exercises ``ModelManager.register_finetuned_catalog_entry``: POSTs
+    an adapter row to {API_PATH}/models/log with the run_id as model_id,
+    the adapter type, the base self-FK, and the base's HuggingFace id.
+    ``register_date_ms`` is passed explicitly so no run lookup happens."""
+    from unittest.mock import MagicMock
+
+    import cogflow.core.models as cogflow_models_module
+    import cogflow.core.models as core_models_module
+
+    run_id = "cafebabecafebabecafebabecafebabe"
+    base_id = "11111111111111111111111111111111"
+    post_mock = MagicMock()
+    monkeypatch.setattr(core_models_module.network, "make_post_request", post_mock, raising=True)
+    monkeypatch.setattr(
+        core_models_module.common,
+        "get_current_user",
+        lambda: "user@example.com",
+        raising=True,
+    )
+
+    returned = cogflow_models_module.register_finetuned_catalog_entry(
+        run_id=run_id,
+        served_model_name="my-ntk-controller",
+        adapter_type="ntk_controller",
+        base_model_id=base_id,
+        base_model_hf_id="Qwen/Qwen2.5-0.5B-Instruct",
+        register_date_ms=1_700_000_000_000,
+    )
+
+    assert returned == run_id
+    post_mock.assert_called_once()
+    post_kwargs = post_mock.call_args.kwargs
+    payload = post_kwargs["data"]
+    assert payload["model_id"] == common.normalize_uuid(run_id)
+    assert payload["type"] == "ntk_controller"
+    assert payload["model_name"] == "my-ntk-controller"
+    assert payload["base_model_id"] == common.normalize_uuid(base_id)
+    assert payload["hf_model_id"] == "Qwen/Qwen2.5-0.5B-Instruct"
+    assert payload["user_id"] == "user@example.com"
+    assert payload["register_date"]  # populated from register_date_ms
+    assert post_kwargs["headers"]["kubeflow-userid"] == "user@example.com"
+
+
+def test_register_finetuned_catalog_entry_rejects_unknown_type(serving_module):
+    """An unrecognised adapter type fails before any catalog POST."""
+    import cogflow.core.models as cogflow_models_module
+
+    with pytest.raises(ValueError, match="adapter_type"):
+        cogflow_models_module.register_finetuned_catalog_entry(
+            run_id="a" * 32,
+            served_model_name="x",
+            adapter_type="bogus",
+            base_model_id="b" * 32,
+            register_date_ms=1,
+        )
+
+
+def test_register_finetuned_catalog_entry_requires_base_model_id(serving_module):
+    """An adapter with no base self-FK is rejected up-front (a fine-tuned
+    adapter is meaningless without the base it modifies)."""
+    import cogflow.core.models as cogflow_models_module
+
+    with pytest.raises(ValueError, match="base_model_id"):
+        cogflow_models_module.register_finetuned_catalog_entry(
+            run_id="a" * 32,
+            served_model_name="x",
+            adapter_type="lora",
+            base_model_id="",
+            register_date_ms=1,
+        )
+
+
+def test_register_finetuned_catalog_entry_reads_run_start_time(serving_module, monkeypatch):
+    """When ``register_date_ms`` is omitted, the row's register date is
+    read from the tracking run that holds the artifact."""
+    from unittest.mock import MagicMock
+
+    import cogflow.core.models as cogflow_models_module
+    import cogflow.core.models as core_models_module
+
+    run_id = "0123456789abcdef0123456789abcdef"
+    fake_run = MagicMock()
+    fake_run.info.start_time = 1_700_000_000_000
+    get_run_mock = MagicMock(return_value=fake_run)
+    post_mock = MagicMock()
+    monkeypatch.setattr(
+        core_models_module._models,
+        "client",
+        MagicMock(get_run=get_run_mock),
+        raising=False,
+    )
+    monkeypatch.setattr(core_models_module.network, "make_post_request", post_mock, raising=True)
+    monkeypatch.setattr(
+        core_models_module.common,
+        "get_current_user",
+        lambda: "u@example.com",
+        raising=True,
+    )
+
+    cogflow_models_module.register_finetuned_catalog_entry(
+        run_id=run_id,
+        served_model_name="x",
+        adapter_type="lora",
+        base_model_id="b" * 32,
+    )
+
+    get_run_mock.assert_called_once_with(run_id)
+    assert post_mock.call_args.kwargs["data"]["register_date"]
+
+
+def test_register_finetuned_catalog_entry_swallows_post_failure(serving_module, monkeypatch):
+    """A catalog-backend POST failure must NOT abort registration —
+    matches the LLM-catalog / log_model pattern. Returns the run_id
+    regardless."""
+    import cogflow.core.models as cogflow_models_module
+    import cogflow.core.models as core_models_module
+
+    run_id = "deadbeefdeadbeefdeadbeefdeadbeef"
+
+    def failing_post(**_kwargs):
+        raise RuntimeError("cogapi unreachable")
+
+    monkeypatch.setattr(core_models_module.network, "make_post_request", failing_post, raising=True)
+    monkeypatch.setattr(
+        core_models_module.common,
+        "get_current_user",
+        lambda: "user@example.com",
+        raising=True,
+    )
+
+    returned = cogflow_models_module.register_finetuned_catalog_entry(
+        run_id=run_id,
+        served_model_name="x",
+        adapter_type="lora",
+        base_model_id="b" * 32,
+        register_date_ms=1,
+    )
+
+    assert returned == run_id
 
 
 def test_serving_module_reexports_async_deploy_llm():

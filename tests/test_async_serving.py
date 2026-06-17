@@ -328,3 +328,35 @@ async def test_async_serve_llm_registers_and_deploys(async_serving, fake_async_a
     assert annotations["model_id"] == common.normalize_uuid(fake_run_id)
     assert annotations["model_type"] == "llm"
     assert annotations["hf_model_id"] == "Qwen/Qwen2.5-Coder-7B-Instruct"
+
+
+@pytest.mark.asyncio
+async def test_async_register_finetuned_catalog_entry_posts_adapter_row(monkeypatch):
+    """async_register_finetuned_catalog_entry POSTs the adapter row via
+    the async HTTP client (the sync POST would deadlock when caller and
+    /models/log share a worker). Shares the validation + payload shape
+    with the sync variant."""
+    import cogflow.core.models as core_models_module
+
+    run_id = "abcdef000000abcdef000000abcdef00"
+    base_id = "22222222222222222222222222222222"
+    post_mock = AsyncMock()
+    monkeypatch.setattr(core_models_module.network, "make_async_post_request", post_mock, raising=True)
+    monkeypatch.setattr(core_models_module.common, "get_current_user", lambda: "u@example.com", raising=True)
+
+    returned = await core_models_module.async_register_finetuned_catalog_entry(
+        run_id=run_id,
+        served_model_name="my-lora",
+        adapter_type="lora",
+        base_model_id=base_id,
+        base_model_hf_id="Qwen/Qwen2.5-0.5B-Instruct",
+        register_date_ms=1_700_000_000_000,
+    )
+
+    assert returned == run_id
+    post_mock.assert_awaited_once()
+    payload = post_mock.call_args.kwargs["data"]
+    assert payload["model_id"] == common.normalize_uuid(run_id)
+    assert payload["type"] == "lora"
+    assert payload["base_model_id"] == common.normalize_uuid(base_id)
+    assert payload["hf_model_id"] == "Qwen/Qwen2.5-0.5B-Instruct"
