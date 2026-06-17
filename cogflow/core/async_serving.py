@@ -623,6 +623,7 @@ class AsyncServingManager:
         predictor_spec, effective_annotations = sync_manager_cls._apply_raw_deployment_defaults(
             predictor_spec, annotations
         )
+        sync_manager_cls._assert_controller_compatible_mode(controller_storage_uri, effective_annotations)
 
         metadata = async_client.V1ObjectMeta(
             name=isvc_name,

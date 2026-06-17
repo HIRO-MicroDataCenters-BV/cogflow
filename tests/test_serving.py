@@ -605,6 +605,23 @@ def test_deploy_llm_rejects_non_object_hf_overrides(serving, serving_module):
         )
 
 
+def test_deploy_llm_controller_uri_rejects_serverless_mode(serving, serving_module):
+    """The controller hybrid stages via storageUri, whose fieldRef env
+    Knative rejects in Serverless mode. A caller-forced Serverless
+    deploymentMode must fail fast rather than reconcile-fail later."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="RawDeployment"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+            isvc_name="ntk-serverless",
+            served_model_name="ntk-serverless",
+            hf_overrides={"architectures": ["NTKQwen2ForCausalLM"]},
+            controller_storage_uri="s3://mlflow/0/abc/artifacts/controller/controller.pt",
+            annotations={"serving.kserve.io/deploymentMode": "Serverless"},
+        )
+
+
 def test_deploy_llm_controller_uri_rejects_non_hf_base(serving, serving_module):
     """controller_storage_uri needs an hf:// base — with an s3 base the
     base already claims the single storageUri slot, so fail fast rather

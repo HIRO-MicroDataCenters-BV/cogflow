@@ -973,6 +973,32 @@ class ServingManager:
             predictor = {**predictor, "deploymentStrategy": {"type": "Recreate"}}
         return predictor, effective_annotations
 
+    @staticmethod
+    def _assert_controller_compatible_mode(
+        controller_storage_uri: str | None,
+        effective_annotations: dict[str, str],
+    ) -> None:
+        """Reject the controller hybrid in non-RawDeployment mode.
+
+        The hybrid stages the controller via ``model.storageUri``, whose
+        storage-initializer injects ``POD_NAME``/``POD_NAMESPACE`` env via
+        ``fieldRef`` — shapes the Knative admission webhook rejects in
+        Serverless mode. The LLM default is RawDeployment, but a caller
+        can override via the ``deploymentMode`` annotation, so fail fast
+        with a clear error here instead of leaking a late, opaque Knative
+        admission rejection.
+        """
+        if not controller_storage_uri:
+            return
+        mode = effective_annotations.get(ServingManager._DEPLOYMENT_MODE_ANNOTATION)
+        if mode != "RawDeployment":
+            raise CogflowValidationError(
+                "controller_storage_uri requires RawDeployment mode — the "
+                "controller is staged via storageUri, whose fieldRef env "
+                "the Knative webhook rejects in Serverless mode; got "
+                f"deploymentMode={mode!r}."
+            )
+
     def deploy_llm(
         self,
         *,
@@ -1071,6 +1097,7 @@ class ServingManager:
         predictor_spec, effective_annotations = ServingManager._apply_raw_deployment_defaults(
             predictor_spec, annotations
         )
+        ServingManager._assert_controller_compatible_mode(controller_storage_uri, effective_annotations)
 
         try:
             metadata = client.V1ObjectMeta(
