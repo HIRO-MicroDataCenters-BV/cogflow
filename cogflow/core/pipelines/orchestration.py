@@ -399,6 +399,7 @@ def delete_service(name: str):
 def _create_service_component(name: str) -> str:
     from kubernetes import client as k8s_client
     from kubernetes import config as k8s_config
+
     try:
         k8s_config.load_incluster_config()
     except Exception:  # pylint: disable=broad-except
@@ -433,6 +434,7 @@ def _create_service_component(name: str) -> str:
 def _delete_service_component(name: str) -> str:
     from kubernetes import client as k8s_client
     from kubernetes import config as k8s_config
+
     try:
         k8s_config.load_incluster_config()
     except Exception:  # pylint: disable=broad-except
