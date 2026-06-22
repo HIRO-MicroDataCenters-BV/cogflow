@@ -397,13 +397,62 @@ def delete_service(name: str):
 
 
 def _create_service_component(name: str) -> str:
-    create_service(name)
+    from kubernetes import client as k8s_client
+    from kubernetes import config as k8s_config
+    try:
+        k8s_config.load_incluster_config()
+    except Exception:  # pylint: disable=broad-except
+        k8s_config.load_kube_config()
+    try:
+        with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", encoding="utf-8") as f:
+            namespace = f.read().strip()
+    except FileNotFoundError:
+        namespace = "default"
+    svc = k8s_client.V1Service(
+        api_version="v1",
+        kind="Service",
+        metadata=k8s_client.V1ObjectMeta(
+            name=name,
+            annotations={"service.alpha.kubernetes.io/app-protocols": '{"grpc":"HTTP2"}'},
+        ),
+        spec=k8s_client.V1ServiceSpec(
+            selector={"app": name},
+            ports=[k8s_client.V1ServicePort(protocol="TCP", port=8080, target_port=8080)],
+            type="ClusterIP",
+        ),
+    )
+    api = k8s_client.CoreV1Api()
+    try:
+        api.create_namespaced_service(namespace=namespace, body=svc)
+    except k8s_client.exceptions.ApiException as exc:
+        if exc.status != 409:
+            raise
     return name
 
 
 def _delete_service_component(name: str) -> str:
-    delete_service(name)
+    from kubernetes import client as k8s_client
+    from kubernetes import config as k8s_config
+    try:
+        k8s_config.load_incluster_config()
+    except Exception:  # pylint: disable=broad-except
+        k8s_config.load_kube_config()
+    try:
+        with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", encoding="utf-8") as f:
+            namespace = f.read().strip()
+    except FileNotFoundError:
+        namespace = "default"
+    api = k8s_client.CoreV1Api()
+    try:
+        api.delete_namespaced_service(name=name, namespace=namespace)
+    except k8s_client.exceptions.ApiException as exc:
+        if exc.status != 404:
+            raise
     return name
+
+
+_create_service_component.__annotations__ = {"name": str, "return": str}
+_delete_service_component.__annotations__ = {"name": str, "return": str}
 
 
 # ================================================================
