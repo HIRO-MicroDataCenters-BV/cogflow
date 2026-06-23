@@ -405,10 +405,17 @@ def _create_service_component(name: str) -> str:
     except k8s_config.config_exception.ConfigException:
         k8s_config.load_kube_config()
     try:
-        with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", encoding="utf-8") as f:
+        with open(
+            "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+            encoding="utf-8",
+        ) as f:
             namespace = f.read().strip()
     except FileNotFoundError:
-        namespace = "default"
+        try:
+            _, ctx = k8s_config.list_kube_config_contexts()
+            namespace = ctx["context"].get("namespace", "default")
+        except k8s_config.config_exception.ConfigException:
+            namespace = "default"
     svc = k8s_client.V1Service(
         api_version="v1",
         kind="Service",
@@ -440,10 +447,17 @@ def _delete_service_component(name: str) -> str:
     except k8s_config.config_exception.ConfigException:
         k8s_config.load_kube_config()
     try:
-        with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", encoding="utf-8") as f:
+        with open(
+            "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
+            encoding="utf-8",
+        ) as f:
             namespace = f.read().strip()
     except FileNotFoundError:
-        namespace = "default"
+        try:
+            _, ctx = k8s_config.list_kube_config_contexts()
+            namespace = ctx["context"].get("namespace", "default")
+        except k8s_config.config_exception.ConfigException:
+            namespace = "default"
     api = k8s_client.CoreV1Api()
     try:
         api.delete_namespaced_service(name=name, namespace=namespace)
