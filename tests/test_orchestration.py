@@ -240,3 +240,84 @@ def test_valid_param_names():
     names = orchestration._valid_param_names(sig)
 
     assert names == ["a", "b", "c"]
+
+
+# ============================================================
+# _create_service_component / _delete_service_component
+# ============================================================
+
+
+class _MockApiException(Exception):
+    """Lightweight stand-in for kubernetes.client.exceptions.ApiException."""
+
+    def __init__(self, status):
+        self.status = status
+
+
+def _patch_k8s(mocker, *, api_mock):
+    """Patch kubernetes imports used by the self-contained KFP components."""
+    mocker.patch("kubernetes.config.load_incluster_config")
+    mocker.patch("kubernetes.client.CoreV1Api", return_value=api_mock)
+    mocker.patch("kubernetes.client.V1Service")
+    mocker.patch("kubernetes.client.V1ObjectMeta")
+    mocker.patch("kubernetes.client.V1ServiceSpec")
+    mocker.patch("kubernetes.client.V1ServicePort")
+    mocker.patch("kubernetes.client.exceptions.ApiException", _MockApiException)
+
+
+def test_create_service_component_success(mocker):
+    mock_api = mocker.Mock()
+    _patch_k8s(mocker, api_mock=mock_api)
+
+    result = orchestration._create_service_component("flserver-abc")
+
+    assert result == "flserver-abc"
+    mock_api.create_namespaced_service.assert_called_once()
+
+
+def test_create_service_component_409_swallowed(mocker):
+    mock_api = mocker.Mock()
+    mock_api.create_namespaced_service.side_effect = _MockApiException(409)
+    _patch_k8s(mocker, api_mock=mock_api)
+
+    result = orchestration._create_service_component("flserver-abc")
+
+    assert result == "flserver-abc"
+
+
+def test_create_service_component_non_409_raises(mocker):
+    mock_api = mocker.Mock()
+    mock_api.create_namespaced_service.side_effect = _MockApiException(403)
+    _patch_k8s(mocker, api_mock=mock_api)
+
+    with pytest.raises(_MockApiException):
+        orchestration._create_service_component("flserver-abc")
+
+
+def test_delete_service_component_success(mocker):
+    mock_api = mocker.Mock()
+    _patch_k8s(mocker, api_mock=mock_api)
+
+    result = orchestration._delete_service_component("flserver-abc")
+
+    assert result == "flserver-abc"
+    mock_api.delete_namespaced_service.assert_called_once()
+
+
+def test_delete_service_component_404_swallowed(mocker):
+    mock_api = mocker.Mock()
+    mock_api.delete_namespaced_service.side_effect = _MockApiException(404)
+    _patch_k8s(mocker, api_mock=mock_api)
+
+    result = orchestration._delete_service_component("flserver-abc")
+
+    assert result == "flserver-abc"
+
+
+def test_delete_service_component_non_404_raises(mocker):
+    mock_api = mocker.Mock()
+    mock_api.delete_namespaced_service.side_effect = _MockApiException(403)
+    _patch_k8s(mocker, api_mock=mock_api)
+
+    with pytest.raises(_MockApiException):
+        orchestration._delete_service_component("flserver-abc")
