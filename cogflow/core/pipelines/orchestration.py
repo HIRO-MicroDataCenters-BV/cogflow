@@ -437,7 +437,7 @@ def _delete_service_component(name: str) -> str:
 
     try:
         k8s_config.load_incluster_config()
-    except Exception:  # pylint: disable=broad-except
+    except k8s_config.config_exception.ConfigException:
         k8s_config.load_kube_config()
     try:
         with open("/var/run/secrets/kubernetes.io/serviceaccount/namespace", encoding="utf-8") as f:
