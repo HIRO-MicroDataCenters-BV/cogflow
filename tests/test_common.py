@@ -231,3 +231,84 @@ def test_is_dir_none():
 def test_join_path():
     result = common.join_path("/a", "b", None, "c")
     assert result.endswith(os.path.join("a", "b", "c"))
+
+
+# ============================================================
+# create_service / delete_service
+# ============================================================
+
+
+class _MockApiException(Exception):
+    """Lightweight stand-in for kubernetes.client.exceptions.ApiException."""
+
+    def __init__(self, status):
+        self.status = status
+
+
+def _patch_k8s_common(mocker, *, api_mock):
+    mocker.patch("cogflow.utils.common.load_k8s_config")
+    mocker.patch("cogflow.utils.common.get_namespace", return_value="test-ns")
+    mocker.patch("kubernetes.client.CoreV1Api", return_value=api_mock)
+    mocker.patch("kubernetes.client.V1Service")
+    mocker.patch("kubernetes.client.V1ObjectMeta")
+    mocker.patch("kubernetes.client.V1ServiceSpec")
+    mocker.patch("kubernetes.client.V1ServicePort")
+    mocker.patch("kubernetes.client.exceptions.ApiException", _MockApiException)
+
+
+def test_create_service_success(mocker):
+    mock_api = mocker.Mock()
+    _patch_k8s_common(mocker, api_mock=mock_api)
+
+    result = common.create_service("flserver-abc")
+
+    assert result == "flserver-abc"
+    mock_api.create_namespaced_service.assert_called_once()
+
+
+def test_create_service_409_swallowed(mocker):
+    mock_api = mocker.Mock()
+    mock_api.create_namespaced_service.side_effect = _MockApiException(409)
+    _patch_k8s_common(mocker, api_mock=mock_api)
+
+    result = common.create_service("flserver-abc")
+
+    assert result == "flserver-abc"
+
+
+def test_create_service_non_409_raises(mocker):
+    mock_api = mocker.Mock()
+    mock_api.create_namespaced_service.side_effect = _MockApiException(403)
+    _patch_k8s_common(mocker, api_mock=mock_api)
+
+    with pytest.raises(_MockApiException):
+        common.create_service("flserver-abc")
+
+
+def test_delete_service_success(mocker):
+    mock_api = mocker.Mock()
+    _patch_k8s_common(mocker, api_mock=mock_api)
+
+    result = common.delete_service("flserver-abc")
+
+    assert result == "flserver-abc"
+    mock_api.delete_namespaced_service.assert_called_once()
+
+
+def test_delete_service_404_swallowed(mocker):
+    mock_api = mocker.Mock()
+    mock_api.delete_namespaced_service.side_effect = _MockApiException(404)
+    _patch_k8s_common(mocker, api_mock=mock_api)
+
+    result = common.delete_service("flserver-abc")
+
+    assert result == "flserver-abc"
+
+
+def test_delete_service_non_404_raises(mocker):
+    mock_api = mocker.Mock()
+    mock_api.delete_namespaced_service.side_effect = _MockApiException(403)
+    _patch_k8s_common(mocker, api_mock=mock_api)
+
+    with pytest.raises(_MockApiException):
+        common.delete_service("flserver-abc")

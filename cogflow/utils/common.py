@@ -350,3 +350,57 @@ def join_path(*parts: Any) -> str:
         str: Joined path
     """
     return os.path.join(*(str(p) for p in parts if p is not None))
+
+
+def create_service(name: str) -> str:
+    """Create a ClusterIP Kubernetes service with selector app=<name>.
+
+    Idempotent: a 409 AlreadyExists response is treated as success.
+    """
+    from kubernetes import client as k8s_client
+    from kubernetes.client.exceptions import ApiException
+
+    load_k8s_config()
+    namespace = get_namespace()
+
+    svc = k8s_client.V1Service(
+        api_version="v1",
+        kind="Service",
+        metadata=k8s_client.V1ObjectMeta(
+            name=name,
+            annotations={"service.alpha.kubernetes.io/app-protocols": '{"grpc":"HTTP2"}'},
+        ),
+        spec=k8s_client.V1ServiceSpec(
+            selector={"app": name},
+            ports=[k8s_client.V1ServicePort(protocol="TCP", port=8080, target_port=8080)],
+            type="ClusterIP",
+        ),
+    )
+
+    api = k8s_client.CoreV1Api()
+    try:
+        api.create_namespaced_service(namespace=namespace, body=svc)
+    except ApiException as exc:
+        if exc.status != 409:
+            raise
+    return name
+
+
+def delete_service(name: str) -> str:
+    """Delete a Kubernetes service by name.
+
+    Idempotent: a 404 NotFound response is treated as success.
+    """
+    from kubernetes import client as k8s_client
+    from kubernetes.client.exceptions import ApiException
+
+    load_k8s_config()
+    namespace = get_namespace()
+
+    api = k8s_client.CoreV1Api()
+    try:
+        api.delete_namespaced_service(name=name, namespace=namespace)
+    except ApiException as exc:
+        if exc.status != 404:
+            raise
+    return name

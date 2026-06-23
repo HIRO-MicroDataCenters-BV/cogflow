@@ -347,123 +347,17 @@ def delete_pipeline(pipeline_id: str, **client_kwargs):
 # ================================================================
 
 
-def create_service(name: str) -> str:
-    """Create a simple ClusterIP service with selector app=<name>."""
-    logger.info("Creating Kubernetes service=%s", name)
-
-    client, api_exception = _load_k8s_client()
-    from ...utils.common import get_namespace, load_k8s_config
-
-    load_k8s_config()
-    namespace = get_namespace()
-
-    svc = client.V1Service(
-        api_version="v1",
-        kind="Service",
-        metadata=client.V1ObjectMeta(
-            name=name,
-            annotations={"service.alpha.kubernetes.io/app-protocols": '{"grpc":"HTTP2"}'},
-        ),
-        spec=client.V1ServiceSpec(
-            selector={"app": name},
-            ports=[client.V1ServicePort(protocol="TCP", port=8080, target_port=8080)],
-            type="ClusterIP",
-        ),
-    )
-
-    def _inner():
-        api = client.CoreV1Api()
-        return api.create_namespaced_service(namespace=namespace, body=svc)
-
-    _safe_kfp_call(_inner, f"Create service {name}")
-    return name
-
-
-def delete_service(name: str):
-    """Delete service by name."""
-    logger.info("Deleting Kubernetes service=%s", name)
-
-    client, api_exception = _load_k8s_client()
-    from ...utils.common import get_namespace, load_k8s_config
-
-    load_k8s_config()
-    namespace = get_namespace()
-
-    def _inner():
-        api = client.CoreV1Api()
-        return api.delete_namespaced_service(name=name, namespace=namespace)
-
-    return _safe_kfp_call(_inner, f"Delete service {name}")
-
-
 def _create_service_component(name: str) -> str:
-    from kubernetes import client as k8s_client
-    from kubernetes import config as k8s_config
+    from cogflow.utils.common import create_service
 
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.config_exception.ConfigException:
-        k8s_config.load_kube_config()
-    try:
-        with open(
-            "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
-            encoding="utf-8",
-        ) as f:
-            namespace = f.read().strip()
-    except FileNotFoundError:
-        try:
-            _, ctx = k8s_config.list_kube_config_contexts()
-            namespace = ctx["context"].get("namespace", "default")
-        except k8s_config.config_exception.ConfigException:
-            namespace = "default"
-    svc = k8s_client.V1Service(
-        api_version="v1",
-        kind="Service",
-        metadata=k8s_client.V1ObjectMeta(
-            name=name,
-            annotations={"service.alpha.kubernetes.io/app-protocols": '{"grpc":"HTTP2"}'},
-        ),
-        spec=k8s_client.V1ServiceSpec(
-            selector={"app": name},
-            ports=[k8s_client.V1ServicePort(protocol="TCP", port=8080, target_port=8080)],
-            type="ClusterIP",
-        ),
-    )
-    api = k8s_client.CoreV1Api()
-    try:
-        api.create_namespaced_service(namespace=namespace, body=svc)
-    except k8s_client.exceptions.ApiException as exc:
-        if exc.status != 409:
-            raise
+    create_service(name)
     return name
 
 
 def _delete_service_component(name: str) -> str:
-    from kubernetes import client as k8s_client
-    from kubernetes import config as k8s_config
+    from cogflow.utils.common import delete_service
 
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.config_exception.ConfigException:
-        k8s_config.load_kube_config()
-    try:
-        with open(
-            "/var/run/secrets/kubernetes.io/serviceaccount/namespace",
-            encoding="utf-8",
-        ) as f:
-            namespace = f.read().strip()
-    except FileNotFoundError:
-        try:
-            _, ctx = k8s_config.list_kube_config_contexts()
-            namespace = ctx["context"].get("namespace", "default")
-        except k8s_config.config_exception.ConfigException:
-            namespace = "default"
-    api = k8s_client.CoreV1Api()
-    try:
-        api.delete_namespaced_service(name=name, namespace=namespace)
-    except k8s_client.exceptions.ApiException as exc:
-        if exc.status != 404:
-            raise
+    delete_service(name)
     return name
 
 
