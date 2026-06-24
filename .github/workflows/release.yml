@@ -270,28 +270,3 @@ jobs:
           docker pull "${{ steps.tags.outputs.version_tag }}"
           docker run --rm "${{ steps.tags.outputs.version_tag }}" \
             python3 -c "import cogflow, kfp; print('cogflow', cogflow.__version__, 'kfp', kfp.__version__)"
-
-      - name: Prepare cogflow_lite wheel directory
-        run: mkdir -p docker_image_variants/lite/dist
-
-      - name: Copy cogflow wheel to cogflow_lite build context (tag-push path)
-        if: github.event_name == 'push'
-        run: cp docker_image_variants/latest/dist/*.whl docker_image_variants/lite/dist/
-
-      - name: Build and push cogflow_lite image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./docker_image_variants/lite
-          platforms: linux/amd64
-          push: true
-          tags: hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }},hiroregistry/cogflow_lite:latest
-          build-args: |
-            COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Smoke test cogflow_lite image
-        run: |
-          docker pull "hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}"
-          docker run --rm "hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}" \
-            python3 -c "import cogflow; print('cogflow', cogflow.__version__)"
