@@ -154,11 +154,19 @@ jobs:
             # is the slow step) and matches the documented arch policy.
             PLATFORMS="linux/amd64"
           fi
+          LITE_REGISTRY="hiroregistry/cogflow_lite"
+          if [[ "$CHANNEL" == "stable" ]]; then
+            LITE_TAGS="$LITE_REGISTRY:$VERSION,$LITE_REGISTRY:latest"
+          else
+            LITE_TAGS="$LITE_REGISTRY:$VERSION,$LITE_REGISTRY:latest-$CHANNEL"
+          fi
           {
             echo "tags=$TAGS"
+            echo "lite_tags=$LITE_TAGS"
             echo "channel=$CHANNEL"
             echo "platforms=$PLATFORMS"
             echo "version_tag=$REGISTRY:$VERSION"
+            echo "lite_version_tag=$LITE_REGISTRY:$VERSION"
           } >> "$GITHUB_OUTPUT"
           echo "Channel: $CHANNEL"
           echo "Tags: $TAGS"
@@ -271,20 +279,13 @@ jobs:
           docker run --rm "${{ steps.tags.outputs.version_tag }}" \
             python3 -c "import cogflow, kfp; print('cogflow', cogflow.__version__, 'kfp', kfp.__version__)"
 
-      - name: Prepare cogflow_lite wheel directory
-        run: mkdir -p docker_image_variants/lite/dist
-
-      - name: Copy cogflow wheel to cogflow_lite build context (tag-push path)
-        if: github.event_name == 'push'
-        run: cp docker_image_variants/latest/dist/*.whl docker_image_variants/lite/dist/
-
       - name: Build and push cogflow_lite image
         uses: docker/build-push-action@v6
         with:
           context: ./docker_image_variants/lite
-          platforms: linux/amd64
+          platforms: ${{ steps.tags.outputs.platforms }}
           push: true
-          tags: hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }},hiroregistry/cogflow_lite:latest
+          tags: ${{ steps.tags.outputs.lite_tags }}
           build-args: |
             COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
           cache-from: type=gha
@@ -292,6 +293,6 @@ jobs:
 
       - name: Smoke test cogflow_lite image
         run: |
-          docker pull "hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}"
-          docker run --rm "hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}" \
+          docker pull "${{ steps.tags.outputs.lite_version_tag }}"
+          docker run --rm "${{ steps.tags.outputs.lite_version_tag }}" \
             python3 -c "import cogflow; print('cogflow', cogflow.__version__)"
