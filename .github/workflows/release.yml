@@ -107,13 +107,6 @@ jobs:
 
   docker-publish:
     needs: [build, publish-pypi]
-    # Two triggers, both land here:
-    #   1. Tag push  — `build` and `publish-pypi` ran; gate on pypi success.
-    #   2. workflow_dispatch (manual rebuild of an already-published version)
-    #      — `build` and `publish-pypi` were skipped because their `if` gates
-    #      require `event_name == 'push'`, so the default needs-success gate
-    #      would skip this job too. `always()` overrides that; the inner
-    #      condition then chooses the mode.
     if: >-
       always() && (
         github.event_name == 'workflow_dispatch'
@@ -142,43 +135,21 @@ jobs:
           fi
           if [[ "$CHANNEL" == "stable" ]]; then
             TAGS="$REGISTRY:$VERSION,$REGISTRY:latest"
-            # Stable channel is consumer-facing (main branch images,
-            # downstream charm releases, external users) and must work
-            # on arm64 too.
             PLATFORMS="linux/amd64,linux/arm64"
           else
             TAGS="$REGISTRY:$VERSION,$REGISTRY:latest-$CHANNEL"
-            # Pre-release channels (beta/rc/alpha) are consumed only by
-            # our own dev-cluster CD which runs on amd64 nodes. Skipping
-            # the arm64 build saves ~8–10 min per release (QEMU emulation
-            # is the slow step) and matches the documented arch policy.
             PLATFORMS="linux/amd64"
-          fi
-          LITE_REGISTRY="hiroregistry/cogflow_lite"
-          if [[ "$CHANNEL" == "stable" ]]; then
-            LITE_TAGS="$LITE_REGISTRY:$VERSION,$LITE_REGISTRY:latest"
-          else
-            LITE_TAGS="$LITE_REGISTRY:$VERSION,$LITE_REGISTRY:latest-$CHANNEL"
           fi
           {
             echo "tags=$TAGS"
-            echo "lite_tags=$LITE_TAGS"
             echo "channel=$CHANNEL"
             echo "platforms=$PLATFORMS"
             echo "version_tag=$REGISTRY:$VERSION"
-            echo "lite_version_tag=$LITE_REGISTRY:$VERSION"
           } >> "$GITHUB_OUTPUT"
           echo "Channel: $CHANNEL"
           echo "Tags: $TAGS"
           echo "Platforms: $PLATFORMS"
 
-      # Build context always has a ``dist/`` directory. On the tag-push
-      # path we populate it with the wheel that ``build`` already uploaded
-      # as an artifact — no PyPI round-trip, no CDN race. On the
-      # workflow_dispatch path the ``build`` job was skipped (different
-      # ``if`` gate) so no artifact exists; the Dockerfile falls back to
-      # ``pip install cogflow==$VERSION`` from PyPI and the wait step
-      # below handles any lingering propagation.
       - name: Prepare wheel directory in build context
         run: mkdir -p docker_image_variants/latest/dist
 
@@ -189,18 +160,16 @@ jobs:
           name: cogflow-${{ needs.build.outputs.version }}
           path: ./docker_image_variants/latest/dist/
 
-      - name: Set up Python (for PyPI wait)
+      - name: Set up Python (dispatch-only, for PyPI wait)
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/setup-python@v6
         with:
           python-version: '3.10'
 
-      - name: Wait for PyPI simple index
-        # On workflow_dispatch the main image installs from PyPI (no local
-        # wheel artifact). On tag-push the main image uses the local wheel,
-        # but cogflow_lite always installs from PyPI, so both triggers need
-        # this wait. A single step covers both paths.
+      - name: Wait for PyPI simple index (dispatch-only)
+        if: github.event_name == 'workflow_dispatch'
         env:
-          VERSION: ${{ github.event.inputs.version || needs.build.outputs.version }}
+          VERSION: ${{ github.event.inputs.version }}
         run: |
           python3 - <<'PY'
           import os, sys, time
@@ -211,8 +180,7 @@ jobs:
           url = "https://pypi.org/simple/cogflow/"
           needles = (f"cogflow-{version}-", f"cogflow-{version}.")
 
-          attempts = 12  # ~4 minutes total
-          for attempt in range(1, attempts + 1):
+          for attempt in range(1, 13):
               try:
                   with urlopen(url, timeout=10) as resp:
                       html = resp.read().decode("utf-8", errors="replace")
@@ -220,20 +188,16 @@ jobs:
                       print(f"cogflow=={version} visible on simple index")
                       sys.exit(0)
               except URLError as exc:
-                  print(f"simple-index request failed ({attempt}/{attempts}): {exc}")
-              print(f"Waiting for simple index to list {version} ({attempt}/{attempts})...")
-              if attempt < attempts:
+                  print(f"simple-index request failed ({attempt}/12): {exc}")
+              print(f"Waiting for {version} on simple index ({attempt}/12)...")
+              if attempt < 12:
                   time.sleep(20)
 
-          print(f"::error::cogflow=={version} not on simple index after ~4 min")
+          print(f"::error::cogflow=={version} not found on simple index")
           sys.exit(1)
           PY
 
       - name: Set up QEMU
-        # Only needed when the platform list includes a non-native arch
-        # (runners are amd64, so arm64 is what actually needs emulation).
-        # Drive `with.platforms` from the same step so the QEMU and build
-        # platform lists can't drift if we later add/remove archs.
         if: contains(steps.tags.outputs.platforms, 'arm64')
         uses: docker/setup-qemu-action@v3
         with:
@@ -252,19 +216,11 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./docker_image_variants/latest
-          # Platforms come from the tags step so stable builds multi-arch
-          # and pre-release builds amd64-only. Even for amd64-only we keep
-          # the explicit platform list — build-push-action@v6 otherwise
-          # wraps the output in a manifest index that downstream
-          # `--platform linux/arm64` consumers reject outright.
           platforms: ${{ steps.tags.outputs.platforms }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |
             COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
-          # Buildx GitHub-Actions cache: layer reuse across runs when
-          # only requirements.txt / cogflow version changes. `mode=max`
-          # includes intermediate layers so later runs benefit too.
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -274,13 +230,50 @@ jobs:
           docker run --rm "${{ steps.tags.outputs.version_tag }}" \
             python3 -c "import cogflow, kfp; print('cogflow', cogflow.__version__, 'kfp', kfp.__version__)"
 
+      - name: Set up Python (tag-push, for cogflow_lite PyPI wait)
+        if: github.event_name == 'push'
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Wait for PyPI simple index (tag-push, for cogflow_lite)
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os, sys, time
+          from urllib.request import urlopen
+          from urllib.error import URLError
+
+          version = os.environ["VERSION"]
+          url = "https://pypi.org/simple/cogflow/"
+          needles = (f"cogflow-{version}-", f"cogflow-{version}.")
+
+          for attempt in range(1, 19):
+              try:
+                  with urlopen(url, timeout=10) as resp:
+                      html = resp.read().decode("utf-8", errors="replace")
+                  if any(n in html for n in needles):
+                      print(f"cogflow=={version} visible on simple index")
+                      sys.exit(0)
+              except URLError as exc:
+                  print(f"simple-index request failed ({attempt}/18): {exc}")
+              print(f"Waiting for {version} on simple index ({attempt}/18)...")
+              if attempt < 18:
+                  time.sleep(20)
+
+          print(f"::error::cogflow=={version} not found on simple index")
+          sys.exit(1)
+          PY
+
       - name: Build and push cogflow_lite image
         uses: docker/build-push-action@v6
         with:
           context: ./docker_image_variants/lite
-          platforms: ${{ steps.tags.outputs.platforms }}
+          platforms: linux/amd64
           push: true
-          tags: ${{ steps.tags.outputs.lite_tags }}
+          tags: hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }},hiroregistry/cogflow_lite:latest
           build-args: |
             COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
           cache-from: type=gha
@@ -288,6 +281,6 @@ jobs:
 
       - name: Smoke test cogflow_lite image
         run: |
-          docker pull "${{ steps.tags.outputs.lite_version_tag }}"
-          docker run --rm "${{ steps.tags.outputs.lite_version_tag }}" \
+          docker pull "hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}"
+          docker run --rm "hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}" \
             python3 -c "import cogflow; print('cogflow', cogflow.__version__)"
