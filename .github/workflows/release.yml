@@ -242,11 +242,6 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./docker_image_variants/latest
-          # Platforms come from the tags step so stable builds multi-arch
-          # and pre-release builds amd64-only. Even for amd64-only we keep
-          # the explicit platform list — build-push-action@v6 otherwise
-          # wraps the output in a manifest index that downstream
-          # `--platform linux/arm64` consumers reject outright.
           platforms: ${{ steps.tags.outputs.platforms }}
           push: true
           tags: ${{ steps.tags.outputs.tags }}
@@ -310,11 +305,9 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./docker_image_variants/lite
-          platforms: ${{ steps.tags.outputs.platforms }}
+          platforms: linux/amd64
           push: true
-          tags: |
-            hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}
-            hiroregistry/cogflow_lite:${{ steps.tags.outputs.channel == 'stable' && 'latest' || format('latest-{0}', steps.tags.outputs.channel) }}
+          tags: hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }},hiroregistry/cogflow_lite:latest
           build-args: |
             COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
           cache-from: type=gha,scope=lite
