@@ -307,7 +307,9 @@ jobs:
           context: ./docker_image_variants/lite
           platforms: linux/amd64
           push: true
-          tags: hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }},hiroregistry/cogflow_lite:latest
+          tags: |
+            hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}
+            hiroregistry/cogflow_lite:${{ steps.tags.outputs.channel == 'stable' && 'latest' || format('latest-{0}', steps.tags.outputs.channel) }}
           build-args: |
             COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
           cache-from: type=gha,scope=lite
