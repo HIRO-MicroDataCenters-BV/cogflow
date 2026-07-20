@@ -126,7 +126,11 @@ jobs:
         env:
           VERSION: ${{ github.event.inputs.version || needs.build.outputs.version }}
         run: |
-          REGISTRY="hiroregistry/cogflow"
+          # Single source for the registry namespace so a rename touches
+          # one line and both images stay in sync.
+          REGISTRY_NS="hiroregistry"
+          REGISTRY="$REGISTRY_NS/cogflow"
+          LITE_REGISTRY="$REGISTRY_NS/cogflow_lite"
           if [[ "$VERSION" == *b* ]]; then
             CHANNEL="beta"
           elif [[ "$VERSION" == *rc* ]]; then
@@ -150,6 +154,7 @@ jobs:
             echo "channel=$CHANNEL"
             echo "platforms=$PLATFORMS"
             echo "version_tag=$REGISTRY:$VERSION"
+            echo "lite_registry=$LITE_REGISTRY"
           } >> "$GITHUB_OUTPUT"
           echo "Channel: $CHANNEL"
           echo "Tags: $TAGS"
@@ -284,8 +289,8 @@ jobs:
           platforms: ${{ steps.tags.outputs.platforms }}
           push: true
           tags: |
-            hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}
-            hiroregistry/cogflow_lite:${{ steps.tags.outputs.channel == 'stable' && 'latest' || format('latest-{0}', steps.tags.outputs.channel) }}
+            ${{ steps.tags.outputs.lite_registry }}:${{ github.event.inputs.version || needs.build.outputs.version }}
+            ${{ steps.tags.outputs.lite_registry }}:${{ steps.tags.outputs.channel == 'stable' && 'latest' || format('latest-{0}', steps.tags.outputs.channel) }}
           build-args: |
             COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
           cache-from: type=gha,scope=lite
@@ -293,6 +298,6 @@ jobs:
 
       - name: Smoke test cogflow_lite image
         run: |
-          docker pull "hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}"
-          docker run --rm "hiroregistry/cogflow_lite:${{ github.event.inputs.version || needs.build.outputs.version }}" \
+          docker pull "${{ steps.tags.outputs.lite_registry }}:${{ github.event.inputs.version || needs.build.outputs.version }}"
+          docker run --rm "${{ steps.tags.outputs.lite_registry }}:${{ github.event.inputs.version || needs.build.outputs.version }}" \
             python3 -c "import cogflow; print('cogflow', cogflow.__version__)"
