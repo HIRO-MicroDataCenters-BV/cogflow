@@ -10,7 +10,7 @@ import sys
 
 from ._lazy import _LazyLoader
 
-__version__ = "3.0.0b8"
+__version__ = "3.0.0b9"
 
 # Submodules that should be lazily imported when accessed
 _LAZY_SUBMODULES = [
