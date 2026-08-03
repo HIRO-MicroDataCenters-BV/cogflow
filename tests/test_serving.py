@@ -637,6 +637,95 @@ def test_deploy_llm_controller_uri_rejects_non_hf_base(serving, serving_module):
         )
 
 
+def test_deploy_llm_hf_base_with_lora_adapter(serving, serving_module):
+    """LoRA-on-HF-base hybrid: base via --model_id (HF), adapter staged via
+    storageUri to /mnt/models, and --enable-lora + --lora-modules emitted."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+        isvc_name="lora-q",
+        served_model_name="lora-q",
+        lora_storage_uri="s3://mlflow/0/abc/artifacts/adapter",
+        lora_module_name="ntk-gsm8k",
+        max_lora_rank=64,
+    )
+
+    body = _deploy_llm_create_call(fake_api)
+    predictor = body["spec"]["predictor"]
+    model = predictor["model"]
+    # Base still loads from the Hub via --model_id …
+    assert "--model_id=Qwen/Qwen2.5-0.5B-Instruct" in model["args"]
+    # … while the adapter dir is staged via storageUri to /mnt/models.
+    assert model["storageUri"] == "s3://mlflow/0/abc/artifacts/adapter"
+    assert predictor["serviceAccountName"] == "kserve-controller-s3"
+    # vLLM flags: --enable-lora, then --lora-modules NAME=/mnt/models.
+    assert "--enable-lora" in model["args"]
+    i = model["args"].index("--lora-modules")
+    assert model["args"][i + 1] == "ntk-gsm8k=/mnt/models"
+    assert "--max-lora-rank=64" in model["args"]
+
+
+def test_deploy_llm_lora_rejects_non_hf_base(serving, serving_module):
+    """lora_storage_uri needs an hf:// base — an s3 base already claims the
+    single storageUri slot, so fail fast rather than drop the adapter."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="lora_storage_uri"):
+        serving.deploy_llm(
+            storage_uri="s3://mlflow/0/abc/artifacts/model",
+            isvc_name="bad-lora",
+            served_model_name="bad-lora",
+            lora_storage_uri="s3://mlflow/0/abc/artifacts/adapter",
+            lora_module_name="ntk-gsm8k",
+        )
+
+
+def test_deploy_llm_lora_and_controller_mutually_exclusive(serving, serving_module):
+    """Only one side artifact fits the single storageUri slot."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="single storageUri slot"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+            isvc_name="both",
+            served_model_name="both",
+            lora_storage_uri="s3://mlflow/0/abc/artifacts/adapter",
+            lora_module_name="ntk-gsm8k",
+            controller_storage_uri="s3://mlflow/0/abc/artifacts/controller/controller.pt",
+        )
+
+
+def test_deploy_llm_lora_uri_rejects_serverless_mode(serving, serving_module):
+    """The LoRA hybrid stages via storageUri (fieldRef env) — Serverless
+    mode must fail fast, same as the controller hybrid."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="RawDeployment"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+            isvc_name="lora-serverless",
+            served_model_name="lora-serverless",
+            lora_storage_uri="s3://mlflow/0/abc/artifacts/adapter",
+            lora_module_name="ntk-gsm8k",
+            annotations={"serving.kserve.io/deploymentMode": "Serverless"},
+        )
+
+
+def test_deploy_llm_lora_requires_module_name(serving, serving_module):
+    """lora_storage_uri without lora_module_name is rejected (the name is
+    the served adapter id in --lora-modules)."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="lora_module_name"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+            isvc_name="no-name",
+            served_model_name="no-name",
+            lora_storage_uri="s3://mlflow/0/abc/artifacts/adapter",
+        )
+
+
 def test_deploy_llm_default_resources(serving, serving_module):
     """No resources override → defaults: 4/7Gi/1gpu requests, 8/8Gi/1gpu limits."""
     _, fake_api, _ = serving_module
@@ -1670,3 +1759,261 @@ def test_serving_module_reexports_async_deploy_llm():
         f"Public API `cogflow.serving.async_deploy_llm` does not resolve.\n"
         f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
+
+
+# ---------------------------------------------------------------------
+# SERVING ENGINE SELECTION (vllm | airllm)
+# ---------------------------------------------------------------------
+
+
+def test_deploy_llm_airllm_hf_source_spec(serving, serving_module):
+    """engine='airllm' + hf:// → modelFormat airllm, shared flags only,
+    still --model_id (no storageUri) like the vLLM hf path."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://NousResearch/Meta-Llama-3-8B-Instruct",
+        engine="airllm",
+        max_model_len=4096,
+        dtype="bfloat16",
+        trust_remote_code=True,
+    )
+
+    model = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]
+    assert model["modelFormat"] == {"name": "airllm"}
+    assert "storageUri" not in model
+    assert model["args"] == [
+        "--model_id=NousResearch/Meta-Llama-3-8B-Instruct",
+        "--model_name=Meta-Llama-3-8B-Instruct",
+        "--max_model_len=4096",
+        "--dtype=bfloat16",
+        "--trust_remote_code",
+    ]
+
+
+def test_deploy_llm_airllm_s3_source_spec(serving, serving_module):
+    """engine='airllm' + s3:// → modelFormat airllm, storageUri + S3 SA
+    exactly like the vLLM s3 path (source plumbing is engine-independent)."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="s3://mlflow/0/abc/artifacts/model",
+        isvc_name="mlf-air",
+        served_model_name="mlf-air",
+        engine="airllm",
+    )
+
+    body = _deploy_llm_create_call(fake_api)
+    predictor = body["spec"]["predictor"]
+    assert predictor["model"]["modelFormat"] == {"name": "airllm"}
+    assert predictor["model"]["storageUri"] == "s3://mlflow/0/abc/artifacts/model"
+    assert predictor["serviceAccountName"] == "kserve-controller-s3"
+
+
+def test_deploy_llm_explicit_vllm_engine_matches_default(serving, serving_module):
+    """engine='vllm' must produce the same spec as omitting engine."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        engine="vllm",
+        tensor_parallel_size=2,
+    )
+
+    model = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]
+    assert model["modelFormat"] == {"name": "huggingface"}
+    assert "--tensor-parallel-size=2" in model["args"]
+
+
+def test_deploy_llm_unknown_engine_rejected(serving, serving_module):
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="engine='triton' is not supported"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+            engine="triton",
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs, param_name",
+    [
+        ({"tensor_parallel_size": 2}, "tensor_parallel_size"),
+        ({"gpu_memory_utilization": 0.9}, "gpu_memory_utilization"),
+        ({"max_num_seqs": 16}, "max_num_seqs"),
+        ({"kv_cache_dtype": "fp8_e4m3"}, "kv_cache_dtype"),
+        ({"hf_overrides": {"architectures": ["X"]}}, "hf_overrides"),
+        ({"max_lora_rank": 32}, "max_lora_rank"),
+    ],
+)
+def test_deploy_llm_airllm_rejects_vllm_only_kwargs(serving, serving_module, kwargs, param_name):
+    """Every vLLM-only knob fails fast (named in the error) under airllm —
+    silent dropping would deploy something other than what was asked."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match=param_name):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+            engine="airllm",
+            **kwargs,
+        )
+
+
+@pytest.mark.parametrize("kv_sentinel", ["auto", "none", "", "AUTO", " none "])
+def test_deploy_llm_airllm_kv_sentinels_are_unset(serving, serving_module, kv_sentinel):
+    """Sentinel kv_cache_dtype counts as unset for airllm too (symmetric
+    with the vLLM flag-emission rules)."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        engine="airllm",
+        kv_cache_dtype=kv_sentinel,
+    )
+    model = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]
+    assert not any(a.startswith("--kv-cache-dtype") for a in model["args"])
+
+
+@pytest.mark.parametrize(
+    "quantization, expected_flag",
+    [
+        ("int4", "--compression=4bit"),
+        ("int8", "--compression=8bit"),
+        ("INT4", "--compression=4bit"),
+    ],
+)
+def test_deploy_llm_airllm_quantization_maps_to_compression(
+    serving, serving_module, quantization, expected_flag
+):
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        engine="airllm",
+        quantization=quantization,
+    )
+    model = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]
+    assert expected_flag in model["args"]
+    assert not any(a.startswith("--quantization") for a in model["args"])
+
+
+@pytest.mark.parametrize("quant_sentinel", ["none", "auto", "", " None "])
+def test_deploy_llm_airllm_quantization_sentinels_emit_no_flag(serving, serving_module, quant_sentinel):
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        engine="airllm",
+        quantization=quant_sentinel,
+    )
+    model = _deploy_llm_create_call(fake_api)["spec"]["predictor"]["model"]
+    assert not any(a.startswith("--compression") for a in model["args"])
+
+
+@pytest.mark.parametrize("bad_quant", ["awq", "gptq", "fp8", "bitsandbytes"])
+def test_deploy_llm_airllm_rejects_vllm_quantization_schemes(serving, serving_module, bad_quant):
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="int4/int8"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+            engine="airllm",
+            quantization=bad_quant,
+        )
+
+
+def test_deploy_llm_airllm_rejects_adapter_hybrids(serving, serving_module):
+    """NTK controller and LoRA staging are vLLM-runtime features."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="vLLM-runtime features"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+            engine="airllm",
+            controller_storage_uri="s3://mlflow/0/abc/artifacts/controller/controller.pt",
+        )
+    with pytest.raises(CogflowValidationError, match="vLLM-runtime features"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-0.5B-Instruct",
+            engine="airllm",
+            lora_storage_uri="s3://mlflow/0/abc/artifacts/adapter",
+            lora_module_name="adapter",
+        )
+
+
+def test_deploy_llm_airllm_cache_pvc_declares_volume(serving, serving_module):
+    """cache_pvc_name overrides the runtime's airllm-cache emptyDir by
+    declaring a same-named pod-spec volume backed by the PVC."""
+    _, fake_api, _ = serving_module
+
+    serving.deploy_llm(
+        storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+        engine="airllm",
+        cache_pvc_name="k3-cache",
+    )
+    predictor = _deploy_llm_create_call(fake_api)["spec"]["predictor"]
+    assert predictor["volumes"] == [
+        {"name": "airllm-cache", "persistentVolumeClaim": {"claimName": "k3-cache"}}
+    ]
+
+
+def test_deploy_llm_cache_pvc_rejected_for_vllm(serving, serving_module):
+    """Symmetric guard: the shard-cache PVC means nothing to the vLLM runtime."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="cache_pvc_name is only meaningful"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+            cache_pvc_name="k3-cache",
+        )
+
+
+def test_deploy_llm_cache_pvc_name_must_be_dns1123(serving, serving_module):
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="DNS-1123"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+            engine="airllm",
+            cache_pvc_name="Bad_PVC_Name",
+        )
+
+
+def test_serve_llm_records_engine_in_tags_and_annotations(serving, serving_module, monkeypatch):
+    """serve_llm stamps llm_engine on the catalog tags and the ISVC
+    annotations for both engines (the record is the ISVC, no DB column)."""
+    fake_run_id = "abcdef01234567890123456789abcd11"
+    register_mock = _patch_llm_catalog(monkeypatch, run_id=fake_run_id)
+    _, fake_api, _ = serving_module
+
+    serving.serve_llm(hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct", engine="airllm")
+
+    assert register_mock.call_args.kwargs["extra_tags"]["llm_engine"] == "airllm"
+    annotations = _deploy_llm_create_call(fake_api)["metadata"]["annotations"]
+    assert annotations["llm_engine"] == "airllm"
+    assert annotations["model_type"] == "llm"
+
+
+def test_serve_llm_default_engine_annotation_is_vllm(serving, serving_module, monkeypatch):
+    fake_run_id = "abcdef01234567890123456789abcd12"
+    register_mock = _patch_llm_catalog(monkeypatch, run_id=fake_run_id)
+    _, fake_api, _ = serving_module
+
+    serving.serve_llm(hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct")
+
+    assert register_mock.call_args.kwargs["extra_tags"]["llm_engine"] == "vllm"
+    annotations = _deploy_llm_create_call(fake_api)["metadata"]["annotations"]
+    assert annotations["llm_engine"] == "vllm"
+
+
+def test_serve_llm_invalid_engine_fails_before_catalog(serving, serving_module, monkeypatch):
+    """Engine validation precedes catalog registration so a bad engine
+    cannot leave an orphan MLflow run behind."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    register_mock = _patch_llm_catalog(monkeypatch, run_id="deadbeef" * 4)
+
+    with pytest.raises(CogflowValidationError, match="is not supported"):
+        serving.serve_llm(hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct", engine="tgi")
+
+    register_mock.assert_not_called()

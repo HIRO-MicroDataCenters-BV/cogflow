@@ -360,3 +360,86 @@ async def test_async_register_finetuned_catalog_entry_posts_adapter_row(monkeypa
     assert payload["type"] == "lora"
     assert payload["base_model_id"] == common.normalize_uuid(base_id)
     assert payload["hf_model_id"] == "Qwen/Qwen2.5-0.5B-Instruct"
+
+
+# ---------------------------------------------------------------------
+# LLM SERVING ENGINE (async parity with the sync path)
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_async_deploy_llm_airllm_spec_parity(async_serving, fake_async_api):
+    """The async path delegates to the sync spec builder, so engine='airllm'
+    must emit the identical modelFormat / args / volume shape."""
+    await async_serving.deploy_llm(
+        storage_uri="hf://NousResearch/Meta-Llama-3-8B-Instruct",
+        engine="airllm",
+        max_model_len=4096,
+        cache_pvc_name="air-cache",
+    )
+
+    creates = [c for c in fake_async_api.calls if c[0] == "create"]
+    assert len(creates) == 1
+    predictor = creates[0][1]["body"]["spec"]["predictor"]
+    assert predictor["model"]["modelFormat"] == {"name": "airllm"}
+    assert "--model_id=NousResearch/Meta-Llama-3-8B-Instruct" in predictor["model"]["args"]
+    assert not any(a.startswith("--tensor-parallel-size") for a in predictor["model"]["args"])
+    assert predictor["volumes"] == [
+        {"name": "airllm-cache", "persistentVolumeClaim": {"claimName": "air-cache"}}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_async_deploy_llm_airllm_rejects_vllm_only_kwargs(async_serving, fake_async_api):
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="tensor_parallel_size"):
+        await async_serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+            engine="airllm",
+            tensor_parallel_size=2,
+        )
+
+
+@pytest.mark.asyncio
+async def test_async_serve_llm_records_engine(async_serving, fake_async_api, monkeypatch):
+    """async_serve_llm stamps llm_engine on catalog tags + ISVC annotations,
+    matching the sync path."""
+    import cogflow.core.models as core_models_module
+
+    fake_run_id = "deadbeef1111deadbeef1111deadbeef"
+    register_mock = AsyncMock(return_value=fake_run_id)
+    monkeypatch.setattr(
+        core_models_module,
+        "async_register_llm_catalog_entry",
+        register_mock,
+        raising=True,
+    )
+
+    await async_serving.serve_llm(
+        hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct", engine="airllm"
+    )
+
+    assert register_mock.call_args.kwargs["extra_tags"]["llm_engine"] == "airllm"
+    creates = [c for c in fake_async_api.calls if c[0] == "create"]
+    annotations = creates[0][1]["body"]["metadata"]["annotations"]
+    assert annotations["llm_engine"] == "airllm"
+
+
+@pytest.mark.asyncio
+async def test_async_serve_llm_invalid_engine_fails_before_catalog(async_serving, fake_async_api, monkeypatch):
+    import cogflow.core.models as core_models_module
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    register_mock = AsyncMock(return_value="deadbeef" * 4)
+    monkeypatch.setattr(
+        core_models_module,
+        "async_register_llm_catalog_entry",
+        register_mock,
+        raising=True,
+    )
+
+    with pytest.raises(CogflowValidationError, match="is not supported"):
+        await async_serving.serve_llm(hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct", engine="tgi")
+
+    register_mock.assert_not_called()

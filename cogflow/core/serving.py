@@ -78,6 +78,27 @@ def _is_unset_sentinel(value: str | None) -> bool:
     return value.strip().lower() in _LLM_ARG_SENTINELS
 
 
+# Serving engine → KServe modelFormat name. The modelFormat is the whole
+# routing mechanism: KServe's autoSelect matches it against the
+# ClusterServingRuntimes' ``supportedModelFormats`` (``huggingface`` →
+# the vLLM-backed ``kserve-huggingfaceserver``, ``airllm`` → the
+# layer-streaming ``kserve-airllm``). The ISVC never names a runtime or
+# an image.
+_ENGINE_MODEL_FORMAT: dict[str, str] = {
+    "vllm": "huggingface",
+    "airllm": "airllm",
+}
+_SUPPORTED_LLM_ENGINES = tuple(_ENGINE_MODEL_FORMAT)
+
+# airllm has no runtime-cast quantization; it offers block-wise on-disk
+# compression of the layer shards instead. Only these two caller values
+# translate; everything else (awq, gptq, fp8, …) is a vLLM-only scheme.
+_AIRLLM_COMPRESSION_BY_QUANTIZATION: dict[str, str] = {
+    "int4": "4bit",
+    "int8": "8bit",
+}
+
+
 # =====================================================================
 #   Serving Manager (Kubernetes-native)
 # =====================================================================
@@ -712,6 +733,48 @@ class ServingManager:
         return isvc_name, served_model_name
 
     @staticmethod
+    def _reject_vllm_only_llm_kwargs(
+        engine: str,
+        *,
+        tensor_parallel_size: int | None,
+        gpu_memory_utilization: float | None,
+        max_num_seqs: int | None,
+        kv_cache_dtype: str | None,
+        hf_overrides: dict[str, Any] | None,
+        lora_modules: list[dict[str, str]] | None,
+        max_lora_rank: int | None,
+    ) -> None:
+        """Fail fast on knobs that only exist on the vLLM runtime.
+
+        A weight streamed from disk has no tensor-parallel split, no
+        gpu-memory-utilization fraction, no vLLM KV-cache cast, no
+        ``--hf-overrides`` architecture redirect and no LoRA module
+        loading — silently dropping any of them would deploy something
+        materially different from what the caller asked for. Sentinel
+        values (``none``/``auto``/empty) still count as unset, matching
+        the flag-emission rules.
+        """
+        offending = [
+            name
+            for name, value in (
+                ("tensor_parallel_size", tensor_parallel_size),
+                ("gpu_memory_utilization", gpu_memory_utilization),
+                ("max_num_seqs", max_num_seqs),
+                ("hf_overrides", hf_overrides),
+                ("lora_modules", lora_modules),
+                ("max_lora_rank", max_lora_rank),
+            )
+            if value is not None
+        ]
+        if not _is_unset_sentinel(kv_cache_dtype):
+            offending.append("kv_cache_dtype")
+        if offending:
+            raise CogflowValidationError(
+                f"engine={engine!r} does not support vLLM-only parameters: "
+                f"{', '.join(sorted(offending))}. Unset them or use engine='vllm'."
+            )
+
+    @staticmethod
     def _build_llm_args(
         served_model_name: str,
         *,
@@ -724,6 +787,9 @@ class ServingManager:
         quantization: str | None = None,
         kv_cache_dtype: str | None = None,
         hf_overrides: dict[str, Any] | None = None,
+        lora_modules: list[dict[str, str]] | None = None,
+        max_lora_rank: int | None = None,
+        engine: str = "vllm",
     ) -> list[str]:
         """Whitelisted runtime args passed into the HF runtime container.
 
@@ -745,6 +811,13 @@ class ServingManager:
         the recommender's fallback ladder relies on (fp8/AWQ weights and
         fp8 KV cache). Emitted only when set so unrelated callers keep
         emitting diff-clean ISVCs.
+
+        With ``engine="airllm"`` only the shared KServe-side flags are
+        emitted, plus ``--compression`` mapped from ``quantization``
+        (int4/int8 → block-wise 4bit/8bit); every vLLM-only kwarg is
+        rejected up-front (see ``_reject_vllm_only_llm_kwargs``). The
+        ``--backend=airllm`` flag itself is runtime-owned: it lives in
+        the ``kserve-airllm`` ClusterServingRuntime's args, not here.
         """
         args: list[str] = [f"--model_name={served_model_name}"]
         if max_model_len is not None:
@@ -753,6 +826,30 @@ class ServingManager:
             args.append(f"--dtype={dtype}")
         if trust_remote_code:
             args.append("--trust_remote_code")
+
+        if engine == "airllm":
+            ServingManager._reject_vllm_only_llm_kwargs(
+                engine,
+                tensor_parallel_size=tensor_parallel_size,
+                gpu_memory_utilization=gpu_memory_utilization,
+                max_num_seqs=max_num_seqs,
+                kv_cache_dtype=kv_cache_dtype,
+                hf_overrides=hf_overrides,
+                lora_modules=lora_modules,
+                max_lora_rank=max_lora_rank,
+            )
+            normalized_quantization = quantization.strip().lower() if quantization is not None else None
+            if not _is_unset_sentinel(normalized_quantization):
+                compression = _AIRLLM_COMPRESSION_BY_QUANTIZATION.get(normalized_quantization)
+                if compression is None:
+                    raise CogflowValidationError(
+                        f"engine='airllm' supports block-wise int4/int8 compression only; "
+                        f"got quantization={quantization!r}. Pre-quantized schemes "
+                        f"(awq/gptq/fp8/…) are vLLM-only."
+                    )
+                args.append(f"--compression={compression}")
+            return args
+
         if tensor_parallel_size is not None:
             args.append(f"--tensor-parallel-size={tensor_parallel_size}")
         if gpu_memory_utilization is not None:
@@ -798,6 +895,36 @@ class ServingManager:
                 except (TypeError, ValueError) as exc:
                     raise CogflowValidationError(f"hf_overrides must be JSON-serializable: {exc}") from exc
                 args.append(f"--hf-overrides={rendered}")
+        # ``--enable-lora`` + ``--lora-modules`` are vLLM hyphen-style flags
+        # (they fall through the KServe HF runtime's ``parse_known_args`` to
+        # the vLLM engine parser). Each module is emitted as a separate
+        # ``NAME=PATH`` token after a single ``--lora-modules`` flag —
+        # vLLM's parser reads them with ``nargs='+'``, so the flag and its
+        # values must be distinct argv entries (not the ``--flag=value``
+        # form used above). The base still loads via ``--model_id`` /
+        # ``storageUri``; the adapter is staged separately by the caller
+        # (see ``_build_llm_predictor``) and referenced here by local PATH.
+        if lora_modules:
+            for mod in lora_modules:
+                if not mod.get("name") or not mod.get("path"):
+                    raise CogflowValidationError(
+                        f"each lora module needs a non-empty 'name' and 'path', got {mod!r}"
+                    )
+            args.append("--enable-lora")
+            args.append("--lora-modules")
+            # Stable order so the emitted ISVC is diff-friendly across reruns.
+            for mod in lora_modules:
+                args.append(f"{mod['name']}={mod['path']}")
+            # The LoRA export's rank is ``max gates-per-layer`` and can
+            # exceed vLLM's default ``--max-lora-rank`` (16). Emit it when
+            # the caller knows the rank so a wide adapter isn't rejected at
+            # load time. vLLM validates the ceiling itself.
+            if max_lora_rank is not None:
+                if max_lora_rank < 1:
+                    raise CogflowValidationError(f"max_lora_rank must be >= 1, got {max_lora_rank}")
+                args.append(f"--max-lora-rank={max_lora_rank}")
+        elif max_lora_rank is not None:
+            raise CogflowValidationError("max_lora_rank was set without any lora_modules")
         return args
 
     @staticmethod
@@ -821,6 +948,11 @@ class ServingManager:
         kv_cache_dtype: str | None = None,
         hf_overrides: dict[str, Any] | None = None,
         controller_storage_uri: str | None = None,
+        lora_storage_uri: str | None = None,
+        lora_module_name: str | None = None,
+        max_lora_rank: int | None = None,
+        engine: str = "vllm",
+        cache_pvc_name: str | None = None,
     ) -> dict[str, Any]:
         # Replica bounds must be internally consistent before we hand the
         # ISVC to KServe — otherwise the CRD is rejected at admission (or
@@ -834,6 +966,37 @@ class ServingManager:
             raise CogflowValidationError(f"max_replicas must be >= 1, got {max_replicas}")
         if min_replicas > max_replicas:
             raise CogflowValidationError(f"min_replicas ({min_replicas}) must be <= max_replicas ({max_replicas})")
+
+        if engine not in _SUPPORTED_LLM_ENGINES:
+            raise CogflowValidationError(
+                f"engine={engine!r} is not supported; use one of {_SUPPORTED_LLM_ENGINES}"
+            )
+        # Symmetric engine/feature pairing, failed fast in both directions:
+        # the NTK controller and LoRA hybrids are vLLM-runtime features,
+        # while the shard-cache PVC only means something to the airllm
+        # runtime (it backs /data/airllm — HF download cache + layer
+        # splits — which the vLLM image doesn't mount).
+        # max_lora_rank is checked here (not just in _build_llm_args)
+        # because this builder nulls it whenever no lora_modules were
+        # derived, which would silently drop it before the args-level
+        # rejection could see it.
+        if engine == "airllm" and (
+            controller_storage_uri or lora_storage_uri or max_lora_rank is not None
+        ):
+            raise CogflowValidationError(
+                "controller_storage_uri / lora_storage_uri / max_lora_rank are "
+                "vLLM-runtime features (adapter-aware subclasses, "
+                "--lora-modules); they cannot be combined with engine='airllm'."
+            )
+        if engine != "airllm" and cache_pvc_name:
+            raise CogflowValidationError(
+                f"cache_pvc_name is only meaningful with engine='airllm' "
+                f"(it backs the layer-shard cache volume); got engine={engine!r}."
+            )
+        if cache_pvc_name and not ServingManager._DNS1123_LABEL_RE.match(cache_pvc_name):
+            raise CogflowValidationError(
+                f"cache_pvc_name={cache_pvc_name!r} is not a valid DNS-1123 label"
+            )
 
         # Source plumbing — HF Hub vs MLflow/MinIO routes through
         # different KServe code paths:
@@ -874,6 +1037,34 @@ class ServingManager:
                 f"(the base loads via --model_id, freeing the single storageUri "
                 f"slot for the controller); got base storage_uri={storage_uri!r}."
             )
+        # A LoRA adapter is staged through the same single storageUri slot as
+        # the controller hybrid, so it carries the same hf-base requirement
+        # and is mutually exclusive with a controller. ``lora_module_name``
+        # is required alongside the URI (it becomes the served adapter name
+        # in ``--lora-modules``).
+        if lora_storage_uri and not is_hf_source:
+            raise CogflowValidationError(
+                "lora_storage_uri is only supported with an hf:// base "
+                f"(the base loads via --model_id, freeing the single storageUri "
+                f"slot for the adapter); got base storage_uri={storage_uri!r}."
+            )
+        if lora_storage_uri and controller_storage_uri:
+            raise CogflowValidationError(
+                "lora_storage_uri and controller_storage_uri both claim the "
+                "single storageUri slot — attach only one adapter per ISVC."
+            )
+        if lora_storage_uri and not lora_module_name:
+            raise CogflowValidationError("lora_storage_uri requires lora_module_name")
+        if lora_module_name and not lora_storage_uri:
+            raise CogflowValidationError("lora_module_name requires lora_storage_uri")
+
+        lora_modules: list[dict[str, str]] | None = None
+        if lora_storage_uri:
+            # The adapter dir is staged by the storage-initializer to the
+            # predictor's model mount, so vLLM references it by that local
+            # path (the base loads from the Hub via --model_id).
+            lora_modules = [{"name": lora_module_name, "path": ServingManager._MODEL_MOUNT_PATH}]
+
         runtime_args = ServingManager._build_llm_args(
             served_model_name,
             max_model_len=max_model_len,
@@ -885,18 +1076,28 @@ class ServingManager:
             quantization=quantization,
             kv_cache_dtype=kv_cache_dtype,
             hf_overrides=hf_overrides,
+            lora_modules=lora_modules,
+            max_lora_rank=max_lora_rank if lora_modules else None,
+            engine=engine,
         )
         if is_hf_source:
             # --model_id comes first for readability in the emitted YAML
             runtime_args = [f"--model_id={hf_id}", *runtime_args]
 
         model_block: dict[str, Any] = {
-            "modelFormat": {"name": "huggingface"},
+            "modelFormat": {"name": _ENGINE_MODEL_FORMAT[engine]},
             "args": runtime_args,
             "resources": ServingManager._merge_resources(resources),
         }
         if not is_hf_source:
             model_block["storageUri"] = storage_uri
+        elif lora_storage_uri:
+            # Adapter-on-HF-base hybrid (same single-slot mechanism as the
+            # controller below): the base loads from the Hub via --model_id,
+            # while the PEFT adapter dir is staged by KServe's storage-
+            # initializer to the model mount, where vLLM's --lora-modules
+            # picks it up. RawDeployment-only for the same fieldRef reason.
+            model_block["storageUri"] = lora_storage_uri
         elif controller_storage_uri:
             # Adapter-on-HF-base hybrid: the base weights load from the
             # HF Hub via ``--model_id`` (above), while a small side
@@ -929,8 +1130,10 @@ class ServingManager:
         # pulls do not — omitting the SA keeps the pod token-free. The
         # side controller artifact (``controller_storage_uri``) is also
         # S3-staged, so an HF base + S3 controller still needs the SA.
-        if storage_uri.startswith("s3://") or (
-            controller_storage_uri is not None and controller_storage_uri.startswith("s3://")
+        if (
+            storage_uri.startswith("s3://")
+            or (controller_storage_uri is not None and controller_storage_uri.startswith("s3://"))
+            or (lora_storage_uri is not None and lora_storage_uri.startswith("s3://"))
         ):
             predictor["serviceAccountName"] = "kserve-controller-s3"
 
@@ -939,9 +1142,28 @@ class ServingManager:
         if node_selector:
             predictor["nodeSelector"] = node_selector
 
+        # airllm shard-cache persistence: override the runtime's default
+        # ``airllm-cache`` emptyDir with a pre-provisioned PVC by declaring
+        # a pod-spec volume of the same name. The runtime's volumeMounts
+        # keep pointing at /data/airllm (HF download cache + layer splits),
+        # so a pod restart skips the re-download/re-split — essential for
+        # TB-scale checkpoints. The volume name must match the
+        # ClusterServingRuntime's (``kserve-airllm``) volume exactly.
+        if cache_pvc_name:
+            predictor["volumes"] = [
+                {
+                    "name": "airllm-cache",
+                    "persistentVolumeClaim": {"claimName": cache_pvc_name},
+                }
+            ]
+
         return predictor
 
     _DEPLOYMENT_MODE_ANNOTATION = "serving.kserve.io/deploymentMode"
+
+    # KServe's storage-initializer downloads ``storageUri`` here; used as the
+    # local ``--lora-modules NAME=PATH`` path for a staged PEFT adapter.
+    _MODEL_MOUNT_PATH = "/mnt/models"
 
     @staticmethod
     def _apply_raw_deployment_defaults(
@@ -974,29 +1196,30 @@ class ServingManager:
         return predictor, effective_annotations
 
     @staticmethod
-    def _assert_controller_compatible_mode(
-        controller_storage_uri: str | None,
+    def _assert_staged_artifact_compatible_mode(
+        staged_storage_uri: str | None,
         effective_annotations: dict[str, str],
+        *,
+        kind: str = "controller_storage_uri",
     ) -> None:
-        """Reject the controller hybrid in non-RawDeployment mode.
+        """Reject a staged side-artifact hybrid in non-RawDeployment mode.
 
-        The hybrid stages the controller via ``model.storageUri``, whose
-        storage-initializer injects ``POD_NAME``/``POD_NAMESPACE`` env via
-        ``fieldRef`` — shapes the Knative admission webhook rejects in
-        Serverless mode. The LLM default is RawDeployment, but a caller
-        can override via the ``deploymentMode`` annotation, so fail fast
-        with a clear error here instead of leaking a late, opaque Knative
-        admission rejection.
+        Both the controller hybrid and the LoRA-adapter hybrid stage their
+        side artifact via ``model.storageUri``, whose storage-initializer
+        injects ``POD_NAME``/``POD_NAMESPACE`` env via ``fieldRef`` — shapes
+        the Knative admission webhook rejects in Serverless mode. The LLM
+        default is RawDeployment, but a caller can override via the
+        ``deploymentMode`` annotation, so fail fast with a clear error here
+        instead of leaking a late, opaque Knative admission rejection.
         """
-        if not controller_storage_uri:
+        if not staged_storage_uri:
             return
         mode = effective_annotations.get(ServingManager._DEPLOYMENT_MODE_ANNOTATION)
         if mode != "RawDeployment":
             raise CogflowValidationError(
-                "controller_storage_uri requires RawDeployment mode — the "
-                "controller is staged via storageUri, whose fieldRef env "
-                "the Knative webhook rejects in Serverless mode; got "
-                f"deploymentMode={mode!r}."
+                f"{kind} requires RawDeployment mode — the artifact is staged "
+                "via storageUri, whose fieldRef env the Knative webhook "
+                f"rejects in Serverless mode; got deploymentMode={mode!r}."
             )
 
     def deploy_llm(
@@ -1017,6 +1240,9 @@ class ServingManager:
         kv_cache_dtype: str | None = None,
         hf_overrides: dict[str, Any] | None = None,
         controller_storage_uri: str | None = None,
+        lora_storage_uri: str | None = None,
+        lora_module_name: str | None = None,
+        max_lora_rank: int | None = None,
         # scheduling / scaling
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
@@ -1026,9 +1252,15 @@ class ServingManager:
         # auth
         hf_secret_name: str | None = None,
         annotations: dict[str, str] | None = None,
+        # engine selection
+        engine: str = "vllm",
+        cache_pvc_name: str | None = None,
     ) -> dict:
         """Create a KServe InferenceService backed by the built-in
-        ``huggingface`` ClusterServingRuntime (KServe 0.15+).
+        ``huggingface`` ClusterServingRuntime (KServe 0.15+), or — with
+        ``engine="airllm"`` — by the ``kserve-airllm`` layer-streaming
+        runtime (modelFormat ``airllm``; vLLM-only knobs rejected;
+        ``cache_pvc_name`` optionally persists the shard cache).
 
         ``hf_overrides`` patches the loaded model's HF config (emitted as
         the vLLM ``--hf-overrides`` flag) — used to redirect the
@@ -1093,11 +1325,21 @@ class ServingManager:
             kv_cache_dtype=kv_cache_dtype,
             hf_overrides=hf_overrides,
             controller_storage_uri=controller_storage_uri,
+            lora_storage_uri=lora_storage_uri,
+            lora_module_name=lora_module_name,
+            max_lora_rank=max_lora_rank,
+            engine=engine,
+            cache_pvc_name=cache_pvc_name,
         )
         predictor_spec, effective_annotations = ServingManager._apply_raw_deployment_defaults(
             predictor_spec, annotations
         )
-        ServingManager._assert_controller_compatible_mode(controller_storage_uri, effective_annotations)
+        ServingManager._assert_staged_artifact_compatible_mode(
+            controller_storage_uri, effective_annotations, kind="controller_storage_uri"
+        )
+        ServingManager._assert_staged_artifact_compatible_mode(
+            lora_storage_uri, effective_annotations, kind="lora_storage_uri"
+        )
 
         try:
             metadata = client.V1ObjectMeta(
@@ -1166,6 +1408,9 @@ class ServingManager:
         kv_cache_dtype: str | None = None,
         hf_overrides: dict[str, Any] | None = None,
         controller_storage_uri: str | None = None,
+        lora_storage_uri: str | None = None,
+        lora_module_name: str | None = None,
+        max_lora_rank: int | None = None,
         # scheduling / scaling
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
@@ -1175,6 +1420,9 @@ class ServingManager:
         # auth
         hf_secret_name: str | None = None,
         annotations: dict[str, str] | None = None,
+        # engine selection
+        engine: str = "vllm",
+        cache_pvc_name: str | None = None,
         # catalog
         user_id: str | None = None,
         extra_tags: dict[str, str] | None = None,
@@ -1225,6 +1473,13 @@ class ServingManager:
         # see a consistent view regardless of which the caller supplied.
         if storage_uri is None and hf_model_id is None:
             raise CogflowValidationError("serve_llm requires either hf_model_id or storage_uri")
+        # Engine validation happens before the MLflow run is opened (step 3)
+        # so an invalid engine cannot leave an orphan run + catalog entry
+        # behind — same reasoning as the hf id validation below.
+        if engine not in _SUPPORTED_LLM_ENGINES:
+            raise CogflowValidationError(
+                f"engine={engine!r} is not supported; use one of {_SUPPORTED_LLM_ENGINES}"
+            )
         # Tolerate an ``hf_model_id`` that a caller accidentally prefixed
         # with ``hf://`` (single layer only — ``_extract_hf_model_id``
         # rejects deeper ``hf://hf://…`` nesting at the validator layer
@@ -1285,11 +1540,16 @@ class ServingManager:
         # isn't resolvable via ``from … import …``).
         from cogflow.core import models as cogflow_models
 
+        # The engine is part of the model's serving identity — record it on
+        # the catalog entry and (below) the ISVC so consumers can tell an
+        # airllm-served row from a vLLM one without inspecting the spec.
+        merged_extra_tags = {**(extra_tags or {}), "llm_engine": engine}
+
         run_id = cogflow_models.register_llm_catalog_entry(
             served_model_name=served_model_name,
             hf_model_id=hf_model_id,
             user_id=user_id,
-            extra_tags=extra_tags,
+            extra_tags=merged_extra_tags,
         )
 
         # --- 4. Merge the run_id / model_type / hf_model_id annotations
@@ -1302,6 +1562,7 @@ class ServingManager:
         merged_annotations: dict[str, str] = dict(annotations or {})
         merged_annotations["model_type"] = "llm"
         merged_annotations["model_id"] = common.normalize_uuid(run_id)
+        merged_annotations["llm_engine"] = engine
         if hf_model_id:
             merged_annotations["hf_model_id"] = hf_model_id
 
@@ -1321,6 +1582,9 @@ class ServingManager:
             kv_cache_dtype=kv_cache_dtype,
             hf_overrides=hf_overrides,
             controller_storage_uri=controller_storage_uri,
+            lora_storage_uri=lora_storage_uri,
+            lora_module_name=lora_module_name,
+            max_lora_rank=max_lora_rank,
             resources=resources,
             tolerations=tolerations,
             node_selector=node_selector,
@@ -1328,6 +1592,8 @@ class ServingManager:
             max_replicas=max_replicas,
             hf_secret_name=hf_secret_name,
             annotations=merged_annotations,
+            engine=engine,
+            cache_pvc_name=cache_pvc_name,
         )
 
         return {
