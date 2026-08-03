@@ -1057,6 +1057,14 @@ class ServingManager:
             raise CogflowValidationError("lora_storage_uri requires lora_module_name")
         if lora_module_name and not lora_storage_uri:
             raise CogflowValidationError("lora_module_name requires lora_storage_uri")
+        # Without an adapter this builder would null max_lora_rank before
+        # the args layer could reject it, so the caller would think the
+        # setting took effect. Fail fast here instead.
+        if max_lora_rank is not None and not lora_storage_uri:
+            raise CogflowValidationError(
+                "max_lora_rank was set without lora_storage_uri — it only "
+                "applies to a staged LoRA adapter"
+            )
 
         lora_modules: list[dict[str, str]] | None = None
         if lora_storage_uri:

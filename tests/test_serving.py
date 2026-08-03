@@ -2017,3 +2017,15 @@ def test_serve_llm_invalid_engine_fails_before_catalog(serving, serving_module, 
         serving.serve_llm(hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct", engine="tgi")
 
     register_mock.assert_not_called()
+
+
+def test_deploy_llm_max_lora_rank_without_adapter_fails_fast(serving, serving_module):
+    """max_lora_rank without a staged adapter used to be silently nulled
+    by the predictor builder; it must fail fast instead."""
+    from cogflow.utils.exceptions import CogflowValidationError
+
+    with pytest.raises(CogflowValidationError, match="max_lora_rank was set without"):
+        serving.deploy_llm(
+            storage_uri="hf://Qwen/Qwen2.5-Coder-7B-Instruct",
+            max_lora_rank=32,
+        )
