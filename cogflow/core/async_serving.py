@@ -565,6 +565,9 @@ class AsyncServingManager:
         kv_cache_dtype: str | None = None,
         hf_overrides: dict[str, Any] | None = None,
         controller_storage_uri: str | None = None,
+        lora_storage_uri: str | None = None,
+        lora_module_name: str | None = None,
+        max_lora_rank: int | None = None,
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
         node_selector: dict[str, str] | None = None,
@@ -572,6 +575,8 @@ class AsyncServingManager:
         max_replicas: int = 1,
         hf_secret_name: str | None = None,
         annotations: dict[str, str] | None = None,
+        engine: str = "vllm",
+        cache_pvc_name: str | None = None,
     ) -> dict:
         """Create a KServe HF-runtime InferenceService (async).
 
@@ -619,11 +624,21 @@ class AsyncServingManager:
             kv_cache_dtype=kv_cache_dtype,
             hf_overrides=hf_overrides,
             controller_storage_uri=controller_storage_uri,
+            lora_storage_uri=lora_storage_uri,
+            lora_module_name=lora_module_name,
+            max_lora_rank=max_lora_rank,
+            engine=engine,
+            cache_pvc_name=cache_pvc_name,
         )
         predictor_spec, effective_annotations = sync_manager_cls._apply_raw_deployment_defaults(
             predictor_spec, annotations
         )
-        sync_manager_cls._assert_controller_compatible_mode(controller_storage_uri, effective_annotations)
+        sync_manager_cls._assert_staged_artifact_compatible_mode(
+            controller_storage_uri, effective_annotations, kind="controller_storage_uri"
+        )
+        sync_manager_cls._assert_staged_artifact_compatible_mode(
+            lora_storage_uri, effective_annotations, kind="lora_storage_uri"
+        )
 
         metadata = async_client.V1ObjectMeta(
             name=isvc_name,
@@ -691,6 +706,9 @@ class AsyncServingManager:
         kv_cache_dtype: str | None = None,
         hf_overrides: dict[str, Any] | None = None,
         controller_storage_uri: str | None = None,
+        lora_storage_uri: str | None = None,
+        lora_module_name: str | None = None,
+        max_lora_rank: int | None = None,
         resources: dict[str, dict[str, str]] | None = None,
         tolerations: list[dict[str, Any]] | None = None,
         node_selector: dict[str, str] | None = None,
@@ -698,6 +716,8 @@ class AsyncServingManager:
         max_replicas: int = 1,
         hf_secret_name: str | None = None,
         annotations: dict[str, str] | None = None,
+        engine: str = "vllm",
+        cache_pvc_name: str | None = None,
         user_id: str | None = None,
         extra_tags: dict[str, str] | None = None,
     ) -> dict[str, Any]:
@@ -729,6 +749,16 @@ class AsyncServingManager:
         if storage_uri is None and hf_model_id is None:
             # Use sync manager's typed validation error for parity.
             raise CogflowValidationError("async_serve_llm requires either hf_model_id or storage_uri")
+        # Same early engine validation as the sync path, so an invalid
+        # engine cannot leave an orphan MLflow run + catalog entry behind.
+        # Lazy import mirrors _get_serving_manager_class (circular-import
+        # avoidance at module load time).
+        from cogflow.core.serving import _SUPPORTED_LLM_ENGINES
+
+        if engine not in _SUPPORTED_LLM_ENGINES:
+            raise CogflowValidationError(
+                f"engine={engine!r} is not supported; use one of {_SUPPORTED_LLM_ENGINES}"
+            )
         # See sync serve_llm — single-layer strip; validator rejects
         # deeper nesting.
         if hf_model_id is not None and hf_model_id.startswith("hf://"):
@@ -780,11 +810,15 @@ class AsyncServingManager:
         # resolvable via ``from … import …``).
         from cogflow.core import models as cogflow_models
 
+        # Engine is part of the serving identity — tagged on the catalog
+        # entry and annotated on the ISVC, same as the sync path.
+        merged_extra_tags = {**(extra_tags or {}), "llm_engine": engine}
+
         run_id = await cogflow_models.async_register_llm_catalog_entry(
             served_model_name=served_model_name,
             hf_model_id=hf_model_id,
             user_id=user_id,
-            extra_tags=extra_tags,
+            extra_tags=merged_extra_tags,
         )
 
         # Step 4: merge annotations. Identity keys are authoritative
@@ -792,6 +826,7 @@ class AsyncServingManager:
         merged_annotations: dict[str, str] = dict(annotations or {})
         merged_annotations["model_type"] = "llm"
         merged_annotations["model_id"] = common.normalize_uuid(run_id)
+        merged_annotations["llm_engine"] = engine
         if hf_model_id:
             merged_annotations["hf_model_id"] = hf_model_id
 
@@ -811,6 +846,9 @@ class AsyncServingManager:
             kv_cache_dtype=kv_cache_dtype,
             hf_overrides=hf_overrides,
             controller_storage_uri=controller_storage_uri,
+            lora_storage_uri=lora_storage_uri,
+            lora_module_name=lora_module_name,
+            max_lora_rank=max_lora_rank,
             resources=resources,
             tolerations=tolerations,
             node_selector=node_selector,
@@ -818,6 +856,8 @@ class AsyncServingManager:
             max_replicas=max_replicas,
             hf_secret_name=hf_secret_name,
             annotations=merged_annotations,
+            engine=engine,
+            cache_pvc_name=cache_pvc_name,
         )
 
         return {
