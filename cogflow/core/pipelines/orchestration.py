@@ -35,10 +35,41 @@ logger = get_logger(__name__)
 # ================================================================
 
 
+# KFP v1 rejects semantically-identical type names (e.g. ``str`` vs ``String``)
+# between cogflow-defined components and user-registered components — a false
+# positive that adds no safety and blocks otherwise-valid pipelines. Disable the
+# check, matching the non-enforcing default frameworks like ZenML ship with.
+#
+# ``kfp.TYPE_CHECK = False`` alone is not enough: ``Compiler.compile`` saves and
+# restores that flag around each compile, forcing ``type_check=True`` back on. So
+# the only reliable switch is to force every ``Compiler.compile`` to skip the
+# check. Applied lazily (when KFP is first loaded) and only once.
+_KFP_TYPE_CHECK_DISABLED = False
+
+
+def _disable_kfp_type_check():
+    """Force KFP's ``Compiler.compile`` to skip type checking (idempotent)."""
+    global _KFP_TYPE_CHECK_DISABLED
+    if _KFP_TYPE_CHECK_DISABLED:
+        return
+    from kfp import compiler
+
+    _original_compile = compiler.Compiler.compile
+
+    def _compile_without_type_check(self, *args, **kwargs):
+        kwargs["type_check"] = False
+        return _original_compile(self, *args, **kwargs)
+
+    compiler.Compiler.compile = _compile_without_type_check
+    _KFP_TYPE_CHECK_DISABLED = True
+
+
 def _load_kfp():
     """Lazy import full KFP; returns (kfp, dsl, ContainerOp)."""
     import kfp
     from kfp import dsl
+
+    _disable_kfp_type_check()
 
     return kfp, dsl
 
