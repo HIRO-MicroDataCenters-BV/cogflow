@@ -8,6 +8,24 @@
 # Use the official Python image as the base image
 FROM python:3.10-slim
 
+# Triton JIT-compiles a small C extension for its CUDA utils on the first
+# kernel launch (``triton/runtime/build.py::_build``). The slim base ships
+# no compiler, so any GPU component that reaches a triton kernel dies with:
+#
+#   RuntimeError: Failed to find C compiler. Please specify via CC
+#   environment variable or set triton.knobs.build.impl.
+#
+# ``gcc`` alone is sufficient — triton bundles its own ``ptxas`` and
+# ``cuda.h``, so no CUDA toolkit / ``nvcc`` is needed. Verified on an L40
+# in-cluster against this image: install gcc, ``pip install torch``
+# (2.13.0+cu130 / triton 3.7.1), compile and run a kernel — passes.
+#
+# Kept as a separate layer before the pip steps so it stays cached across
+# cogflow version bumps.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gcc \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install Python packages
 RUN python3 -m pip install --no-cache-dir --upgrade pip
 
