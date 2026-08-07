@@ -15,15 +15,24 @@ FROM python:3.10-slim
 #   RuntimeError: Failed to find C compiler. Please specify via CC
 #   environment variable or set triton.knobs.build.impl.
 #
-# ``gcc`` alone is sufficient — triton bundles its own ``ptxas`` and
-# ``cuda.h``, so no CUDA toolkit / ``nvcc`` is needed. Verified on an L40
-# in-cluster against this image: install gcc, ``pip install torch``
-# (2.13.0+cu130 / triton 3.7.1), compile and run a kernel — passes.
+# No CUDA toolkit / ``nvcc`` is needed — triton bundles its own ``ptxas``
+# and ``cuda.h``.
+#
+# Deliberately WITHOUT ``--no-install-recommends``. Debian's ``gcc`` only
+# *Recommends* ``libc6-dev``, so suppressing recommends installs a compiler
+# with no C standard library headers and triton fails one step later with:
+#
+#   cuda.h:56:10: fatal error: stdlib.h: No such file or directory
+#
+# Taking the recommends gives a toolchain that is actually usable, and is
+# the exact configuration verified end to end on an L40: install gcc,
+# pip install torch (2.13.0+cu130 / triton 3.7.1), compile and launch a
+# kernel — passes.
 #
 # Kept as a separate layer before the pip steps so it stays cached across
 # cogflow version bumps.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends gcc \
+    && apt-get install -y gcc \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages
