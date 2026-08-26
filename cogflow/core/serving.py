@@ -1611,6 +1611,49 @@ class ServingManager:
             "isvc": isvc_response,
         }
 
+    # Flags that carry the OpenAI-facing model id in the predictor args.
+    # Underscore spellings are the KServe HF runtime's own parser
+    # (``--model_name``, the flag ``_build_llm_args`` emits); hyphen
+    # spellings are vanilla vLLM's CLI (``--served-model-name``). Both
+    # separator styles of both flags are accepted so hand-written ISVCs
+    # resolve the same way as cogflow-deployed ones.
+    _SERVED_MODEL_NAME_FLAGS = frozenset(
+        {
+            "--model_name",
+            "--model-name",
+            "--served-model-name",
+            "--served_model_name",
+        }
+    )
+
+    @staticmethod
+    def _extract_served_model_name(spec_dict: dict, annotations: dict) -> str | None:
+        """Resolve the model id an OpenAI-compatible client must send.
+
+        Looks at ``spec.predictor.model.args`` first (the runtime args are
+        authoritative — they are what the server actually registered),
+        accepting both the ``--flag=value`` and ``--flag value`` argv
+        forms for any spelling in ``_SERVED_MODEL_NAME_FLAGS``. Falls
+        back to a ``served_model_name`` or ``model_name`` annotation when
+        the args yield nothing (non-args runtimes), else ``None``.
+        """
+        args = ((spec_dict.get("predictor", {}) or {}).get("model", {}) or {}).get("args") or []
+        for i, arg in enumerate(args):
+            if not isinstance(arg, str):
+                continue
+            flag, sep, value = arg.partition("=")
+            if flag not in ServingManager._SERVED_MODEL_NAME_FLAGS:
+                continue
+            if sep:
+                if value:
+                    return value
+            elif i + 1 < len(args) and isinstance(args[i + 1], str) and not args[i + 1].startswith("--"):
+                # Two-token form: ``--model_name qwen38``. vLLM's
+                # ``--served-model-name`` is nargs='+'; the first name is
+                # the canonical one.
+                return args[i + 1]
+        return annotations.get("served_model_name") or annotations.get("model_name") or None
+
     @staticmethod
     def _process_isvc(isvc: dict) -> dict[str, Any]:
         """
@@ -1630,12 +1673,18 @@ class ServingManager:
 
         # --- Identifiers ---
         isvc_name = metadata.get("name", "Unknown")
+        namespace = metadata.get("namespace")
         model_name = annotations.get("model_name")
         model_id = annotations.get("model_id")
         model_version = annotations.get("model_version")
         dataset_id = annotations.get("dataset_id")
         model_type = annotations.get("model_type")
+        llm_engine = annotations.get("llm_engine")
+        hf_model_id = annotations.get("hf_model_id")
         creation_timestamp = metadata.get("creationTimestamp")
+
+        # --- OpenAI-facing model id (from predictor args / annotations) ---
+        served_model_name = ServingManager._extract_served_model_name(spec_dict, annotations)
 
         # --- Base URLs ---
         served_model_url = (
@@ -1644,6 +1693,21 @@ class ServingManager:
             or status_dict.get("url")
             or status_dict.get("components", {}).get("transformer", {}).get("url")
         )
+
+        # All distinct URL spellings in the same preference order as
+        # ``served_model_url`` (which stays the first entry). A KServe
+        # ISVC typically exposes both a cluster-local address and one or
+        # more external hostnames; consumers pick whichever is routable
+        # from where they run. Deduplicated, order-preserving.
+        urls: list[str] = []
+        for url in (
+            status_dict.get("address", {}).get("url"),
+            status_dict.get("components", {}).get("predictor", {}).get("url"),
+            status_dict.get("url"),
+            status_dict.get("components", {}).get("transformer", {}).get("url"),
+        ):
+            if url and url not in urls:
+                urls.append(url)
 
         # --- Status ---
         status = "not_ready"
@@ -1725,13 +1789,18 @@ class ServingManager:
         # --- Compose final object ---
         model_info: dict[str, Any] = {
             "isvc_name": isvc_name,
+            "namespace": namespace,
             "served_model_url": served_model_url,
+            "urls": urls,
             "status": status,
             "model_id": model_id or None,
             "model_name": model_name or None,
             "model_version": model_version or None,
             "dataset_id": dataset_id or None,
             "model_type": model_type or None,
+            "served_model_name": served_model_name,
+            "llm_engine": llm_engine or None,
+            "hf_model_id": hf_model_id or None,
             "creation_timestamp": creation_timestamp,
             "age": age,
             "latest_ready_revision": predictor.get("latestReadyRevision") or transformer.get("latestReadyRevision"),
@@ -2088,11 +2157,13 @@ class ServingManager:
                 - If isvc_name is None:
                      * list of model_info dicts (possibly empty).
                 Each dict contains:
-                    isvc_name, served_model_url, status, model_id, model_name,
-                    model_version, dataset_id, creation_timestamp, age,
-                    latest_ready_revision, traffic_percentage,
-                    has_canary, stable_revision, canary_revision,
-                    stable_traffic_percent, canary_traffic_percent
+                    isvc_name, namespace, served_model_url, urls, status,
+                    model_id, model_name, model_version, dataset_id,
+                    model_type, served_model_name, llm_engine, hf_model_id,
+                    creation_timestamp, age, latest_ready_revision,
+                    traffic_percentage, has_canary, stable_revision,
+                    canary_revision, stable_traffic_percent,
+                    canary_traffic_percent
         Raises:
             CogflowConnectionError: If there is a connection issue with Kubernetes API.
             CogflowServingError: For other serving-related errors.
