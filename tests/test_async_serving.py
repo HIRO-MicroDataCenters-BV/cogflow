@@ -225,6 +225,13 @@ async def test_async_list_models_all(async_serving, fake_async_api):
     assert len(models) == 1
     assert models[0]["model_name"] == "m1"
     assert models[0]["model_type"] == "llm"
+    # Enriched shape (shared _process_isvc): annotation fallback for
+    # served_model_name; None/[] defaults for absent metadata/status.
+    assert models[0]["served_model_name"] == "m1"
+    assert models[0]["namespace"] is None
+    assert models[0]["llm_engine"] is None
+    assert models[0]["hf_model_id"] is None
+    assert models[0]["urls"] == []
     assert fake_async_api.calls[-1][0] == "list"
 
 

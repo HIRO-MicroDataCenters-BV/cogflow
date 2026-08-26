@@ -424,6 +424,141 @@ def test_process_isvc(serving_module):
     assert result["latest_ready_revision"] == "r1"
 
 
+def test_process_isvc_enriched_llm_fields(serving_module):
+    """
+    _process_isvc should expose namespace, llm annotations, the
+    args-derived served_model_name, and all distinct URLs (order-
+    preserving, served_model_url first) for an LLM ISVC as deployed
+    by serve_llm / vanilla kubectl.
+    """
+    module_obj, _, _ = serving_module
+
+    data = {
+        "metadata": {
+            "name": "qwen38",
+            "namespace": "admin",
+            "annotations": {
+                "hf_model_id": "munekazu/Huihui-Qwen3.8-27B-abliterated-FP8",
+                "llm_engine": "vllm",
+                "model_id": "de4a5dd0-4a25-0000-0000-000000000000",
+                "model_type": "llm",
+            },
+            "creationTimestamp": "2024-01-01T00:00:00Z",
+        },
+        "spec": {
+            "predictor": {
+                "model": {
+                    "args": [
+                        "--model_id=munekazu/Huihui-Qwen3.8-27B-abliterated-FP8",
+                        "--model_name=qwen38",
+                        "--max_model_len=65536",
+                    ],
+                    "modelFormat": {"name": "huggingface"},
+                }
+            }
+        },
+        "status": {
+            "address": {"url": "http://qwen38-predictor.admin.svc.cluster.local"},
+            "components": {
+                "predictor": {"url": "http://qwen38-predictor-admin.dashboard.cog.hiro-develop.nl"}
+            },
+            "url": "http://qwen38-admin.dashboard.cog.hiro-develop.nl",
+            "conditions": [{"type": "Ready", "status": "True"}],
+        },
+    }
+
+    result = module_obj.ServingManager._process_isvc(data)
+    assert result["namespace"] == "admin"
+    # Args win over annotations: --model_id must NOT be mistaken for the name.
+    assert result["served_model_name"] == "qwen38"
+    assert result["llm_engine"] == "vllm"
+    assert result["hf_model_id"] == "munekazu/Huihui-Qwen3.8-27B-abliterated-FP8"
+    assert result["urls"] == [
+        "http://qwen38-predictor.admin.svc.cluster.local",
+        "http://qwen38-predictor-admin.dashboard.cog.hiro-develop.nl",
+        "http://qwen38-admin.dashboard.cog.hiro-develop.nl",
+    ]
+    # served_model_url is unchanged: still the first URL in preference order.
+    assert result["served_model_url"] == "http://qwen38-predictor.admin.svc.cluster.local"
+
+
+def test_process_isvc_enriched_fields_default_to_none(serving_module):
+    """
+    An ISVC with no predictor args and no annotations should emit the
+    enriched fields as None, and urls as the single known URL.
+    """
+    module_obj, _, _ = serving_module
+
+    data = {
+        "metadata": {"name": "plain", "creationTimestamp": "2024-01-01T00:00:00Z"},
+        "spec": {"predictor": {}},
+        "status": {
+            "url": "http://plain.example.com",
+            "conditions": [{"type": "Ready", "status": "True"}],
+        },
+    }
+
+    result = module_obj.ServingManager._process_isvc(data)
+    assert result["namespace"] is None
+    assert result["served_model_name"] is None
+    assert result["llm_engine"] is None
+    assert result["hf_model_id"] is None
+    assert result["urls"] == ["http://plain.example.com"]
+    assert result["served_model_url"] == "http://plain.example.com"
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["--model_name", "--model-name", "--served-model-name", "--served_model_name"],
+)
+def test_process_isvc_served_model_name_two_token_form(serving_module, flag):
+    """
+    _process_isvc should accept the ``--flag value`` argv form (two
+    tokens) for every accepted flag spelling, and deduplicate URLs
+    that appear under multiple status keys.
+    """
+    module_obj, _, _ = serving_module
+
+    data = {
+        "metadata": {"name": "y", "namespace": "ns1", "annotations": {}},
+        "spec": {"predictor": {"model": {"args": [flag, "my-model"]}}},
+        "status": {
+            "address": {"url": "http://y.ns1.svc.cluster.local"},
+            "components": {"predictor": {"url": "http://y.ns1.svc.cluster.local"}},
+            "url": "http://y-ns1.example.com",
+        },
+    }
+
+    result = module_obj.ServingManager._process_isvc(data)
+    assert result["served_model_name"] == "my-model"
+    assert result["urls"] == [
+        "http://y.ns1.svc.cluster.local",
+        "http://y-ns1.example.com",
+    ]
+
+
+def test_process_isvc_served_model_name_annotation_fallback(serving_module):
+    """
+    When args carry no name flag, served_model_name should fall back to
+    the served_model_name annotation, then the model_name annotation.
+    """
+    module_obj, _, _ = serving_module
+
+    data = {
+        "metadata": {
+            "name": "z",
+            "annotations": {"served_model_name": "from-anno", "model_name": "m1"},
+        },
+        "spec": {"predictor": {"model": {"args": ["--max_model_len=4096"]}}},
+        "status": {},
+    }
+
+    result = module_obj.ServingManager._process_isvc(data)
+    assert result["served_model_name"] == "from-anno"
+    assert result["urls"] == []
+    assert result["served_model_url"] is None
+
+
 # ---------------------------------------------------------------------
 # Regression: missing kube config must not break import
 # ---------------------------------------------------------------------
