@@ -391,9 +391,7 @@ async def test_async_deploy_llm_airllm_spec_parity(async_serving, fake_async_api
     assert predictor["model"]["modelFormat"] == {"name": "airllm"}
     assert "--model_id=NousResearch/Meta-Llama-3-8B-Instruct" in predictor["model"]["args"]
     assert not any(a.startswith("--tensor-parallel-size") for a in predictor["model"]["args"])
-    assert predictor["volumes"] == [
-        {"name": "airllm-cache", "persistentVolumeClaim": {"claimName": "air-cache"}}
-    ]
+    assert predictor["volumes"] == [{"name": "airllm-cache", "persistentVolumeClaim": {"claimName": "air-cache"}}]
 
 
 @pytest.mark.asyncio
@@ -423,9 +421,7 @@ async def test_async_serve_llm_records_engine(async_serving, fake_async_api, mon
         raising=True,
     )
 
-    await async_serving.serve_llm(
-        hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct", engine="airllm"
-    )
+    await async_serving.serve_llm(hf_model_id="Qwen/Qwen2.5-Coder-7B-Instruct", engine="airllm")
 
     assert register_mock.call_args.kwargs["extra_tags"]["llm_engine"] == "airllm"
     creates = [c for c in fake_async_api.calls if c[0] == "create"]

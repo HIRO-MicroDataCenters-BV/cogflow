@@ -907,9 +907,7 @@ class ServingManager:
         if lora_modules:
             for mod in lora_modules:
                 if not mod.get("name") or not mod.get("path"):
-                    raise CogflowValidationError(
-                        f"each lora module needs a non-empty 'name' and 'path', got {mod!r}"
-                    )
+                    raise CogflowValidationError(f"each lora module needs a non-empty 'name' and 'path', got {mod!r}")
             args.append("--enable-lora")
             args.append("--lora-modules")
             # Stable order so the emitted ISVC is diff-friendly across reruns.
@@ -968,9 +966,7 @@ class ServingManager:
             raise CogflowValidationError(f"min_replicas ({min_replicas}) must be <= max_replicas ({max_replicas})")
 
         if engine not in _SUPPORTED_LLM_ENGINES:
-            raise CogflowValidationError(
-                f"engine={engine!r} is not supported; use one of {_SUPPORTED_LLM_ENGINES}"
-            )
+            raise CogflowValidationError(f"engine={engine!r} is not supported; use one of {_SUPPORTED_LLM_ENGINES}")
         # Symmetric engine/feature pairing, failed fast in both directions:
         # the NTK controller and LoRA hybrids are vLLM-runtime features,
         # while the shard-cache PVC only means something to the airllm
@@ -980,9 +976,7 @@ class ServingManager:
         # because this builder nulls it whenever no lora_modules were
         # derived, which would silently drop it before the args-level
         # rejection could see it.
-        if engine == "airllm" and (
-            controller_storage_uri or lora_storage_uri or max_lora_rank is not None
-        ):
+        if engine == "airllm" and (controller_storage_uri or lora_storage_uri or max_lora_rank is not None):
             raise CogflowValidationError(
                 "controller_storage_uri / lora_storage_uri / max_lora_rank are "
                 "vLLM-runtime features (adapter-aware subclasses, "
@@ -994,9 +988,7 @@ class ServingManager:
                 f"(it backs the layer-shard cache volume); got engine={engine!r}."
             )
         if cache_pvc_name and not ServingManager._DNS1123_LABEL_RE.match(cache_pvc_name):
-            raise CogflowValidationError(
-                f"cache_pvc_name={cache_pvc_name!r} is not a valid DNS-1123 label"
-            )
+            raise CogflowValidationError(f"cache_pvc_name={cache_pvc_name!r} is not a valid DNS-1123 label")
 
         # Source plumbing — HF Hub vs MLflow/MinIO routes through
         # different KServe code paths:
@@ -1062,8 +1054,7 @@ class ServingManager:
         # setting took effect. Fail fast here instead.
         if max_lora_rank is not None and not lora_storage_uri:
             raise CogflowValidationError(
-                "max_lora_rank was set without lora_storage_uri — it only "
-                "applies to a staged LoRA adapter"
+                "max_lora_rank was set without lora_storage_uri — it only applies to a staged LoRA adapter"
             )
 
         lora_modules: list[dict[str, str]] | None = None
@@ -1485,9 +1476,7 @@ class ServingManager:
         # so an invalid engine cannot leave an orphan run + catalog entry
         # behind — same reasoning as the hf id validation below.
         if engine not in _SUPPORTED_LLM_ENGINES:
-            raise CogflowValidationError(
-                f"engine={engine!r} is not supported; use one of {_SUPPORTED_LLM_ENGINES}"
-            )
+            raise CogflowValidationError(f"engine={engine!r} is not supported; use one of {_SUPPORTED_LLM_ENGINES}")
         # Tolerate an ``hf_model_id`` that a caller accidentally prefixed
         # with ``hf://`` (single layer only — ``_extract_hf_model_id``
         # rejects deeper ``hf://hf://…`` nesting at the validator layer

@@ -756,9 +756,7 @@ class AsyncServingManager:
         from cogflow.core.serving import _SUPPORTED_LLM_ENGINES
 
         if engine not in _SUPPORTED_LLM_ENGINES:
-            raise CogflowValidationError(
-                f"engine={engine!r} is not supported; use one of {_SUPPORTED_LLM_ENGINES}"
-            )
+            raise CogflowValidationError(f"engine={engine!r} is not supported; use one of {_SUPPORTED_LLM_ENGINES}")
         # See sync serve_llm — single-layer strip; validator rejects
         # deeper nesting.
         if hf_model_id is not None and hf_model_id.startswith("hf://"):

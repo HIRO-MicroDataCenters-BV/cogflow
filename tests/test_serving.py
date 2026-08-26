@@ -459,9 +459,7 @@ def test_process_isvc_enriched_llm_fields(serving_module):
         },
         "status": {
             "address": {"url": "http://qwen38-predictor.admin.svc.cluster.local"},
-            "components": {
-                "predictor": {"url": "http://qwen38-predictor-admin.dashboard.cog.hiro-develop.nl"}
-            },
+            "components": {"predictor": {"url": "http://qwen38-predictor-admin.dashboard.cog.hiro-develop.nl"}},
             "url": "http://qwen38-admin.dashboard.cog.hiro-develop.nl",
             "conditions": [{"type": "Ready", "status": "True"}],
         },
@@ -2017,9 +2015,7 @@ def test_deploy_llm_airllm_kv_sentinels_are_unset(serving, serving_module, kv_se
         ("INT4", "--compression=4bit"),
     ],
 )
-def test_deploy_llm_airllm_quantization_maps_to_compression(
-    serving, serving_module, quantization, expected_flag
-):
+def test_deploy_llm_airllm_quantization_maps_to_compression(serving, serving_module, quantization, expected_flag):
     _, fake_api, _ = serving_module
 
     serving.deploy_llm(
@@ -2087,9 +2083,7 @@ def test_deploy_llm_airllm_cache_pvc_declares_volume(serving, serving_module):
         cache_pvc_name="k3-cache",
     )
     predictor = _deploy_llm_create_call(fake_api)["spec"]["predictor"]
-    assert predictor["volumes"] == [
-        {"name": "airllm-cache", "persistentVolumeClaim": {"claimName": "k3-cache"}}
-    ]
+    assert predictor["volumes"] == [{"name": "airllm-cache", "persistentVolumeClaim": {"claimName": "k3-cache"}}]
 
 
 def test_deploy_llm_cache_pvc_rejected_for_vllm(serving, serving_module):
