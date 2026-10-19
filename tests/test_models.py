@@ -978,3 +978,72 @@ def test_list_artifacts_grouped_failure(manager):
     manager.client.list_artifacts.side_effect = RuntimeError("boom")
     with pytest.raises(models_mod.CogflowRunError):
         manager.list_artifacts_grouped("run-1")
+
+
+# ---------- log_model: TensorFlow branch + model_type override ----------
+
+
+def test_log_model_tensorflow_branch_imports_flavor_lazily(manager, monkeypatch):
+    """A Keras-looking model routes to mlflow.tensorflow, imported on that branch only."""
+
+    class FakeKerasModel:
+        """Stands in for keras.Model (module path is what the detector reads)."""
+
+    FakeKerasModel.__module__ = "keras.src.models.sequential"
+
+    tf_flavor = MagicMock()
+    tf_flavor.log_model.return_value = "TF_RESULT"
+    imported = []
+
+    def fake_lazy_import(name):
+        imported.append(name)
+        assert name == "mlflow.tensorflow"
+        return tf_flavor
+
+    monkeypatch.setattr(models_mod, "lazy_import", fake_lazy_import)
+
+    result = manager.log_model(FakeKerasModel(), artifact_path="tf_model", registered_model_name="tfm")
+
+    assert result == "TF_RESULT"
+    assert imported == ["mlflow.tensorflow"]
+    kwargs = tf_flavor.log_model.call_args.kwargs
+    assert kwargs["artifact_path"] == "tf_model"
+    assert kwargs["registered_model_name"] == "tfm"
+    manager.pytorch.log_model.assert_not_called()
+    manager.sklearn.log_model.assert_not_called()
+
+
+def test_log_model_model_type_override_reaches_catalog_payload(manager, monkeypatch):
+    """``model_type`` replaces the flavor-detected type in the POST to CogAPI."""
+
+    class DummySkModel(manager.sklearn.BaseEstimator):
+        """Dummy Sklearn model."""
+
+    run = MagicMock()
+    run.info.run_id = "0123456789abcdef0123456789abcdef"
+    run.info.start_time = 1_700_000_000_000
+    run.data.tags = {"mlflow.runName": "tabular"}
+    manager.mlflow.active_run.return_value = run
+    monkeypatch.setattr(
+        manager,
+        "get_full_model_uri_from_run_or_registry",
+        lambda model_id, artifact_path=None: {
+            "model_uri": "runs:/x/model",
+            "model_name": "tabular",
+            "model_version": 1,
+        },
+    )
+    monkeypatch.setattr(manager, "detect_model_type", lambda uri: "pyfunc")
+    posted = {}
+
+    def fake_post(url, data, headers):
+        posted.update(url=url, data=data, headers=headers)
+
+    monkeypatch.setattr(models_mod.network, "make_post_request", fake_post)
+
+    manager.log_model(DummySkModel(), artifact_path="model", model_type="pytorch")
+    assert posted["data"]["type"] == "pytorch"
+
+    posted.clear()
+    manager.log_model(DummySkModel(), artifact_path="model")
+    assert posted["data"]["type"] == "pyfunc"

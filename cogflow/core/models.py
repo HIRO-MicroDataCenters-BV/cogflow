@@ -616,12 +616,16 @@ class ModelManager:
         extra_pip_requirements: str | None = None,
         pyfunc_predict_fn: str = config.PYFUNC_PREDICT_FN,
         metadata: dict[str, Any] | None = None,
+        model_type: str | None = None,
     ) -> Any:
         """
         Log a model to MLflow and optionally register it in the CogFlow system.
 
-        This method handles both:
+        This method handles:
             - Standard models (e.g., scikit-learn, xgboost, etc.)
+            - PyTorch ``nn.Module`` models
+            - TensorFlow / Keras models (``mlflow.tensorflow`` is imported
+              only on this branch, so TensorFlow stays optional)
             - Custom Python models using the PyFunc flavor
 
         It logs the model into MLflow, detects its type, and posts metadata
@@ -641,6 +645,10 @@ class ModelManager:
             extra_pip_requirements (Optional[str]): Additional pip dependencies.
             pyfunc_predict_fn (str): Name of the prediction function (default: "predict").
             metadata (Optional[Dict[str, Any]]): Custom metadata to attach to the model.
+            model_type (Optional[str]): ``type`` recorded on the CogFlow catalog
+                row (e.g. ``"pytorch"``, ``"tensorflow"``). Defaults to the
+                flavor-based detection, which labels every non-sklearn model
+                ``"pyfunc"``.
 
         Returns:
             Any: The MLflow model info object from the logging operation.
@@ -691,6 +699,10 @@ class ModelManager:
             )
             is_pytorch = "module" in cls_hierarchy  # torch.nn.Module base class
             is_sklearn = "baseestimator" in cls_hierarchy  # sklearn.base.BaseEstimator base class
+            # Keras 3 lives in ``keras.*``; tf.keras (TF <= 2.15) in
+            # ``tensorflow.python.keras.*`` / ``keras.engine.*``. Walk the MRO
+            # so subclasses defined in user code still match.
+            is_tensorflow = any((cls.__module__ or "").startswith(("keras", "tensorflow")) for cls in type(model).mro())
             # ---------------------------------------------------------------
 
             if is_pyfunc:
@@ -717,6 +729,24 @@ class ModelManager:
                     code_paths=code_paths,
                     signature=signature,
                     input_example=input_example,
+                    pip_requirements=pip_requirements,
+                    extra_pip_requirements=extra_pip_requirements,
+                    metadata=metadata,
+                )
+            elif is_tensorflow:
+                # Imported here, not in __init__: ``mlflow.tensorflow`` imports
+                # TensorFlow at module load, which must stay optional.
+                logger.info("Logging TensorFlow/Keras model using MLflow.tensorflow.log_model()")
+                tensorflow_flavor = lazy_import("mlflow.tensorflow")
+                result = tensorflow_flavor.log_model(
+                    model=model,
+                    artifact_path=artifact_path,
+                    registered_model_name=registered_model_name,
+                    conda_env=conda_env,
+                    code_paths=code_paths,
+                    signature=signature,
+                    input_example=input_example,
+                    await_registration_for=await_registration_for,
                     pip_requirements=pip_requirements,
                     extra_pip_requirements=extra_pip_requirements,
                     metadata=metadata,
@@ -753,7 +783,7 @@ class ModelManager:
 
                 model_id = active_run.info.run_id
                 model_details = self.get_full_model_uri_from_run_or_registry(model_id=model_id)
-                model_type = self.detect_model_type(model_details["model_uri"])
+                resolved_type = model_type or self.detect_model_type(model_details["model_uri"])
 
                 model_dict = {
                     "model_id": common.normalize_uuid(model_id),
@@ -762,7 +792,7 @@ class ModelManager:
                     ),
                     "model_version": int(model_details.get("model_version") or 0),
                     "register_date": datetime.fromtimestamp(active_run.info.start_time / 1000).isoformat(),
-                    "type": model_type,
+                    "type": resolved_type,
                     "description": str(active_run.data.tags.get("mlflow.note.content") or "log_model"),
                     "user_id": common.get_current_user(),
                 }

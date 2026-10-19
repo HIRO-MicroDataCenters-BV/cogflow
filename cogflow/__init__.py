@@ -10,7 +10,7 @@ import sys
 
 from ._lazy import _LazyLoader
 
-__version__ = "3.0.0b14"
+__version__ = "3.0.0b15"
 
 # Submodules that should be lazily imported when accessed
 _LAZY_SUBMODULES = [
@@ -18,6 +18,7 @@ _LAZY_SUBMODULES = [
     "api",  # resolves to cogflow.api
     "datasets",  # resolves to cogflow.core.datasets
     "serving",  # resolves to cogflow.core.serving
+    "training",  # resolves to cogflow.core.training (Kubeflow PyTorchJob / TFJob)
     "common",  # resolves to cogflow.utils.common
     "network",  # resolves to cogflow.utils.network
     "config",  # resolves to cogflow.config

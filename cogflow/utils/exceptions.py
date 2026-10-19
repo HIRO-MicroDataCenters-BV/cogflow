@@ -101,6 +101,10 @@ class CogflowServingError(CogflowError):
     """Raised for model serving and Kubernetes InferenceService lifecycle errors."""
 
 
+class CogflowTrainingError(CogflowError):
+    """Raised for Kubeflow training-job (PyTorchJob / TFJob) lifecycle errors."""
+
+
 class CogflowComponentError(CogflowError):
     """Base error for component registry / pipeline components."""
 
