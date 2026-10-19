@@ -359,3 +359,24 @@ def test_parse_hyperparams_normalises_lists_for_string_knobs():
     assert _common.parse_int_list(merged["hidden_sizes"]) == [16, 8]
     assert _common.parse_hyperparams('{"hidden_sizes": []}', {"hidden_sizes": "128,64"})["hidden_sizes"] == ""
     assert _common.parse_int_list("") == []
+
+
+def test_aliased_column_and_category_names_do_not_cross_activate():
+    """Training {'a': 'b=c', 'a=b': 'd'} vs inference {'a': 'x', 'a=b': 'c'}: both unseen → all zero."""
+    rows = []
+    for i in range(12):
+        rows.append(
+            {"a": "b=c" if i % 2 else "p", "a=b": "d" if i % 3 else "q", "n": float(i), "y": "u" if i % 2 else "v"}
+        )
+    df = pd.DataFrame(rows)
+    data = _common.prepare_frame(df, "y", "classification", test_split=0.25, seed=0)
+    assert data.preprocessing["categories"] == {"a": ["b=c", "p"], "a=b": ["d", "q"]}
+    new = pd.DataFrame({"a": ["x"], "a=b": ["c"], "n": [1.0]})
+    out = _common.transform_frame(data.preprocessing, new)
+    idx = {n: i for i, n in enumerate(data.feature_names)}
+    assert out[0, idx["a=b=c"]] == 0.0 and out[0, idx["a=b=d"]] == 0.0
+    assert out[0, idx["a=p"]] == 0.0 and out[0, idx["a=b=q"]] == 0.0
+    # A seen value activates exactly its own column's indicator.
+    seen = pd.DataFrame({"a": ["p"], "a=b": ["c"], "n": [1.0]})
+    out = _common.transform_frame(data.preprocessing, seen)
+    assert out[0, idx["a=p"]] == 1.0 and out[0, idx["a=b=c"]] == 0.0 and out[0, idx["a=b=d"]] == 0.0

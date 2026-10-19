@@ -296,15 +296,13 @@ def prepare_frame(
     numeric_cols = [c for c in x_raw.columns if pd.api.types.is_numeric_dtype(x_raw[c])]
     other_cols = [c for c in x_raw.columns if c not in numeric_cols]
     numeric = x_raw[numeric_cols].astype("float64") if numeric_cols else pd.DataFrame(index=x_raw.index)
-    encoded = (
-        pd.get_dummies(
-            x_raw[other_cols].astype("string").fillna(MISSING_CATEGORY),
-            dtype="float64",
-            prefix_sep=ONE_HOT_SEP,
-        )
-        if other_cols
-        else pd.DataFrame(index=x_raw.index)
-    )
+    # Per-column category vocabulary, fitted on the whole frame: indicators
+    # are built from it positionally (see ``_one_hot``), so names are only
+    # labels and no alias between columns/categories can mix them up.
+    categories: dict[str, list[str]] = {
+        str(c): sorted(x_raw[c].astype("string").fillna(MISSING_CATEGORY).unique().tolist()) for c in other_cols
+    }
+    encoded = _one_hot(x_raw, categories) if other_cols else pd.DataFrame(index=x_raw.index)
     features = pd.concat([numeric, encoded], axis=1)
     feature_names = [str(c) for c in features.columns]
     _reject_duplicate_feature_names(feature_names)
@@ -380,6 +378,7 @@ def prepare_frame(
         "numeric_means": [float(v) for v in col_mean],
         "numeric_stds": [float(v) for v in col_std],
         "categorical_columns": [str(c) for c in other_cols],
+        "categories": categories,
         "class_names": list(class_names),
     }
 
@@ -430,14 +429,40 @@ def transform_frame(preprocessing: dict[str, Any], df) -> Any:
         values = (values - means) / stds
         parts.append(pd.DataFrame(values, columns=numeric_cols, index=df.index))
     if other_cols:
-        encoded = pd.get_dummies(
-            df[other_cols].astype("string").fillna(MISSING_CATEGORY), dtype="float64", prefix_sep=ONE_HOT_SEP
-        )
-        parts.append(encoded)
+        categories = preprocessing.get("categories")
+        if not isinstance(categories, dict):
+            raise ValueError("preprocessing state has no per-column category vocabulary")
+        # Indicators come from the trained vocabulary per source column —
+        # an unseen category yields all-zero indicators for THAT column only,
+        # whatever its spelling looks like next to another column's name.
+        parts.append(_one_hot(df, {c: list(categories[c]) for c in other_cols}))
     features = pd.concat(parts, axis=1) if parts else pd.DataFrame(index=df.index)
-    _reject_duplicate_feature_names([str(c) for c in features.columns])
-    features = features.reindex(columns=feature_names, fill_value=0.0)
+    if list(features.columns) != feature_names:
+        features = features.reindex(columns=feature_names, fill_value=0.0)
     return np.ascontiguousarray(features.to_numpy(dtype="float64"), dtype="float32")
+
+
+def _one_hot(df, categories: dict[str, list[str]]):
+    """Indicator columns ``<column>=<category>`` for every trained (column, category) pair.
+
+    Built per source column from the vocabulary, not from the values present
+    in ``df``: the same pairs always come out in the same order, missing
+    categories are zero, unseen values contribute nothing.
+    """
+    import numpy as np
+    import pandas as pd
+
+    columns: list[str] = []
+    blocks = []
+    for col, cats in categories.items():
+        values = df[col].astype("string").fillna(MISSING_CATEGORY).to_numpy(dtype=object)
+        block = np.zeros((len(df), len(cats)), dtype="float64")
+        for j, cat in enumerate(cats):
+            block[:, j] = values == cat
+            columns.append(f"{col}{ONE_HOT_SEP}{cat}")
+        blocks.append(block)
+    data = np.concatenate(blocks, axis=1) if blocks else np.zeros((len(df), 0))
+    return pd.DataFrame(data, columns=columns, index=df.index)
 
 
 def log_preprocessing(preprocessing: dict[str, Any], work_dir: str | Path) -> Path:
