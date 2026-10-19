@@ -978,3 +978,151 @@ def test_list_artifacts_grouped_failure(manager):
     manager.client.list_artifacts.side_effect = RuntimeError("boom")
     with pytest.raises(models_mod.CogflowRunError):
         manager.list_artifacts_grouped("run-1")
+
+
+# ---------- log_model: TensorFlow branch + model_type override ----------
+
+
+def test_log_model_tensorflow_branch_imports_flavor_lazily(manager, monkeypatch):
+    """A Keras-looking model routes to mlflow.tensorflow, imported on that branch only."""
+
+    class FakeKerasModel:
+        """Stands in for keras.Model (module path is what the detector reads)."""
+
+    FakeKerasModel.__module__ = "keras.src.models.sequential"
+
+    tf_flavor = MagicMock()
+    tf_flavor.log_model.return_value = "TF_RESULT"
+    imported = []
+
+    def fake_lazy_import(name):
+        imported.append(name)
+        assert name == "mlflow.tensorflow"
+        return tf_flavor
+
+    monkeypatch.setattr(models_mod, "lazy_import", fake_lazy_import)
+
+    result = manager.log_model(FakeKerasModel(), artifact_path="tf_model", registered_model_name="tfm")
+
+    assert result == "TF_RESULT"
+    assert imported == ["mlflow.tensorflow"]
+    kwargs = tf_flavor.log_model.call_args.kwargs
+    assert kwargs["artifact_path"] == "tf_model"
+    assert kwargs["registered_model_name"] == "tfm"
+    manager.pytorch.log_model.assert_not_called()
+    manager.sklearn.log_model.assert_not_called()
+
+
+def test_log_model_model_type_override_reaches_catalog_payload(manager, monkeypatch):
+    """``model_type`` replaces the flavor-detected type in the POST to CogAPI."""
+
+    class DummySkModel(manager.sklearn.BaseEstimator):
+        """Dummy Sklearn model."""
+
+    run = MagicMock()
+    run.info.run_id = "0123456789abcdef0123456789abcdef"
+    run.info.start_time = 1_700_000_000_000
+    run.data.tags = {"mlflow.runName": "tabular"}
+    manager.mlflow.active_run.return_value = run
+    monkeypatch.setattr(
+        manager,
+        "get_full_model_uri_from_run_or_registry",
+        lambda model_id, artifact_path=None: {
+            "model_uri": "runs:/x/model",
+            "model_name": "tabular",
+            "model_version": 1,
+        },
+    )
+    monkeypatch.setattr(manager, "detect_model_type", lambda uri: "pyfunc")
+    posted = {}
+
+    def fake_post(url, data, headers):
+        posted.update(url=url, data=data, headers=headers)
+
+    monkeypatch.setattr(models_mod.network, "make_post_request", fake_post)
+
+    manager.log_model(DummySkModel(), artifact_path="model", model_type="pytorch")
+    assert posted["data"]["type"] == "pytorch"
+
+    posted.clear()
+    manager.log_model(DummySkModel(), artifact_path="model")
+    assert posted["data"]["type"] == "pyfunc"
+
+
+def test_log_model_legacy_tf_keras_module_is_not_treated_as_pytorch(manager, monkeypatch):
+    """tf.keras models inherit tf.Module (class name ``Module``) — must route to TensorFlow."""
+
+    class Module:  # stands in for tensorflow.python.module.module.Module
+        pass
+
+    Module.__module__ = "tensorflow.python.module.module"
+
+    class LegacyKerasModel(Module):
+        pass
+
+    LegacyKerasModel.__module__ = "tensorflow.python.keras.engine.training"
+
+    tf_flavor = MagicMock()
+    tf_flavor.log_model.return_value = "TF_RESULT"
+    monkeypatch.setattr(models_mod, "lazy_import", lambda name: tf_flavor)
+
+    assert manager.log_model(LegacyKerasModel(), artifact_path="m") == "TF_RESULT"
+    tf_flavor.log_model.assert_called_once()
+    manager.pytorch.log_model.assert_not_called()
+
+
+def test_log_model_resolves_uri_with_the_logged_artifact_path(manager, monkeypatch):
+    """A run can hold other artifact dirs (preprocessing/); the resolver must be told which one is the model."""
+
+    class DummySkModel(manager.sklearn.BaseEstimator):
+        pass
+
+    run = MagicMock()
+    run.info.run_id = "0123456789abcdef0123456789abcdef"
+    run.info.start_time = 1_700_000_000_000
+    run.data.tags = {}
+    manager.mlflow.active_run.return_value = run
+    seen = {}
+
+    def fake_resolver(model_id, artifact_path=None):
+        seen["artifact_path"] = artifact_path
+        return {"model_uri": f"runs:/{model_id}/{artifact_path}", "model_name": "m", "model_version": 1}
+
+    monkeypatch.setattr(manager, "get_full_model_uri_from_run_or_registry", fake_resolver)
+    monkeypatch.setattr(manager, "detect_model_type", lambda uri: "sklearn")
+    posted = {}
+    monkeypatch.setattr(models_mod.network, "make_post_request", lambda url, data, headers: posted.update(data))
+
+    manager.log_model(DummySkModel(), artifact_path="model")
+    assert seen["artifact_path"] == "model"
+    assert posted["type"] == "sklearn"
+
+
+def test_log_model_sklearn_subclass_in_lookalike_module_stays_sklearn(manager):
+    """`keras_helpers` / `tensorflow_utils` are not the keras/tensorflow packages."""
+
+    class Helper(manager.sklearn.BaseEstimator):
+        pass
+
+    Helper.__module__ = "keras_helpers.estimators"
+    manager.sklearn.log_model.return_value = "SK"
+    assert manager.log_model(Helper(), artifact_path="m") == "SK"
+    manager.sklearn.log_model.assert_called_once()
+
+    assert models_mod._is_tensorflow_module("keras") and models_mod._is_tensorflow_module("tensorflow.python.x")
+    assert not models_mod._is_tensorflow_module("keras_helpers") and not models_mod._is_tensorflow_module(None)
+
+
+def test_log_model_keras_sklearn_wrapper_keeps_sklearn_routing(manager, monkeypatch):
+    """keras.src.wrappers.SKLearnClassifier is a BaseEstimator: sklearn logger, not mlflow.tensorflow."""
+
+    class SKLearnClassifier(manager.sklearn.BaseEstimator):
+        pass
+
+    SKLearnClassifier.__module__ = "keras.src.wrappers.sklearn_wrapper"
+    tf_flavor = MagicMock()
+    monkeypatch.setattr(models_mod, "lazy_import", lambda name: tf_flavor)
+    manager.sklearn.log_model.return_value = "SK"
+    assert manager.log_model(SKLearnClassifier(), artifact_path="m") == "SK"
+    manager.sklearn.log_model.assert_called_once()
+    tf_flavor.log_model.assert_not_called()

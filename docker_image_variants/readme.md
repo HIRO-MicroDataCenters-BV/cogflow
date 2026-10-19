@@ -40,11 +40,11 @@ docker build -t hiroregistry/cogflow:1.11.14-lite -f fl_docker/lite/Dockerfile .
 # Federated Learning variant
 docker build -t hiroregistry/cogflow:1.11.14-fl -f fl_docker/fl/Dockerfile .
 
-# TensorFlow variant
-docker build -t hiroregistry/cogflow:1.11.14-tensor -f fl_docker/tensor/Dockerfile .
+# TensorFlow variant (layers on the main image of the same version)
+docker build --build-arg COGFLOW_VERSION=3.0.0b15 -t hiroregistry/cogflow:3.0.0b15-tensor docker_image_variants/tensor
 
-# PyTorch variant
-docker build -t hiroregistry/cogflow:1.11.14-torch -f fl_docker/torch/Dockerfile .
+# PyTorch variant (layers on the main image of the same version)
+docker build --build-arg COGFLOW_VERSION=3.0.0b15 -t hiroregistry/cogflow:3.0.0b15-torch docker_image_variants/torch
 
 🚀 Pushing to Registry
 
@@ -120,6 +120,38 @@ arm64 stable consumers.
   wheel bind-mount). On tag-push it therefore needs its own simple-index wait
   before building — the wheel was published seconds earlier by `publish-pypi`. On
   `workflow_dispatch` the earlier dispatch wait already covers it.
+
+### Training-job variants (`torch` / `tensor`)
+
+`docker_image_variants/torch` and `docker_image_variants/tensor` are the images
+the platform's Kubeflow training jobs run in (`PyTorchJob` → `-torch`, `TFJob` →
+`-tensor`; entrypoints `python -m cogflow.trainers.<framework>.<name>`, submitted
+by CogAPI). They are built in `docker-publish` right after the main image's smoke
+test:
+
+| Variant | Base | Adds | Tags |
+|---------|------|------|------|
+| torch   | `hiroregistry/cogflow:<version>` | `torch` (PyPI default index = CUDA-enabled, runs on CPU too) | `<version>-torch`, `latest[-<channel>]-torch` |
+| tensor  | `hiroregistry/cogflow:<version>` | `tensorflow[and-cuda]==2.17.*` + `protobuf==3.20.3` re-pin | `<version>-tensor`, `latest[-<channel>]-tensor` |
+
+Design points:
+
+- **`FROM` the main image of the same version**, not a fresh `python:3.10-slim`:
+  cogflow, gcc, shap, xgboost and the protobuf pin are inherited, there is no
+  wheel/PyPI race to manage, and the variants cannot drift from the main image.
+- **amd64-only on every channel** (unlike the main image, which is multi-arch on
+  stable): the CUDA torch wheels and `tensorflow[and-cuda]` have no arm64 build.
+  One image serves `gpus=0` and `gpus>0` jobs; the price is size (several GB,
+  pulled once per node).
+- **TensorFlow stays on the 2.17 line** because it is the last line that
+  accepts the `protobuf 3.20.x` the vendored kfp needs; 2.18+ requires
+  protobuf ≥ 5.
+- Each variant has its own cache scope (`torch`, `tensor`).
+- A variant build failure leaves the main image published but that variant
+  un-pushed — re-run `docker-publish` to reconcile (same caveat as `cogflow_lite`).
+- Versions that predate `cogflow.trainers` (< 3.0.0b15) get no variants: the job
+  probes the pushed main image for the package and skips the variant steps on a
+  `workflow_dispatch` rebuild of such a version.
 
 ### Build cache
 
