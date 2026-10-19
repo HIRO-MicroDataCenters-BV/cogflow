@@ -149,6 +149,9 @@ Design points:
 - Each variant has its own cache scope (`torch`, `tensor`).
 - A variant build failure leaves the main image published but that variant
   un-pushed — re-run `docker-publish` to reconcile (same caveat as `cogflow_lite`).
+- Versions that predate `cogflow.trainers` (< 3.0.0b15) get no variants: the job
+  probes the pushed main image for the package and skips the variant steps on a
+  `workflow_dispatch` rebuild of such a version.
 
 ### Build cache
 

@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import copy
 import re
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -177,6 +178,12 @@ def parse_job_status(job: dict[str, Any] | None) -> dict[str, Any]:
         "last_transition_time": chosen.get("lastTransitionTime") if chosen else None,
         "replica_statuses": status.get("replicaStatuses") or {},
     }
+
+
+def _pod_ordinal(pod_name: str) -> tuple[int, str]:
+    """``tj-x-worker-10`` → (10, name); names without a numeric suffix sort last."""
+    _, _, tail = (pod_name or "").rpartition("-")
+    return (int(tail), pod_name) if tail.isdigit() else (sys.maxsize, pod_name)
 
 
 def _env_list(env: dict[str, Any] | None) -> list[dict[str, str]]:
@@ -623,9 +630,10 @@ class TrainingManager:
         if not pods:
             logger.info("No %s pods yet for job '%s' in namespace '%s'.", spec.kind, name, namespace)
             return []
-        # Index 0 is the lowest ordinal (``<name>-master-0``); the operator
-        # names pods deterministically so the sort is stable.
-        pod = sorted(pods, key=lambda p: p.metadata.name)[0]
+        # Lowest replica ORDINAL (``<name>-worker-2`` before ``-worker-10``):
+        # the operator names pods ``<job>-<replica>-<n>``, so sort on the
+        # numeric suffix, not on the string.
+        pod = min(pods, key=lambda p: _pod_ordinal(p.metadata.name))
         kwargs: dict[str, Any] = {
             "name": pod.metadata.name,
             "namespace": namespace,

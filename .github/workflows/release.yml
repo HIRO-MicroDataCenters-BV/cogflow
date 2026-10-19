@@ -252,7 +252,24 @@ jobs:
       # from the main image. amd64-only on EVERY channel: the CUDA-enabled
       # torch wheels and ``tensorflow[and-cuda]`` have no arm64 build. See
       # readme.md → Training-job variants.
+      #
+      # A workflow_dispatch rebuild of a version that predates the trainers
+      # (< 3.0.0b15) must not try to build them: probe the pushed image first
+      # and gate every variant step on the result.
+      - name: Check whether the base image ships the trainers
+        id: trainers
+        run: |
+          if docker run --rm "${{ steps.tags.outputs.version_tag }}" \
+               python3 -c "import cogflow.trainers" >/dev/null 2>&1; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "cogflow.trainers present: building torch/tensor variants"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "cogflow.trainers absent in this version: skipping torch/tensor variants"
+          fi
+
       - name: Build and push cogflow torch variant
+        if: steps.trainers.outputs.present == 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./docker_image_variants/torch
@@ -267,12 +284,14 @@ jobs:
           cache-to: type=gha,mode=max,scope=torch
 
       - name: Smoke test cogflow torch variant
+        if: steps.trainers.outputs.present == 'true'
         run: |
           docker pull "${{ steps.tags.outputs.version_tag }}-torch"
           docker run --rm "${{ steps.tags.outputs.version_tag }}-torch" \
             python3 -c "import cogflow, torch; print('cogflow', cogflow.__version__, 'torch', torch.__version__)"
 
       - name: Build and push cogflow tensor variant
+        if: steps.trainers.outputs.present == 'true'
         uses: docker/build-push-action@v6
         with:
           context: ./docker_image_variants/tensor
@@ -287,6 +306,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=tensor
 
       - name: Smoke test cogflow tensor variant
+        if: steps.trainers.outputs.present == 'true'
         run: |
           docker pull "${{ steps.tags.outputs.version_tag }}-tensor"
           docker run --rm "${{ steps.tags.outputs.version_tag }}-tensor" \

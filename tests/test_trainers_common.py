@@ -380,3 +380,16 @@ def test_aliased_column_and_category_names_do_not_cross_activate():
     seen = pd.DataFrame({"a": ["p"], "a=b": ["c"], "n": [1.0]})
     out = _common.transform_frame(data.preprocessing, seen)
     assert out[0, idx["a=p"]] == 1.0 and out[0, idx["a=b=c"]] == 0.0 and out[0, idx["a=b=d"]] == 0.0
+
+
+def test_one_hot_budget_rejects_high_cardinality_and_oversized_expansion(monkeypatch):
+    rng = np.random.default_rng(0)
+    n = 40
+    df = pd.DataFrame({"id": [f"row-{i}" for i in range(n)], "x": rng.normal(size=n), "y": rng.normal(size=n)})
+    monkeypatch.setattr(_common, "MAX_CATEGORIES_PER_COLUMN", 10)
+    with pytest.raises(ValueError, match="too many distinct values"):
+        _common.prepare_frame(df, "y", "regression")
+    monkeypatch.setattr(_common, "MAX_CATEGORIES_PER_COLUMN", 1000)
+    monkeypatch.setattr(_common, "MAX_ONE_HOT_CELLS", 100)
+    with pytest.raises(ValueError, match="one-hot expansion would need"):
+        _common.prepare_frame(df, "y", "regression")

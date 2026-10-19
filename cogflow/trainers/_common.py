@@ -219,6 +219,29 @@ ONE_HOT_SEP = "="
 MISSING_CATEGORY = "<missing>"
 
 
+# Bounds on the dense one-hot expansion, checked BEFORE anything is
+# allocated: a free-text or id column turns a small CSV into a rows×rows
+# float64 matrix that exhausts the pod.
+MAX_CATEGORIES_PER_COLUMN = 1000
+MAX_ONE_HOT_CELLS = 50_000_000  # ~400 MB of float64
+
+
+def _check_one_hot_budget(categories: dict[str, list[str]], n_rows: int) -> None:
+    too_wide = {c: len(v) for c, v in categories.items() if len(v) > MAX_CATEGORIES_PER_COLUMN}
+    if too_wide:
+        raise ValueError(
+            f"categorical columns with too many distinct values for one-hot encoding "
+            f"(limit {MAX_CATEGORIES_PER_COLUMN}): {too_wide}; drop id/free-text columns "
+            "from the dataset or bucket them before training"
+        )
+    cells = n_rows * sum(len(v) for v in categories.values())
+    if cells > MAX_ONE_HOT_CELLS:
+        raise ValueError(
+            f"one-hot expansion would need {cells:,} cells (> {MAX_ONE_HOT_CELLS:,}); reduce the "
+            "number of categorical columns/categories or the number of rows"
+        )
+
+
 def _reject_duplicate_feature_names(names: list[str]) -> None:
     seen: set[str] = set()
     dupes = sorted({n for n in names if n in seen or seen.add(n)})  # type: ignore[func-returns-value]
@@ -302,6 +325,7 @@ def prepare_frame(
     categories: dict[str, list[str]] = {
         str(c): sorted(x_raw[c].astype("string").fillna(MISSING_CATEGORY).unique().tolist()) for c in other_cols
     }
+    _check_one_hot_budget(categories, len(frame))
     encoded = _one_hot(x_raw, categories) if other_cols else pd.DataFrame(index=x_raw.index)
     features = pd.concat([numeric, encoded], axis=1)
     feature_names = [str(c) for c in features.columns]

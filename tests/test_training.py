@@ -406,6 +406,13 @@ def test_get_job_logs_explicit_replica_and_lowest_ordinal(training, training_env
     assert fake_core.calls[1][1]["name"] == "tj-w-worker-0"
 
 
+def test_get_job_logs_picks_lowest_numeric_ordinal(training, training_env):
+    _, _, fake_core = training_env
+    fake_core.pods = [_pod("tj-w-worker-10"), _pod("tj-w-worker-2"), _pod("tj-w-worker-9")]
+    training.get_job_logs("tj-w", "pytorch", namespace="ns", replica_type="Worker")
+    assert fake_core.calls[1][1]["name"] == "tj-w-worker-2"
+
+
 def test_get_job_logs_no_pods_returns_empty(training, training_env):
     _, _, fake_core = training_env
     assert training.get_job_logs("tj-none", "pytorch", namespace="ns") == []
