@@ -157,7 +157,7 @@ def test_prepare_frame_classification_shapes_and_encoding():
     assert data.n_outputs == 3
     # f1, f2 numeric + bool flag (numeric dtype, kept as-is) + one-hot colour (2) = 5; 'empty' dropped
     assert data.n_features == 5
-    assert sorted(n for n in data.feature_names if n.startswith("colour")) == ["colour_blue", "colour_red"]
+    assert sorted(n for n in data.feature_names if n.startswith("colour")) == ["colour=blue", "colour=red"]
     assert all(not name.startswith("empty") for name in data.feature_names)
     assert data.x_train.dtype == np.float32 and data.x_val.dtype == np.float32
     assert data.y_train.dtype == np.int64
@@ -312,7 +312,7 @@ def test_transform_frame_aligns_unseen_and_missing_categories():
     new = pd.DataFrame({"f1": [0.5], "f2": [1.0], "colour": ["green"], "flag": [True]})
     out = _common.transform_frame(data.preprocessing, new)
     idx = {n: i for i, n in enumerate(data.feature_names)}
-    assert out[0, idx["colour_red"]] == 0.0 and out[0, idx["colour_blue"]] == 0.0
+    assert out[0, idx["colour=red"]] == 0.0 and out[0, idx["colour=blue"]] == 0.0
     with pytest.raises(ValueError, match="missing trained feature columns"):
         _common.transform_frame(data.preprocessing, new.drop(columns=["f2"]))
 
@@ -331,3 +331,31 @@ def test_log_preprocessing_writes_json_and_logs_artifact(tmp_path, monkeypatch):
     assert path.name == _common.PREPROCESSING_FILENAME
     assert json.loads(path.read_text()) == state
     assert calls == [(str(path), _common.PREPROCESSING_ARTIFACT_DIR)]
+
+
+def test_numeric_column_cannot_shadow_a_category_indicator():
+    """`colour_red` (numeric) and category red of `colour` used to collide on `colour_red`."""
+    df = _iris_like()
+    df["colour_red"] = np.arange(len(df), dtype="float64")
+    data = _common.prepare_frame(df, "species", "classification")
+    assert "colour_red" in data.feature_names and "colour=red" in data.feature_names
+    new = pd.DataFrame({"f1": [0.1], "f2": [0.2], "colour": ["blue"], "flag": [False], "colour_red": [7.0]})
+    out = _common.transform_frame(data.preprocessing, new)
+    idx = {n: i for i, n in enumerate(data.feature_names)}
+    assert out[0, idx["colour=red"]] == 0.0 and out[0, idx["colour=blue"]] == 1.0
+    assert out[0, idx["colour_red"]] != 0.0  # the numeric value, scaled
+
+
+def test_duplicate_generated_feature_names_are_rejected():
+    df = _iris_like()
+    df["colour=red"] = 1.0  # numeric column literally named like the indicator
+    with pytest.raises(ValueError, match="collide"):
+        _common.prepare_frame(df, "species", "classification")
+
+
+def test_parse_hyperparams_normalises_lists_for_string_knobs():
+    merged = _common.parse_hyperparams('{"hidden_sizes": [16, 8]}', {"hidden_sizes": "128,64"})
+    assert merged["hidden_sizes"] == "16,8"
+    assert _common.parse_int_list(merged["hidden_sizes"]) == [16, 8]
+    assert _common.parse_hyperparams('{"hidden_sizes": []}', {"hidden_sizes": "128,64"})["hidden_sizes"] == ""
+    assert _common.parse_int_list("") == []

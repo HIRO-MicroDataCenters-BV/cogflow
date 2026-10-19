@@ -159,3 +159,20 @@ def test_build_model_layers():
     linears = [m for m in model if isinstance(m, torch.nn.Linear)]
     assert [(m.in_features, m.out_features) for m in linears] == [(4, 8), (8, 4), (4, 3)]
     assert not any(isinstance(m, torch.nn.Dropout) for m in model)
+
+
+def test_evaluate_is_batched_and_matches_full_pass():
+    rng = np.random.default_rng(0)
+    x = rng.normal(size=(37, 4)).astype("float32")
+    y = (x[:, 0] > 0).astype("int64")
+    model = tabular.build_model(4, 2, [8], 0.0).eval()
+    full = tabular._evaluate(model, x, y, "classification", 2, torch.device("cpu"), batch_size=1000)
+    batched = tabular._evaluate(model, x, y, "classification", 2, torch.device("cpu"), batch_size=5)
+    assert batched["val_accuracy"] == full["val_accuracy"]
+    assert abs(batched["val_loss"] - full["val_loss"]) < 1e-5
+    yr = x[:, 1].astype("float32")
+    reg_model = tabular.build_model(4, 1, [8], 0.0).eval()
+    full_r = tabular._evaluate(reg_model, x, yr, "regression", None, torch.device("cpu"), batch_size=1000)
+    batched_r = tabular._evaluate(reg_model, x, yr, "regression", None, torch.device("cpu"), batch_size=4)
+    assert abs(batched_r["val_rmse"] - full_r["val_rmse"]) < 1e-5
+    assert abs(batched_r["val_loss"] - full_r["val_loss"]) < 1e-4

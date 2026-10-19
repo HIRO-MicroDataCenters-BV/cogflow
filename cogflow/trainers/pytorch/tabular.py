@@ -69,21 +69,34 @@ def _distributed_context() -> tuple[int, int]:
     return world_size, rank
 
 
-def _evaluate(model, x_val, y_val, task: str, n_classes: int | None, device) -> dict[str, float]:
+def _evaluate(
+    model, x_val, y_val, task: str, n_classes: int | None, device, batch_size: int = 1024
+) -> dict[str, float]:
+    """Validation metrics, computed in batches so a large split cannot exhaust device memory."""
+    import numpy as np
     import torch
 
     model.eval()
+    outputs = []
+    loss_sum = 0.0
     with torch.no_grad():
-        logits = model(torch.as_tensor(x_val, device=device))
-        if task == "classification":
-            loss = torch.nn.functional.cross_entropy(logits, torch.as_tensor(y_val, device=device)).item()
-            pred = logits.argmax(dim=1).cpu().numpy()
-            metrics = _common.classification_metrics(y_val, pred, int(n_classes or 0))
-        else:
-            target = torch.as_tensor(y_val, device=device).view(-1, 1)
-            loss = torch.nn.functional.mse_loss(logits, target).item()
-            metrics = _common.regression_metrics(y_val, logits.view(-1).cpu().numpy())
-    metrics["val_loss"] = float(loss)
+        for start in range(0, len(x_val), max(int(batch_size), 1)):
+            xb = torch.as_tensor(x_val[start : start + batch_size], device=device)
+            logits = model(xb)
+            if task == "classification":
+                yb = torch.as_tensor(y_val[start : start + batch_size], device=device)
+                loss_sum += torch.nn.functional.cross_entropy(logits, yb, reduction="sum").item()
+                outputs.append(logits.argmax(dim=1).cpu().numpy())
+            else:
+                yb = torch.as_tensor(y_val[start : start + batch_size], device=device).view(-1, 1)
+                loss_sum += torch.nn.functional.mse_loss(logits, yb, reduction="sum").item()
+                outputs.append(logits.view(-1).cpu().numpy())
+    pred = np.concatenate(outputs) if outputs else np.zeros(0)
+    if task == "classification":
+        metrics = _common.classification_metrics(y_val, pred, int(n_classes or 0))
+    else:
+        metrics = _common.regression_metrics(y_val, pred)
+    metrics["val_loss"] = float(loss_sum / max(len(x_val), 1))
     return metrics
 
 
@@ -102,6 +115,13 @@ def train(
     hp = hyperparams
     torch.manual_seed(int(hp["seed"]))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        # One process per replica → one GPU per replica. Extra GPUs on the
+        # pod stay idle; the platform catalog caps this trainer at one.
+        logger.warning(
+            "%d GPUs visible but this trainer uses one GPU per replica (cuda:0); request gpus=1.",
+            torch.cuda.device_count(),
+        )
 
     hidden_sizes = _common.parse_int_list(hp["hidden_sizes"])
     model = build_model(data.n_features, data.n_outputs, hidden_sizes, float(hp["dropout"])).to(device)
@@ -145,7 +165,7 @@ def train(
             optimizer.step()
             running += loss.item() * len(xb)
             seen += len(xb)
-        metrics = _evaluate(model, data.x_val, data.y_val, data.task, data.n_classes, device)
+        metrics = _evaluate(model, data.x_val, data.y_val, data.task, data.n_classes, device, int(hp["batch_size"]))
         metrics["train_loss"] = running / max(seen, 1)
         final = metrics
         if on_epoch_end is not None:

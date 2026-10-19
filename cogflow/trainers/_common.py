@@ -113,6 +113,9 @@ def parse_hyperparams(raw: str | None, defaults: dict[str, Any]) -> dict[str, An
                 merged[key] = int(value)
             elif isinstance(default, float):
                 merged[key] = float(value)
+            elif isinstance(default, str) and isinstance(value, (list, tuple)):
+                # e.g. hidden_sizes [16, 8] → "16,8" (the format parse_int_list reads)
+                merged[key] = ",".join(str(v) for v in value)
             else:
                 merged[key] = type(default)(value)
         except (TypeError, ValueError) as exc:
@@ -209,6 +212,23 @@ def load_frame(path: str | Path):
 # ---------------------------------------------------------------------
 
 
+# One-hot column names are ``<column>=<category>``: ``=`` cannot appear in a
+# pandas-friendly numeric column name the way ``_`` can, so a numeric column
+# ``colour_red`` and category ``red`` of ``colour`` no longer collide.
+ONE_HOT_SEP = "="
+MISSING_CATEGORY = "<missing>"
+
+
+def _reject_duplicate_feature_names(names: list[str]) -> None:
+    seen: set[str] = set()
+    dupes = sorted({n for n in names if n in seen or seen.add(n)})  # type: ignore[func-returns-value]
+    if dupes:
+        raise ValueError(
+            f"generated feature names collide: {dupes}; rename the conflicting columns so every "
+            "numeric column and every <column>=<category> indicator has a distinct name"
+        )
+
+
 @dataclass
 class PreparedData:
     """Train/validation split ready for a framework."""
@@ -277,12 +297,17 @@ def prepare_frame(
     other_cols = [c for c in x_raw.columns if c not in numeric_cols]
     numeric = x_raw[numeric_cols].astype("float64") if numeric_cols else pd.DataFrame(index=x_raw.index)
     encoded = (
-        pd.get_dummies(x_raw[other_cols].astype("string").fillna("<missing>"), dtype="float64")
+        pd.get_dummies(
+            x_raw[other_cols].astype("string").fillna(MISSING_CATEGORY),
+            dtype="float64",
+            prefix_sep=ONE_HOT_SEP,
+        )
         if other_cols
         else pd.DataFrame(index=x_raw.index)
     )
     features = pd.concat([numeric, encoded], axis=1)
     feature_names = [str(c) for c in features.columns]
+    _reject_duplicate_feature_names(feature_names)
 
     rng = np.random.default_rng(seed)
     n = len(frame)
@@ -405,9 +430,12 @@ def transform_frame(preprocessing: dict[str, Any], df) -> Any:
         values = (values - means) / stds
         parts.append(pd.DataFrame(values, columns=numeric_cols, index=df.index))
     if other_cols:
-        encoded = pd.get_dummies(df[other_cols].astype("string").fillna("<missing>"), dtype="float64")
+        encoded = pd.get_dummies(
+            df[other_cols].astype("string").fillna(MISSING_CATEGORY), dtype="float64", prefix_sep=ONE_HOT_SEP
+        )
         parts.append(encoded)
     features = pd.concat(parts, axis=1) if parts else pd.DataFrame(index=df.index)
+    _reject_duplicate_feature_names([str(c) for c in features.columns])
     features = features.reindex(columns=feature_names, fill_value=0.0)
     return np.ascontiguousarray(features.to_numpy(dtype="float64"), dtype="float32")
 

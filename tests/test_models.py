@@ -1096,3 +1096,18 @@ def test_log_model_resolves_uri_with_the_logged_artifact_path(manager, monkeypat
     manager.log_model(DummySkModel(), artifact_path="model")
     assert seen["artifact_path"] == "model"
     assert posted["type"] == "sklearn"
+
+
+def test_log_model_sklearn_subclass_in_lookalike_module_stays_sklearn(manager):
+    """`keras_helpers` / `tensorflow_utils` are not the keras/tensorflow packages."""
+
+    class Helper(manager.sklearn.BaseEstimator):
+        pass
+
+    Helper.__module__ = "keras_helpers.estimators"
+    manager.sklearn.log_model.return_value = "SK"
+    assert manager.log_model(Helper(), artifact_path="m") == "SK"
+    manager.sklearn.log_model.assert_called_once()
+
+    assert models_mod._is_tensorflow_module("keras") and models_mod._is_tensorflow_module("tensorflow.python.x")
+    assert not models_mod._is_tensorflow_module("keras_helpers") and not models_mod._is_tensorflow_module(None)

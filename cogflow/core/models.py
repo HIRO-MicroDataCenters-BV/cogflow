@@ -88,6 +88,17 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _is_tensorflow_module(module_name: str | None) -> bool:
+    """True for classes defined in the ``keras`` or ``tensorflow`` packages themselves.
+
+    Matches the top-level package names exactly (``keras``, ``keras.src...``,
+    ``tensorflow.python...``) — not look-alikes such as ``keras_helpers`` or
+    ``tensorflow_utils`` where a user may define a scikit-learn subclass.
+    """
+    name = module_name or ""
+    return name in ("keras", "tensorflow") or name.startswith(("keras.", "tensorflow."))
+
+
 class ModelManager:
     """
     Central class for all model lifecycle operations within CogFlow.
@@ -702,7 +713,7 @@ class ModelManager:
             # so subclasses defined in user code still match. Decided BEFORE
             # the PyTorch check: legacy tf.keras models inherit ``tf.Module``,
             # whose class name also matches the ``module`` heuristic below.
-            is_tensorflow = any((cls.__module__ or "").startswith(("keras", "tensorflow")) for cls in type(model).mro())
+            is_tensorflow = any(_is_tensorflow_module(cls.__module__) for cls in type(model).mro())
             is_pytorch = "module" in cls_hierarchy and not is_tensorflow  # torch.nn.Module base class
             is_sklearn = "baseestimator" in cls_hierarchy  # sklearn.base.BaseEstimator base class
             # ---------------------------------------------------------------
