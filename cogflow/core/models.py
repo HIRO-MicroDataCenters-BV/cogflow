@@ -784,7 +784,12 @@ class ModelManager:
                     raise RuntimeError("No active MLflow run found")
 
                 model_id = active_run.info.run_id
-                model_details = self.get_full_model_uri_from_run_or_registry(model_id=model_id)
+                # Pass the artifact path: a run may hold other artifact
+                # directories (the trainers log preprocessing/ first) and the
+                # resolver refuses to guess between several.
+                model_details = self.get_full_model_uri_from_run_or_registry(
+                    model_id=model_id, artifact_path=artifact_path
+                )
                 resolved_type = model_type or self.detect_model_type(model_details["model_uri"])
 
                 model_dict = {
