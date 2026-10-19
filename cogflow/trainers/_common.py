@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import tempfile
 import zipfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -176,8 +177,10 @@ def materialise_tabular_dataset(dataset_id: str, work_dir: str | Path) -> Path:
     from ..core import datasets as cogflow_datasets
 
     work_dir = Path(work_dir)
-    download_dir = work_dir / "download"
-    download_dir.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+    # Fresh directories per call: a shared work_dir must never let an earlier
+    # dataset's files be picked up (or trip the single-file rule) for this one.
+    download_dir = Path(tempfile.mkdtemp(prefix=f"download-{dataset_id}-", dir=work_dir))
     downloaded = Path(cogflow_datasets.download_dataset(dataset_id, output_path=str(download_dir)))
     logger.info("Dataset %s downloaded to %s", dataset_id, downloaded)
 
@@ -186,7 +189,7 @@ def materialise_tabular_dataset(dataset_id: str, work_dir: str | Path) -> Path:
     if not zipfile.is_zipfile(downloaded):
         raise RuntimeError(f"Downloaded dataset {downloaded.name!r} is neither a ZIP nor a tabular file.")
 
-    extracted = work_dir / "extracted"
+    extracted = Path(tempfile.mkdtemp(prefix=f"extracted-{dataset_id}-", dir=work_dir))
     _safe_extract(downloaded, extracted)
     return _pick_single_tabular_file(extracted, downloaded.name)
 

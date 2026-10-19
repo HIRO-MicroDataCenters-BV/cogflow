@@ -93,6 +93,21 @@ def test_materialise_rejects_zero_or_many_tabular_files(tmp_path, monkeypatch):
         _common.materialise_tabular_dataset("ds", tmp_path / "w2")
 
 
+def test_materialise_uses_fresh_directories_per_call(tmp_path, monkeypatch):
+    """A shared work_dir must not leak an earlier dataset's files into the next call."""
+    work = tmp_path / "work"
+    _patch_download(monkeypatch, _zip_with(tmp_path, {"first.csv": b"a\n1\n"}, name="one.zip"))
+    first = _common.materialise_tabular_dataset("ds-1", work)
+    assert first.name == "first.csv"
+    _patch_download(monkeypatch, _zip_with(tmp_path, {"second.csv": b"b\n2\n"}, name="two.zip"))
+    second = _common.materialise_tabular_dataset("ds-2", work)
+    assert second.name == "second.csv" and second.parent != first.parent
+    # And a tabular-less archive must not fall back to the previous CSV.
+    _patch_download(monkeypatch, _zip_with(tmp_path, {"readme.txt": b"x"}, name="three.zip"))
+    with pytest.raises(RuntimeError, match="No .csv/.parquet file"):
+        _common.materialise_tabular_dataset("ds-3", work)
+
+
 def test_materialise_accepts_raw_csv_download(tmp_path, monkeypatch):
     raw = tmp_path / "plain.csv"
     raw.write_text("a,b\n1,2\n")

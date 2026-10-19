@@ -453,6 +453,20 @@ def test_lazy_package_lists_training(training_env):
     assert '"training",' in package_init.read_text()
 
 
-@pytest.mark.parametrize("name", ["tj-abc12345", "a", "tj-1-2-3", "x" * 63])
+@pytest.mark.parametrize("name", ["tj-abc12345", "a", "tj-1-2-3", "x" * 54])
 def test_build_job_spec_accepts_dns1035_names(training, name):
     assert training.build_job_spec(name=name, framework="pytorch", image="img")["metadata"]["name"] == name
+
+
+def test_job_name_limit_leaves_room_for_derived_pod_and_service_names(training_env, training):
+    module, _, _ = training_env
+    # "-master-0" is 9 chars → 54; "-chief-0" is 8 → 55; "-worker-10" (12 workers) is 10 → 53.
+    assert module.max_job_name_length("pytorch", 1) == 54
+    assert module.max_job_name_length("tensorflow", 1) == 55
+    assert module.max_job_name_length("pytorch", 12) == 53
+    training.build_job_spec(name="x" * 54, framework="pytorch", image="img")
+    with pytest.raises(exc_mod.CogflowValidationError, match="63 characters"):
+        training.build_job_spec(name="x" * 55, framework="pytorch", image="img")
+    with pytest.raises(exc_mod.CogflowValidationError, match="63 characters"):
+        training.build_job_spec(name="x" * 54, framework="pytorch", image="img", workers=12)
+    training.build_job_spec(name="x" * 55, framework="tensorflow", image="img")

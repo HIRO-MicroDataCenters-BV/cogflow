@@ -125,6 +125,21 @@ def framework_spec(framework: str) -> FrameworkSpec:
     return spec  # type: ignore[return-value]
 
 
+def max_job_name_length(framework: str, workers: int = 1) -> int:
+    """Longest job name whose derived pod/Service names stay within 63 characters.
+
+    The operator names replicas ``<job>-<replica>-<index>`` and creates a
+    Service per pod with the same name; Service names are DNS-1035 labels
+    (63 chars). The binding suffix is the primary (``-master-0`` /
+    ``-chief-0``) or the highest worker ordinal (``-worker-<workers-2>``).
+    """
+    spec = framework_spec(framework)
+    suffixes = [f"-{spec.primary.lower()}-0"]
+    if workers > 1:
+        suffixes.append(f"-worker-{workers - 2}")
+    return 63 - max(len(sfx) for sfx in suffixes)
+
+
 def parse_job_status(job: dict[str, Any] | None) -> dict[str, Any]:
     """Reduce a PyTorchJob/TFJob resource to one state plus context.
 
@@ -301,15 +316,23 @@ class TrainingManager:
                 ``workers``/``gpus``/``name``.
         """
         spec = framework_spec(framework)
-        if not name or len(name) > 63 or not DNS1035_NAME_RE.fullmatch(name):
-            CogflowErrorHandler.log_and_raise(
-                f"Invalid job name {name!r}: must match DNS-1035 (lowercase alphanumerics and '-', "
-                "starting with a letter, ending with an alphanumeric) and be at most 63 characters.",
-                raise_as=CogflowValidationError,
-            )
         if workers < 1:
             CogflowErrorHandler.log_and_raise(
                 f"workers must be >= 1 (got {workers}).",
+                raise_as=CogflowValidationError,
+            )
+        if not name or not DNS1035_NAME_RE.fullmatch(name):
+            CogflowErrorHandler.log_and_raise(
+                f"Invalid job name {name!r}: must match DNS-1035 (lowercase alphanumerics and '-', "
+                "starting with a letter, ending with an alphanumeric).",
+                raise_as=CogflowValidationError,
+            )
+        limit = max_job_name_length(framework, workers)
+        if len(name) > limit:
+            CogflowErrorHandler.log_and_raise(
+                f"Invalid job name {name!r}: {len(name)} characters, but the operator derives "
+                f"'<name>-{spec.primary.lower()}-0' / '<name>-worker-<n>' pod and Service names "
+                f"that must stay within 63 characters, so at most {limit} characters are allowed here.",
                 raise_as=CogflowValidationError,
             )
         if gpus < 0:
