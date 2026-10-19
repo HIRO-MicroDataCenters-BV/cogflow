@@ -35,6 +35,9 @@ TASK_TAG = "cog.task"
 RESULT_LINE_PREFIX = "COG_TRAINING_RESULT"
 
 JOB_ID_ENV = "COG_TRAINING_JOB_ID"
+# Local-development / test hook: path of a CSV or parquet file to train on
+# instead of downloading ``--dataset-id`` through CogAPI.
+LOCAL_DATASET_ENV = "COG_TRAINING_LOCAL_DATASET"
 
 TASKS = ("classification", "regression")
 
@@ -177,6 +180,14 @@ def materialise_tabular_dataset(dataset_id: str, work_dir: str | Path) -> Path:
     even for a single file; the archive is unwrapped here. A raw CSV /
     parquet download (a future API shape) is accepted as-is.
     """
+    local = os.environ.get(LOCAL_DATASET_ENV, "").strip()
+    if local:
+        path = Path(local)
+        if not path.is_file() or path.suffix.lower() not in TABULAR_EXTENSIONS:
+            raise RuntimeError(f"{LOCAL_DATASET_ENV}={local!r} is not an existing CSV/parquet file")
+        logger.info("Using local dataset %s instead of downloading %s", path, dataset_id)
+        return path
+
     from ..core import datasets as cogflow_datasets
 
     work_dir = Path(work_dir)
@@ -594,6 +605,19 @@ def tracked_run(
 def emit_result(run_id: str) -> None:
     """Print the machine-readable last line of a successful trainer."""
     print(f"{RESULT_LINE_PREFIX} run_id={run_id}", flush=True)
+
+
+def say(message: str) -> None:
+    """Progress line for the pod log (stdout, flushed).
+
+    cogflow's logger defaults to WARNING, so ``logger.info`` never reaches the
+    pod log that the platform shows users; trainer progress goes through here.
+    """
+    print(f"[trainer] {message}", flush=True)
+
+
+def format_metrics(metrics: dict[str, float]) -> str:
+    return " ".join(f"{k}={v:.4f}" for k, v in sorted(metrics.items()))
 
 
 def resolve_seed(hyperparams: dict[str, Any], default: int = 42) -> int:

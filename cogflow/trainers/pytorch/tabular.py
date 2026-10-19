@@ -170,7 +170,8 @@ def train(
         final = metrics
         if on_epoch_end is not None:
             on_epoch_end(epoch, metrics)
-        logger.info("epoch %d/%d %s", epoch + 1, int(hp["epochs"]), {k: round(v, 5) for k, v in metrics.items()})
+        if rank == 0:
+            _common.say(f"epoch {epoch + 1}/{int(hp['epochs'])} {_common.format_metrics(metrics)}")
 
     unwrapped = model.module if hasattr(model, "module") else model
     return unwrapped.cpu().eval(), final
@@ -193,13 +194,9 @@ def main(argv: list[str] | None = None) -> int:
         test_split=float(hp["test_split"]),
         seed=int(hp["seed"]),
     )
-    logger.info(
-        "Prepared dataset %s: %d train / %d val rows, %d features, task=%s",
-        args.dataset_id,
-        len(data.x_train),
-        len(data.x_val),
-        data.n_features,
-        data.task,
+    _common.say(
+        f"dataset {args.dataset_id}: {len(data.x_train)} train / {len(data.x_val)} val rows, "
+        f"{data.n_features} features, task={data.task}"
     )
 
     if not is_primary:
@@ -245,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
             model_type=FRAMEWORK,
             metadata={_common.PREPROCESSING_METADATA_KEY: data.preprocessing},
         )
-        logger.info("Model '%s' logged to run %s", args.output_name, run_id)
+        _common.say(f"model '{args.output_name}' logged to run {run_id}")
 
     _common.emit_result(run_id)
     return 0

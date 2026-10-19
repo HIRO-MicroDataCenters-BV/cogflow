@@ -1922,16 +1922,23 @@ class ModelManager:
         run = self.get_run(run_id)
         return run.info.artifact_uri
 
-    def list_artifacts_grouped(self, run_id: str) -> dict[str, list[str]]:
+    def list_artifacts_grouped(self, run_id: str, max_depth: int = 16) -> dict[str, list[str]]:
         """
-        List artifacts for a run, grouped by directory.
+        List artifacts for a run, grouped by directory — recursively.
+
+        Every directory at any depth becomes a key (its path relative to the
+        run's artifact root, e.g. ``"model"`` and ``"model/data"``); the value
+        is the list of file names directly inside it. Root-level files use
+        ``""`` as the key. Flavors such as PyTorch and TensorFlow keep their
+        weights one level below the model directory (``model/data/model.pth``),
+        which a one-level listing used to hide.
 
         Args:
             run_id (str): The run identifier (UUID, with or without hyphens).
+            max_depth (int): Safety bound on directory nesting.
 
         Returns:
-            Dict[str, List[str]]: A dictionary mapping directory names to lists
-            of filenames. Root-level files use "" as the key.
+            Dict[str, List[str]]: directory path → file names in that directory.
 
         Raises:
             CogflowRunError: If the run cannot be found or retrieval fails.
@@ -1940,23 +1947,24 @@ class ModelManager:
             >>> from cogflow import models
             >>> artifacts = models.list_artifacts_grouped("a1b2c3d4e5")
             >>> print(artifacts)
-            {"": ["README.md"], "model": ["model.pkl", "config.json"]}
+            {"": ["README.md"], "model": ["MLmodel"], "model/data": ["model.pth"]}
         """
         self._warn_if_unhealthy("listing artifacts")
 
         try:
             run_id = common.uuid_to_hex(run_id)
-            artifacts = self.client.list_artifacts(run_id)
             grouped: dict[str, list[str]] = {}
-
-            for artifact in artifacts:
-                if artifact.is_dir:
-                    # List files inside the directory
-                    sub_artifacts = self.client.list_artifacts(run_id, artifact.path)
-                    grouped[artifact.path] = [a.path.split("/")[-1] for a in sub_artifacts if not a.is_dir]
-                else:
-                    grouped.setdefault("", []).append(artifact.path)
-
+            pending: list[tuple[str, int]] = [("", 0)]
+            while pending:
+                directory, depth = pending.pop(0)
+                entries = self.client.list_artifacts(run_id, directory or None)
+                for artifact in entries:
+                    if artifact.is_dir:
+                        if depth + 1 <= max_depth:
+                            pending.append((artifact.path, depth + 1))
+                        grouped.setdefault(artifact.path, [])
+                    else:
+                        grouped.setdefault(directory, []).append(artifact.path.split("/")[-1])
             return grouped
         except Exception as e:
             CogflowErrorHandler.handle_exception(

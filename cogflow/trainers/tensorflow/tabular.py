@@ -8,10 +8,14 @@ Entrypoint for the ``tensorflow-tabular-classifier`` /
         --dataset-id <uuid> --output-name my-model --task regression \\
         --target-column price --hyperparams '{"epochs": 30}'
 
-Inside a multi-replica ``TFJob`` the Training Operator sets ``TF_CONFIG``;
-the trainer then builds the model under ``MultiWorkerMirroredStrategy``.
-Only the chief (``task.type == "chief"``, or worker 0 when the cluster has
-no chief) talks to MLflow / the catalog.
+Single-replica only. Keras 3 (TensorFlow >= 2.16) cannot run ``model.fit``
+under ``MultiWorkerMirroredStrategy`` (``ValueError: Attempt to convert a
+value (PerReplica ...)`` — reproduced on TF 2.17 and 2.21), so a
+multi-worker ``TF_CONFIG`` is refused up front with a clear message instead
+of failing inside the training loop; the platform catalog marks the
+TensorFlow algorithms as non-distributed. Only the chief (``task.type ==
+"chief"``, or worker 0 when the cluster has no chief) talks to MLflow / the
+catalog.
 """
 
 from __future__ import annotations
@@ -91,10 +95,28 @@ def build_model(
     return model
 
 
-def _evaluate(model, x_val, y_val, task: str, n_classes: int | None) -> dict[str, float]:
+def _dataset(x, y=None, batch_size: int = 64, shuffle: bool = False, seed: int = 0):
+    """``tf.data`` pipeline for ``fit``/``predict``.
+
+    Under ``MultiWorkerMirroredStrategy`` Keras needs datasets, not numpy
+    arrays (arrays become PerReplica values it cannot convert); sharding is
+    pinned to DATA because in-memory slices have no files to shard by.
+    """
+    import tensorflow as tf
+
+    ds = tf.data.Dataset.from_tensor_slices(x if y is None else (x, y))
+    if shuffle:
+        ds = ds.shuffle(buffer_size=min(len(x), 10_000), seed=seed, reshuffle_each_iteration=True)
+    ds = ds.batch(max(int(batch_size), 1))
+    options = tf.data.Options()
+    options.experimental_distribute.auto_shard_policy = tf.data.experimental.AutoShardPolicy.DATA
+    return ds.with_options(options)
+
+
+def _evaluate(model, x_val, y_val, task: str, n_classes: int | None, batch_size: int = 256) -> dict[str, float]:
     import numpy as np
 
-    pred = model.predict(x_val, verbose=0)
+    pred = model.predict(_dataset(x_val, batch_size=batch_size), verbose=0)
     if task == "classification":
         labels = np.argmax(pred, axis=1)
         metrics = _common.classification_metrics(y_val, labels, int(n_classes or 0))
@@ -115,72 +137,59 @@ def train(data: _common.PreparedData, hyperparams: dict[str, Any], *, on_epoch_e
     tf.keras.utils.set_random_seed(int(hp["seed"]))
     hidden_sizes = _common.parse_int_list(hp["hidden_sizes"])
 
-    strategy = tf.distribute.MultiWorkerMirroredStrategy() if tf_config().get("cluster") else None
-    scope = strategy.scope() if strategy is not None else _NullScope()
-    with scope:
-        model = build_model(
-            data.n_features,
-            data.n_outputs,
-            hidden_sizes,
-            float(hp["dropout"]),
-            data.task,
-            float(hp["learning_rate"]),
-        )
-
-    # The per-epoch evaluation runs on EVERY replica: under
-    # MultiWorkerMirroredStrategy ``predict`` is a collective, so a chief-only
-    # evaluation would leave the workers waiting on mismatched collectives.
-    # Only the MLflow logging call (``on_epoch_end``) is chief-only.
-    def _cb(epoch, logs):
-        metrics = _evaluate(model, data.x_val, data.y_val, data.task, data.n_classes)
-        metrics["train_loss"] = float((logs or {}).get("loss", 0.0))
-        if on_epoch_end is not None:
-            on_epoch_end(epoch, metrics)
-
-    model.fit(
-        data.x_train,
-        data.y_train,
-        epochs=int(hp["epochs"]),
-        batch_size=int(hp["batch_size"]),
-        validation_data=(data.x_val, data.y_val),
-        verbose=2,
-        callbacks=[tf.keras.callbacks.LambdaCallback(on_epoch_end=_cb)],
-    )
-    final = _evaluate(model, data.x_val, data.y_val, data.task, data.n_classes)
-    if strategy is not None:
-        # Hand back a model that lives OUTSIDE the strategy: the chief logs it
-        # after the workers have exited, and MLflow's signature inference
-        # would otherwise call predict() through collectives nobody answers.
-        model = detach_from_strategy(model, data, hp)
-    return model, final
-
-
-def detach_from_strategy(model, data: _common.PreparedData, hp: dict[str, Any]):
-    """Copy ``model``'s weights into a fresh, non-distributed model."""
-    plain = build_model(
+    refuse_multi_worker(tf_config())
+    model = build_model(
         data.n_features,
         data.n_outputs,
-        _common.parse_int_list(hp["hidden_sizes"]),
+        hidden_sizes,
         float(hp["dropout"]),
         data.task,
         float(hp["learning_rate"]),
     )
-    plain.set_weights(model.get_weights())
-    return plain
+
+    def _cb(epoch, logs):
+        metrics = _evaluate(model, data.x_val, data.y_val, data.task, data.n_classes)
+        metrics["train_loss"] = float((logs or {}).get("loss", 0.0))
+        if on_epoch_end is not None:
+            _common.say(f"epoch {epoch + 1}/{int(hp['epochs'])} {_common.format_metrics(metrics)}")
+            on_epoch_end(epoch, metrics)
+
+    batch_size = int(hp["batch_size"])
+    model.fit(
+        _dataset(data.x_train, data.y_train, batch_size=batch_size, shuffle=True, seed=int(hp["seed"])),
+        epochs=int(hp["epochs"]),
+        validation_data=_dataset(data.x_val, data.y_val, batch_size=batch_size),
+        shuffle=False,  # the dataset is already shuffled; silences Keras' warning
+        verbose=2,
+        callbacks=[tf.keras.callbacks.LambdaCallback(on_epoch_end=_cb)],
+    )
+    final = _evaluate(model, data.x_val, data.y_val, data.task, data.n_classes)
+    return model, final
 
 
-class _NullScope:
-    def __enter__(self):
-        return None
+MULTI_WORKER_UNSUPPORTED = (
+    "multi-worker TensorFlow training is not supported: Keras 3 cannot run model.fit under "
+    "MultiWorkerMirroredStrategy (PerReplica conversion error). Run this algorithm with workers=1."
+)
 
-    def __exit__(self, *exc):
-        return False
+
+def cluster_size(cfg: dict[str, Any]) -> int:
+    """Number of tasks declared in a ``TF_CONFIG`` cluster (0 when absent)."""
+    cluster = cfg.get("cluster") or {}
+    return sum(len(v) for v in cluster.values() if isinstance(v, list))
+
+
+def refuse_multi_worker(cfg: dict[str, Any]) -> None:
+    """Fail fast, before any data or model work, on a multi-task ``TF_CONFIG``."""
+    if cluster_size(cfg) > 1:
+        raise RuntimeError(MULTI_WORKER_UNSUPPORTED)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = _common.build_arg_parser("cogflow TensorFlow tabular trainer (Keras MLP)")
     args = parser.parse_args(argv)
     hp = _common.parse_hyperparams(args.hyperparams, DEFAULT_HYPERPARAMS)
+    refuse_multi_worker(tf_config())
     primary = is_chief()
     started = time.time()
 
@@ -192,13 +201,9 @@ def main(argv: list[str] | None = None) -> int:
         test_split=float(hp["test_split"]),
         seed=int(hp["seed"]),
     )
-    logger.info(
-        "Prepared dataset %s: %d train / %d val rows, %d features, task=%s",
-        args.dataset_id,
-        len(data.x_train),
-        len(data.x_val),
-        data.n_features,
-        data.task,
+    _common.say(
+        f"dataset {args.dataset_id}: {len(data.x_train)} train / {len(data.x_val)} val rows, "
+        f"{data.n_features} features, task={data.task}"
     )
 
     if not primary:
@@ -243,7 +248,7 @@ def main(argv: list[str] | None = None) -> int:
             model_type=FRAMEWORK,
             metadata={_common.PREPROCESSING_METADATA_KEY: data.preprocessing},
         )
-        logger.info("Model '%s' logged to run %s", args.output_name, run_id)
+        _common.say(f"model '{args.output_name}' logged to run {run_id}")
 
     _common.emit_result(run_id)
     return 0
