@@ -37,6 +37,10 @@ def tracking(monkeypatch):
     monkeypatch.setattr(models_mod, "log_params", lambda p: calls["params"].append(p))
     monkeypatch.setattr(models_mod, "log_metrics", lambda m, step=None: calls["metrics"].append((step, m)))
     monkeypatch.setattr(models_mod, "log_model", lambda model, **kw: calls["models"].append((model, kw)))
+    calls["artifacts"] = []
+    monkeypatch.setattr(
+        models_mod, "log_artifact", lambda path, artifact_path=None: calls["artifacts"].append((path, artifact_path))
+    )
     return calls
 
 
@@ -117,6 +121,10 @@ def test_main_trains_logs_and_registers(tmp_path, monkeypatch, tracking, capsys,
     assert kw["registered_model_name"] == "my-model"
     assert kw["model_type"] == "pytorch"
     assert kw["artifact_path"] == "model"
+    # Preprocessing state travels with the model (metadata) and as an artifact.
+    state = kw["metadata"][_common.PREPROCESSING_METADATA_KEY]
+    assert state["feature_names"] and state["target_column"] == "label"
+    assert tracking["artifacts"] and tracking["artifacts"][0][1] == _common.PREPROCESSING_ARTIFACT_DIR
     assert isinstance(kw["input_example"], np.ndarray)
 
     assert capsys.readouterr().out.strip().splitlines()[-1] == "COG_TRAINING_RESULT run_id=run-pt"

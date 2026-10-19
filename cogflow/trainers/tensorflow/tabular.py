@@ -127,15 +127,15 @@ def train(data: _common.PreparedData, hyperparams: dict[str, Any], *, on_epoch_e
             float(hp["learning_rate"]),
         )
 
-    callbacks = []
-    if on_epoch_end is not None:
-
-        def _cb(epoch, logs):
-            metrics = _evaluate(model, data.x_val, data.y_val, data.task, data.n_classes)
-            metrics["train_loss"] = float((logs or {}).get("loss", 0.0))
+    # The per-epoch evaluation runs on EVERY replica: under
+    # MultiWorkerMirroredStrategy ``predict`` is a collective, so a chief-only
+    # evaluation would leave the workers waiting on mismatched collectives.
+    # Only the MLflow logging call (``on_epoch_end``) is chief-only.
+    def _cb(epoch, logs):
+        metrics = _evaluate(model, data.x_val, data.y_val, data.task, data.n_classes)
+        metrics["train_loss"] = float((logs or {}).get("loss", 0.0))
+        if on_epoch_end is not None:
             on_epoch_end(epoch, metrics)
-
-        callbacks.append(tf.keras.callbacks.LambdaCallback(on_epoch_end=_cb))
 
     model.fit(
         data.x_train,
@@ -144,10 +144,29 @@ def train(data: _common.PreparedData, hyperparams: dict[str, Any], *, on_epoch_e
         batch_size=int(hp["batch_size"]),
         validation_data=(data.x_val, data.y_val),
         verbose=2,
-        callbacks=callbacks,
+        callbacks=[tf.keras.callbacks.LambdaCallback(on_epoch_end=_cb)],
     )
     final = _evaluate(model, data.x_val, data.y_val, data.task, data.n_classes)
+    if strategy is not None:
+        # Hand back a model that lives OUTSIDE the strategy: the chief logs it
+        # after the workers have exited, and MLflow's signature inference
+        # would otherwise call predict() through collectives nobody answers.
+        model = detach_from_strategy(model, data, hp)
     return model, final
+
+
+def detach_from_strategy(model, data: _common.PreparedData, hp: dict[str, Any]):
+    """Copy ``model``'s weights into a fresh, non-distributed model."""
+    plain = build_model(
+        data.n_features,
+        data.n_outputs,
+        _common.parse_int_list(hp["hidden_sizes"]),
+        float(hp["dropout"]),
+        data.task,
+        float(hp["learning_rate"]),
+    )
+    plain.set_weights(model.get_weights())
+    return plain
 
 
 class _NullScope:
@@ -215,12 +234,14 @@ def main(argv: list[str] | None = None) -> int:
         model, final = train(data, hp, on_epoch_end=_log)
         final["train_seconds"] = time.time() - started
         cogflow_models.log_metrics(final)
+        _common.log_preprocessing(data.preprocessing, args.work_dir)
         cogflow_models.log_model(
             model,
             artifact_path=args.artifact_path,
             registered_model_name=args.output_name,
             input_example=data.input_example,
             model_type=FRAMEWORK,
+            metadata={_common.PREPROCESSING_METADATA_KEY: data.preprocessing},
         )
         logger.info("Model '%s' logged to run %s", args.output_name, run_id)
 

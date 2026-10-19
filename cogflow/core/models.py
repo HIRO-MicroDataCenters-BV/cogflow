@@ -697,12 +697,14 @@ class ModelManager:
             is_pyfunc = isinstance(model, self.pyfunc.PythonModel) or (
                 self.inspect.isclass(model) and issubclass(model, self.pyfunc.PythonModel)
             )
-            is_pytorch = "module" in cls_hierarchy  # torch.nn.Module base class
-            is_sklearn = "baseestimator" in cls_hierarchy  # sklearn.base.BaseEstimator base class
             # Keras 3 lives in ``keras.*``; tf.keras (TF <= 2.15) in
             # ``tensorflow.python.keras.*`` / ``keras.engine.*``. Walk the MRO
-            # so subclasses defined in user code still match.
+            # so subclasses defined in user code still match. Decided BEFORE
+            # the PyTorch check: legacy tf.keras models inherit ``tf.Module``,
+            # whose class name also matches the ``module`` heuristic below.
             is_tensorflow = any((cls.__module__ or "").startswith(("keras", "tensorflow")) for cls in type(model).mro())
+            is_pytorch = "module" in cls_hierarchy and not is_tensorflow  # torch.nn.Module base class
+            is_sklearn = "baseestimator" in cls_hierarchy  # sklearn.base.BaseEstimator base class
             # ---------------------------------------------------------------
 
             if is_pyfunc:

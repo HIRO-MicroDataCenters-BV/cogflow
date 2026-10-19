@@ -206,6 +206,12 @@ def test_ttl_none_omits_key_and_custom_policy(training):
         {"name": "Upper-Case"},
         {"name": "x" * 64},
         {"name": ""},
+        {"name": "job_bad"},
+        {"name": "job/name"},
+        {"name": "job-"},
+        {"name": "-job"},
+        {"name": "1job"},
+        {"name": "Job"},
     ],
 )
 def test_build_job_spec_validation(training, kwargs):
@@ -445,3 +451,8 @@ def test_lazy_package_lists_training(training_env):
     module, _, _ = training_env
     package_init = pathlib.Path(module.__file__).resolve().parents[1] / "__init__.py"
     assert '"training",' in package_init.read_text()
+
+
+@pytest.mark.parametrize("name", ["tj-abc12345", "a", "tj-1-2-3", "x" * 63])
+def test_build_job_spec_accepts_dns1035_names(training, name):
+    assert training.build_job_spec(name=name, framework="pytorch", image="img")["metadata"]["name"] == name

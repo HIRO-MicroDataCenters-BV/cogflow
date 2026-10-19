@@ -32,6 +32,10 @@ def tracking(monkeypatch):
     monkeypatch.setattr(models_mod, "log_params", lambda p: calls["params"].append(p))
     monkeypatch.setattr(models_mod, "log_metrics", lambda m, step=None: calls["metrics"].append((step, m)))
     monkeypatch.setattr(models_mod, "log_model", lambda model, **kw: calls["models"].append((model, kw)))
+    calls["artifacts"] = []
+    monkeypatch.setattr(
+        models_mod, "log_artifact", lambda path, artifact_path=None: calls["artifacts"].append((path, artifact_path))
+    )
     return calls
 
 
@@ -81,6 +85,9 @@ def test_main_trains_logs_and_registers(tmp_path, monkeypatch, tracking, capsys,
     assert isinstance(model, tf.keras.Model)
     assert kw["model_type"] == "tensorflow"
     assert kw["registered_model_name"] == "tf-model"
+    state = kw["metadata"][_common.PREPROCESSING_METADATA_KEY]
+    assert state["feature_names"] and state["target_column"] == "label"
+    assert tracking["artifacts"] and tracking["artifacts"][0][1] == _common.PREPROCESSING_ARTIFACT_DIR
     assert capsys.readouterr().out.strip().splitlines()[-1] == "COG_TRAINING_RESULT run_id=run-tf"
 
 
@@ -115,3 +122,15 @@ def test_non_chief_trains_without_tracking(tmp_path, monkeypatch, tracking):
     )
     assert rc == 0
     assert tracking["start"] == [] and tracking["models"] == []
+
+
+def test_detach_from_strategy_copies_weights(tmp_path):
+    df = pd.DataFrame({"x1": np.arange(20.0), "x2": np.arange(20.0) * 2, "label": np.arange(20.0)})
+    data = _common.prepare_frame(df, "label", "regression", test_split=0.2)
+    hp = dict(tabular.DEFAULT_HYPERPARAMS, hidden_sizes="8")
+    model = tabular.build_model(data.n_features, 1, [8], 0.0, "regression", 1e-3)
+    plain = tabular.detach_from_strategy(model, data, hp)
+    assert plain is not model
+    for a, b in zip(model.get_weights(), plain.get_weights(), strict=True):
+        np.testing.assert_array_equal(a, b)
+    np.testing.assert_allclose(model.predict(data.x_val, verbose=0), plain.predict(data.x_val, verbose=0))

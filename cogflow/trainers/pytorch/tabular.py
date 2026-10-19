@@ -216,12 +216,14 @@ def main(argv: list[str] | None = None) -> int:
         model, final = train(data, hp, world_size=world_size, rank=rank, on_epoch_end=_log)
         final["train_seconds"] = time.time() - started
         cogflow_models.log_metrics(final)
+        _common.log_preprocessing(data.preprocessing, args.work_dir)
         cogflow_models.log_model(
             model,
             artifact_path=args.artifact_path,
             registered_model_name=args.output_name,
             input_example=data.input_example,
             model_type=FRAMEWORK,
+            metadata={_common.PREPROCESSING_METADATA_KEY: data.preprocessing},
         )
         logger.info("Model '%s' logged to run %s", args.output_name, run_id)
 

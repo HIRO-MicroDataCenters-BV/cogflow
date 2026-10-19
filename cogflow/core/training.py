@@ -32,6 +32,7 @@ names it for you.
 from __future__ import annotations
 
 import copy
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -74,6 +75,9 @@ STATE_PRECEDENCE: tuple[str, ...] = ("Succeeded", "Failed", "Running", "Restarti
 TERMINAL_STATES: frozenset[str] = frozenset({"succeeded", "failed"})
 
 GPU_RESOURCE = "nvidia.com/gpu"
+
+# Kubernetes DNS-1035 label (the operator derives Service names from the job name).
+DNS1035_NAME_RE = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
 
 
 @dataclass(frozen=True)
@@ -297,9 +301,10 @@ class TrainingManager:
                 ``workers``/``gpus``/``name``.
         """
         spec = framework_spec(framework)
-        if not name or len(name) > 63 or name != name.lower():
+        if not name or len(name) > 63 or not DNS1035_NAME_RE.fullmatch(name):
             CogflowErrorHandler.log_and_raise(
-                f"Invalid job name {name!r}: must be lowercase, non-empty and at most 63 characters.",
+                f"Invalid job name {name!r}: must match DNS-1035 (lowercase alphanumerics and '-', "
+                "starting with a letter, ending with an alphanumeric) and be at most 63 characters.",
                 raise_as=CogflowValidationError,
             )
         if workers < 1:

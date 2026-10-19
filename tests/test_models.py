@@ -1047,3 +1047,25 @@ def test_log_model_model_type_override_reaches_catalog_payload(manager, monkeypa
     posted.clear()
     manager.log_model(DummySkModel(), artifact_path="model")
     assert posted["data"]["type"] == "pyfunc"
+
+
+def test_log_model_legacy_tf_keras_module_is_not_treated_as_pytorch(manager, monkeypatch):
+    """tf.keras models inherit tf.Module (class name ``Module``) — must route to TensorFlow."""
+
+    class Module:  # stands in for tensorflow.python.module.module.Module
+        pass
+
+    Module.__module__ = "tensorflow.python.module.module"
+
+    class LegacyKerasModel(Module):
+        pass
+
+    LegacyKerasModel.__module__ = "tensorflow.python.keras.engine.training"
+
+    tf_flavor = MagicMock()
+    tf_flavor.log_model.return_value = "TF_RESULT"
+    monkeypatch.setattr(models_mod, "lazy_import", lambda name: tf_flavor)
+
+    assert manager.log_model(LegacyKerasModel(), artifact_path="m") == "TF_RESULT"
+    tf_flavor.log_model.assert_called_once()
+    manager.pytorch.log_model.assert_not_called()

@@ -36,6 +36,12 @@ RESULT_LINE_PREFIX = "COG_TRAINING_RESULT"
 JOB_ID_ENV = "COG_TRAINING_JOB_ID"
 
 TASKS = ("classification", "regression")
+
+# Preprocessing state: JSON artifact beside the model + ``metadata`` on it.
+PREPROCESSING_VERSION = 1
+PREPROCESSING_FILENAME = "preprocessing.json"
+PREPROCESSING_ARTIFACT_DIR = "preprocessing"
+PREPROCESSING_METADATA_KEY = "cog_preprocessing"
 TABULAR_EXTENSIONS = (".csv", ".parquet")
 
 
@@ -213,6 +219,9 @@ class PreparedData:
     n_classes: int | None = None
     class_names: list[str] = field(default_factory=list)
     input_example: Any = None
+    # Fitted preprocessing state (see :func:`transform_frame`); shipped with
+    # the registered model so inference reproduces the training features.
+    preprocessing: dict[str, Any] = field(default_factory=dict)
 
     @property
     def n_features(self) -> int:
@@ -301,10 +310,19 @@ def prepare_frame(
         n_classes = None
         class_names = []
 
+    if int(val_mask.sum()) == 0 or int((~val_mask).sum()) == 0:
+        raise ValueError(
+            f"the validation split is empty ({n} rows, test_split={test_split}"
+            + (f", {len(class_names)} classes" if task == "classification" else "")
+            + "); add rows or adjust test_split so both splits are non-empty"
+        )
+
     x_all = features.to_numpy(dtype="float64")
     x_train, x_val = x_all[~val_mask], x_all[val_mask]
     y_train, y_val = y_all[~val_mask], y_all[val_mask]
 
+    col_mean = np.zeros(0)
+    col_std = np.zeros(0)
     if numeric_cols:
         idx = [feature_names.index(str(c)) for c in numeric_cols]
         col_mean = np.nanmean(x_train[:, idx], axis=0)
@@ -325,6 +343,18 @@ def prepare_frame(
         y_train = y_train.astype("float32")
         y_val = y_val.astype("float32")
 
+    preprocessing = {
+        "version": PREPROCESSING_VERSION,
+        "task": task,
+        "target_column": str(target_column),
+        "feature_names": feature_names,
+        "numeric_columns": [str(c) for c in numeric_cols],
+        "numeric_means": [float(v) for v in col_mean],
+        "numeric_stds": [float(v) for v in col_std],
+        "categorical_columns": [str(c) for c in other_cols],
+        "class_names": list(class_names),
+    }
+
     return PreparedData(
         x_train=x_train,
         y_train=y_train,
@@ -335,7 +365,64 @@ def prepare_frame(
         n_classes=n_classes,
         class_names=class_names,
         input_example=x_train[: min(5, len(x_train))].copy(),
+        preprocessing=preprocessing,
     )
+
+
+def transform_frame(preprocessing: dict[str, Any], df) -> Any:
+    """Apply a fitted :func:`prepare_frame` state to raw rows (inference side).
+
+    Reproduces the training features exactly: numeric columns are
+    mean-imputed and z-scored with the *training* statistics, categorical
+    columns are one-hot encoded and aligned to the trained column order
+    (unseen categories contribute no column, missing columns are zero).
+
+    Returns:
+        ``float32`` array of shape ``(len(df), len(feature_names))``.
+    """
+    import numpy as np
+    import pandas as pd
+
+    feature_names = list(preprocessing["feature_names"])
+    numeric_cols = list(preprocessing.get("numeric_columns") or [])
+    other_cols = list(preprocessing.get("categorical_columns") or [])
+    means = np.asarray(preprocessing.get("numeric_means") or [], dtype="float64")
+    stds = np.asarray(preprocessing.get("numeric_stds") or [], dtype="float64")
+
+    missing = [c for c in numeric_cols + other_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"input is missing trained feature columns: {missing}")
+
+    parts = []
+    if numeric_cols:
+        numeric = df[numeric_cols].apply(pd.to_numeric, errors="coerce").astype("float64")
+        values = numeric.to_numpy(dtype="float64")
+        nan_pos = np.isnan(values)
+        values[nan_pos] = np.take(means, np.nonzero(nan_pos)[1])
+        values = (values - means) / stds
+        parts.append(pd.DataFrame(values, columns=numeric_cols, index=df.index))
+    if other_cols:
+        encoded = pd.get_dummies(df[other_cols].astype("string").fillna("<missing>"), dtype="float64")
+        parts.append(encoded)
+    features = pd.concat(parts, axis=1) if parts else pd.DataFrame(index=df.index)
+    features = features.reindex(columns=feature_names, fill_value=0.0)
+    return np.ascontiguousarray(features.to_numpy(dtype="float64"), dtype="float32")
+
+
+def log_preprocessing(preprocessing: dict[str, Any], work_dir: str | Path) -> Path:
+    """Write the preprocessing state as JSON and log it as a run artifact.
+
+    The same state also travels as ``metadata`` on the logged model, so a
+    consumer holding only the model URI can rebuild the features.
+    """
+    from ..core import models as cogflow_models
+
+    out_dir = Path(work_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / PREPROCESSING_FILENAME
+    path.write_text(json.dumps(preprocessing, indent=2))
+    cogflow_models.log_artifact(str(path), artifact_path=PREPROCESSING_ARTIFACT_DIR)
+    return path
 
 
 # ---------------------------------------------------------------------

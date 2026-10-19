@@ -248,3 +248,71 @@ def test_run_tags_drop_empty_values():
 def test_emit_result_line(capsys):
     _common.emit_result("abc")
     assert capsys.readouterr().out.strip() == "COG_TRAINING_RESULT run_id=abc"
+
+
+# ---------------------------------------------------------------------
+# Preprocessing state (Copilot review on #124)
+# ---------------------------------------------------------------------
+
+
+def test_prepare_frame_rejects_empty_validation_split():
+    df = pd.DataFrame({"a": [1, 2, 3, 4], "y": ["p", "q", "r", "s"]})
+    with pytest.raises(ValueError, match="validation split is empty"):
+        _common.prepare_frame(df, "y", "classification", test_split=0.2)
+
+
+def test_prepare_frame_exposes_fitted_preprocessing_state():
+    df = _iris_like()
+    data = _common.prepare_frame(df, "species", "classification", test_split=0.2, seed=1)
+    state = data.preprocessing
+    assert state["version"] == _common.PREPROCESSING_VERSION
+    assert state["task"] == "classification" and state["target_column"] == "species"
+    assert state["feature_names"] == data.feature_names
+    assert state["numeric_columns"] == ["f1", "f2", "flag"]
+    assert len(state["numeric_means"]) == 3 and len(state["numeric_stds"]) == 3
+    assert state["categorical_columns"] == ["colour"]
+    assert state["class_names"] == ["a", "b", "c"]
+    import json
+
+    json.dumps(state)  # must be serialisable as-is
+
+
+def test_transform_frame_reproduces_training_features():
+    df = _iris_like()
+    df.loc[0, "f1"] = np.nan
+    data = _common.prepare_frame(df, "species", "classification", test_split=0.25, seed=2)
+    transformed = _common.transform_frame(data.preprocessing, df.drop(columns=["species"]))
+    assert transformed.dtype == np.float32
+    assert transformed.shape == (len(df), data.n_features)
+    trained = np.concatenate([data.x_train, data.x_val])
+    # Same multiset of rows (the split only reorders them).
+    a = np.sort(np.round(trained, 5), axis=0)
+    b = np.sort(np.round(transformed, 5), axis=0)
+    np.testing.assert_allclose(a, b, atol=1e-5)
+
+
+def test_transform_frame_aligns_unseen_and_missing_categories():
+    df = _iris_like()
+    data = _common.prepare_frame(df, "species", "classification")
+    new = pd.DataFrame({"f1": [0.5], "f2": [1.0], "colour": ["green"], "flag": [True]})
+    out = _common.transform_frame(data.preprocessing, new)
+    idx = {n: i for i, n in enumerate(data.feature_names)}
+    assert out[0, idx["colour_red"]] == 0.0 and out[0, idx["colour_blue"]] == 0.0
+    with pytest.raises(ValueError, match="missing trained feature columns"):
+        _common.transform_frame(data.preprocessing, new.drop(columns=["f2"]))
+
+
+def test_log_preprocessing_writes_json_and_logs_artifact(tmp_path, monkeypatch):
+    import json
+
+    import cogflow.core.models as models_mod
+
+    calls = []
+    monkeypatch.setattr(
+        models_mod, "log_artifact", lambda path, artifact_path=None: calls.append((path, artifact_path))
+    )
+    state = {"version": 1, "feature_names": ["a"]}
+    path = _common.log_preprocessing(state, tmp_path / "work")
+    assert path.name == _common.PREPROCESSING_FILENAME
+    assert json.loads(path.read_text()) == state
+    assert calls == [(str(path), _common.PREPROCESSING_ARTIFACT_DIR)]
