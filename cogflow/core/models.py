@@ -713,9 +713,11 @@ class ModelManager:
             # so subclasses defined in user code still match. Decided BEFORE
             # the PyTorch check: legacy tf.keras models inherit ``tf.Module``,
             # whose class name also matches the ``module`` heuristic below.
-            is_tensorflow = any(_is_tensorflow_module(cls.__module__) for cls in type(model).mro())
-            is_pytorch = "module" in cls_hierarchy and not is_tensorflow  # torch.nn.Module base class
             is_sklearn = "baseestimator" in cls_hierarchy  # sklearn.base.BaseEstimator base class
+            # Keras' SKLearnClassifier/SKLearnRegressor live in keras.src.wrappers
+            # but ARE sklearn estimators: they keep the sklearn logger.
+            is_tensorflow = not is_sklearn and any(_is_tensorflow_module(cls.__module__) for cls in type(model).mro())
+            is_pytorch = "module" in cls_hierarchy and not is_tensorflow  # torch.nn.Module base class
             # ---------------------------------------------------------------
 
             if is_pyfunc:

@@ -1111,3 +1111,18 @@ def test_log_model_sklearn_subclass_in_lookalike_module_stays_sklearn(manager):
 
     assert models_mod._is_tensorflow_module("keras") and models_mod._is_tensorflow_module("tensorflow.python.x")
     assert not models_mod._is_tensorflow_module("keras_helpers") and not models_mod._is_tensorflow_module(None)
+
+
+def test_log_model_keras_sklearn_wrapper_keeps_sklearn_routing(manager, monkeypatch):
+    """keras.src.wrappers.SKLearnClassifier is a BaseEstimator: sklearn logger, not mlflow.tensorflow."""
+
+    class SKLearnClassifier(manager.sklearn.BaseEstimator):
+        pass
+
+    SKLearnClassifier.__module__ = "keras.src.wrappers.sklearn_wrapper"
+    tf_flavor = MagicMock()
+    monkeypatch.setattr(models_mod, "lazy_import", lambda name: tf_flavor)
+    manager.sklearn.log_model.return_value = "SK"
+    assert manager.log_model(SKLearnClassifier(), artifact_path="m") == "SK"
+    manager.sklearn.log_model.assert_called_once()
+    tf_flavor.log_model.assert_not_called()
