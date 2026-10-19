@@ -153,6 +153,7 @@ jobs:
             echo "tags=$TAGS"
             echo "channel=$CHANNEL"
             echo "platforms=$PLATFORMS"
+            echo "registry=$REGISTRY"
             echo "version_tag=$REGISTRY:$VERSION"
             echo "lite_registry=$LITE_REGISTRY"
           } >> "$GITHUB_OUTPUT"
@@ -244,6 +245,52 @@ jobs:
           docker pull "${{ steps.tags.outputs.version_tag }}"
           docker run --rm "${{ steps.tags.outputs.version_tag }}" \
             python3 -c "import cogflow, kfp; print('cogflow', cogflow.__version__, 'kfp', kfp.__version__)"
+
+      # Training-job variants (torch / tensor) layer a framework on the main
+      # image pushed and smoke-tested just above (``FROM hiroregistry/cogflow:
+      # <version>``), so they need neither the wheel nor PyPI and can't drift
+      # from the main image. amd64-only on EVERY channel: the CUDA-enabled
+      # torch wheels and ``tensorflow[and-cuda]`` have no arm64 build. See
+      # readme.md → Training-job variants.
+      - name: Build and push cogflow torch variant
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker_image_variants/torch
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.version_tag }}-torch
+            ${{ steps.tags.outputs.registry }}:${{ steps.tags.outputs.channel == 'stable' && 'latest' || format('latest-{0}', steps.tags.outputs.channel) }}-torch
+          build-args: |
+            COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
+          cache-from: type=gha,scope=torch
+          cache-to: type=gha,mode=max,scope=torch
+
+      - name: Smoke test cogflow torch variant
+        run: |
+          docker pull "${{ steps.tags.outputs.version_tag }}-torch"
+          docker run --rm "${{ steps.tags.outputs.version_tag }}-torch" \
+            python3 -c "import cogflow, torch; print('cogflow', cogflow.__version__, 'torch', torch.__version__)"
+
+      - name: Build and push cogflow tensor variant
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker_image_variants/tensor
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.version_tag }}-tensor
+            ${{ steps.tags.outputs.registry }}:${{ steps.tags.outputs.channel == 'stable' && 'latest' || format('latest-{0}', steps.tags.outputs.channel) }}-tensor
+          build-args: |
+            COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
+          cache-from: type=gha,scope=tensor
+          cache-to: type=gha,mode=max,scope=tensor
+
+      - name: Smoke test cogflow tensor variant
+        run: |
+          docker pull "${{ steps.tags.outputs.version_tag }}-tensor"
+          docker run --rm "${{ steps.tags.outputs.version_tag }}-tensor" \
+            python3 -c "import cogflow, tensorflow as tf; print('cogflow', cogflow.__version__, 'tensorflow', tf.__version__)"
 
       # cogflow_lite installs cogflow from PyPI, so on tag-push wait for the
       # just-published wheel to reach the simple index before building lite
