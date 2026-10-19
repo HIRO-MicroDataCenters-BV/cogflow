@@ -1,0 +1,100 @@
+name: Runtime base images
+
+# Builds the framework runtime bases the training-job variants are layered
+# on: hiroregistry/cogflow-runtime:torch-<TORCH_VERSION> and
+# :tensor-<TF_VERSION>. They hold the multi-GB framework layers and no
+# cogflow, so they are rebuilt only when their Dockerfile or the pinned
+# version changes — not on every cogflow release. See
+# docker_image_variants/readme.md → Training-job variants.
+#
+# Versions come from docker_image_variants/runtime/versions.env (the same
+# file release.yml reads to pick the base for the variants).
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+    paths:
+      - docker_image_variants/runtime/**
+      - .github/workflows/runtime-images.yml
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Rebuild and push even if the tags already exist"
+        type: boolean
+        default: false
+
+concurrency:
+  group: runtime-images
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: torch
+            version_key: TORCH_VERSION
+            build_arg: TORCH_VERSION
+          - variant: tensor
+            version_key: TF_VERSION
+            build_arg: TF_VERSION
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Read the pinned framework version
+        id: ver
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -E '^${{ matrix.version_key }}=' docker_image_variants/runtime/versions.env | cut -d= -f2 | tr -d '[:space:]')"
+          [ -n "$VERSION" ] || { echo "::error::${{ matrix.version_key }} missing in versions.env"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=hiroregistry/cogflow-runtime:${{ matrix.variant }}-$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # A base is immutable once published under its version tag: skip the
+      # (long) build when it already exists, unless forced.
+      - name: Check whether the tag already exists
+        id: exists
+        run: |
+          if [ "${{ github.event.inputs.force }}" != "true" ] && docker manifest inspect "${{ steps.ver.outputs.tag }}" >/dev/null 2>&1; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "${{ steps.ver.outputs.tag }} already published; skipping"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.exists.outputs.present != 'true'
+        uses: docker/setup-buildx-action@v3
+
+      # amd64 only: the CUDA-enabled torch wheels and tensorflow[and-cuda]
+      # have no arm64 build (readme.md → Architecture policy).
+      - name: Build and push ${{ steps.ver.outputs.tag }}
+        if: steps.exists.outputs.present != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker_image_variants/runtime/${{ matrix.variant }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.ver.outputs.tag }}
+          build-args: |
+            ${{ matrix.build_arg }}=${{ steps.ver.outputs.version }}
+          cache-from: type=gha,scope=runtime-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=runtime-${{ matrix.variant }}
+
+      - name: Smoke test
+        if: steps.exists.outputs.present != 'true'
+        run: |
+          docker pull "${{ steps.ver.outputs.tag }}"
+          docker run --rm "${{ steps.ver.outputs.tag }}" python3 -c "import ${{ matrix.variant == 'torch' && 'torch' || 'tensorflow' }} as m; print(m.__version__)"

@@ -129,23 +129,37 @@ the platform's Kubeflow training jobs run in (`PyTorchJob` → `-torch`, `TFJob`
 by CogAPI). They are built in `docker-publish` right after the main image's smoke
 test:
 
-| Variant | Base | Adds | Tags |
-|---------|------|------|------|
-| torch   | `hiroregistry/cogflow:<version>` | `torch` (PyPI default index = CUDA-enabled, runs on CPU too) | `<version>-torch`, `latest[-<channel>]-torch` |
-| tensor  | `hiroregistry/cogflow:<version>` | `tensorflow[and-cuda]==2.17.*` + `protobuf==3.20.3` re-pin | `<version>-tensor`, `latest[-<channel>]-tensor` |
+| Variant | Base (runtime image) | Adds per release | Tags |
+|---------|----------------------|------------------|------|
+| torch   | `hiroregistry/cogflow-runtime:torch-<TORCH_VERSION>` (python 3.10 + gcc + CUDA-enabled `torch`) | cogflow wheel, shap, xgboost, protobuf pin | `<version>-torch`, `latest[-<channel>]-torch` |
+| tensor  | `hiroregistry/cogflow-runtime:tensor-<TF_VERSION>` (python 3.10 + gcc + `tensorflow[and-cuda]`) | cogflow wheel, shap, xgboost, `protobuf==3.20.3` re-pin | `<version>-tensor`, `latest[-<channel>]-tensor` |
 
 Design points:
 
-- **`FROM` the main image of the same version**, not a fresh `python:3.10-slim`:
-  cogflow, gcc, shap, xgboost and the protobuf pin are inherited, there is no
-  wheel/PyPI race to manage, and the variants cannot drift from the main image.
+- **Framework first, cogflow on top.** The multi-GB framework layers live in
+  the *runtime base* images (`runtime/torch`, `runtime/tensor`), which carry no
+  cogflow and are rebuilt only when their Dockerfile or the pinned version in
+  `runtime/versions.env` changes (`.github/workflows/runtime-images.yml`; a
+  published version tag is never rebuilt unless forced). The per-release
+  variant adds only the cogflow wheel plus light extras, so a cogflow release
+  re-pushes a few MB and a node that has the base pulls only that delta.
+  Previously the variants were `FROM hiroregistry/cogflow:<version>`, which put
+  the 5–7 GB framework layers *above* a layer that changed on every release.
+- **Bumping a framework**: edit `runtime/versions.env` (and the Dockerfile if
+  needed), merge — `runtime-images.yml` publishes the new base — then the next
+  cogflow release builds its variants from it. The variants' `RUNTIME_IMAGE`
+  build-arg is derived from the same file by `release.yml`.
+- The variants are built from the `docker_image_variants/` context with an
+  explicit `file:` so their wheel bind-mount reads `latest/dist/` (the same
+  wheel the main image installs; PyPI fallback on a dispatch rebuild).
 - **amd64-only on every channel** (unlike the main image, which is multi-arch on
   stable): the CUDA torch wheels and `tensorflow[and-cuda]` have no arm64 build.
   One image serves `gpus=0` and `gpus>0` jobs; the price is size (several GB,
   pulled once per node).
 - **TensorFlow stays on the 2.17 line** because it is the last line that
   accepts the `protobuf 3.20.x` the vendored kfp needs; 2.18+ requires
-  protobuf ≥ 5.
+  protobuf ≥ 5. Multi-worker TensorFlow training is not supported (Keras 3
+  cannot `fit` under `MultiWorkerMirroredStrategy`); the trainer refuses it.
 - Each variant has its own cache scope (`torch`, `tensor`).
 - A variant build failure leaves the main image published but that variant
   un-pushed — re-run `docker-publish` to reconcile (same caveat as `cogflow_lite`).

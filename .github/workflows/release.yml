@@ -149,6 +149,10 @@ jobs:
             TAGS="$REGISTRY:$VERSION,$REGISTRY:latest-$CHANNEL"
             PLATFORMS="linux/amd64"
           fi
+          # Framework runtime bases the training-job variants build FROM
+          # (published by runtime-images.yml; readme.md → Training-job variants).
+          # shellcheck disable=SC1091
+          source docker_image_variants/runtime/versions.env
           {
             echo "tags=$TAGS"
             echo "channel=$CHANNEL"
@@ -156,6 +160,8 @@ jobs:
             echo "registry=$REGISTRY"
             echo "version_tag=$REGISTRY:$VERSION"
             echo "lite_registry=$LITE_REGISTRY"
+            echo "torch_runtime=$REGISTRY_NS/cogflow-runtime:torch-$TORCH_VERSION"
+            echo "tensor_runtime=$REGISTRY_NS/cogflow-runtime:tensor-$TF_VERSION"
           } >> "$GITHUB_OUTPUT"
           echo "Channel: $CHANNEL"
           echo "Tags: $TAGS"
@@ -268,11 +274,16 @@ jobs:
             echo "cogflow.trainers absent in this version: skipping torch/tensor variants"
           fi
 
+      # The variants are layered on the framework runtime bases (multi-GB,
+      # published separately by runtime-images.yml) and add only the cogflow
+      # wheel from latest/dist/ (or PyPI on a dispatch rebuild). Context is
+      # docker_image_variants/ so the bind-mount reaches latest/dist/.
       - name: Build and push cogflow torch variant
         if: steps.trainers.outputs.present == 'true'
         uses: docker/build-push-action@v6
         with:
-          context: ./docker_image_variants/torch
+          context: ./docker_image_variants
+          file: ./docker_image_variants/torch/Dockerfile
           platforms: linux/amd64
           push: true
           tags: |
@@ -280,6 +291,7 @@ jobs:
             ${{ steps.tags.outputs.registry }}:${{ steps.tags.outputs.channel == 'stable' && 'latest' || format('latest-{0}', steps.tags.outputs.channel) }}-torch
           build-args: |
             COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
+            RUNTIME_IMAGE=${{ steps.tags.outputs.torch_runtime }}
           cache-from: type=gha,scope=torch
           cache-to: type=gha,mode=max,scope=torch
 
@@ -294,7 +306,8 @@ jobs:
         if: steps.trainers.outputs.present == 'true'
         uses: docker/build-push-action@v6
         with:
-          context: ./docker_image_variants/tensor
+          context: ./docker_image_variants
+          file: ./docker_image_variants/tensor/Dockerfile
           platforms: linux/amd64
           push: true
           tags: |
@@ -302,6 +315,7 @@ jobs:
             ${{ steps.tags.outputs.registry }}:${{ steps.tags.outputs.channel == 'stable' && 'latest' || format('latest-{0}', steps.tags.outputs.channel) }}-tensor
           build-args: |
             COGFLOW_VERSION=${{ github.event.inputs.version || needs.build.outputs.version }}
+            RUNTIME_IMAGE=${{ steps.tags.outputs.tensor_runtime }}
           cache-from: type=gha,scope=tensor
           cache-to: type=gha,mode=max,scope=tensor
 
