@@ -1126,3 +1126,27 @@ def test_log_model_keras_sklearn_wrapper_keeps_sklearn_routing(manager, monkeypa
     assert manager.log_model(SKLearnClassifier(), artifact_path="m") == "SK"
     manager.sklearn.log_model.assert_called_once()
     tf_flavor.log_model.assert_not_called()
+
+
+def test_list_artifacts_grouped_recurses_into_nested_directories(manager):
+    """PyTorch/TensorFlow keep weights in model/data/: nested directories must be listed too."""
+
+    def entry(path, is_dir=False):
+        m = MagicMock()
+        m.path, m.is_dir = path, is_dir
+        return m
+
+    tree = {
+        None: [entry("README.md"), entry("model", True), entry("preprocessing", True)],
+        "model": [entry("model/MLmodel"), entry("model/data", True)],
+        "model/data": [entry("model/data/model.pth"), entry("model/data/pickle_module_info.txt")],
+        "preprocessing": [entry("preprocessing/preprocessing.json")],
+    }
+    manager.client.list_artifacts.side_effect = lambda run_id, path=None: tree[path]
+
+    result = manager.list_artifacts_grouped("run-1")
+
+    assert result[""] == ["README.md"]
+    assert result["model"] == ["MLmodel"]
+    assert result["model/data"] == ["model.pth", "pickle_module_info.txt"]
+    assert result["preprocessing"] == ["preprocessing.json"]

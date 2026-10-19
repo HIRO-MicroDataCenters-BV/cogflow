@@ -123,7 +123,8 @@ def test_pytorch_spec_shape(training):
     assert set(replicas) == {"Master"}, "workers=1 must not emit a Worker block"
     master = replicas["Master"]
     assert master["replicas"] == 1
-    assert master["restartPolicy"] == "OnFailure"
+    # Never: a failed pod stays for its logs (OnFailure deletes it on restart).
+    assert master["restartPolicy"] == "Never"
 
     template = master["template"]
     # PodDefault selectors: this is how the pod gets MinIO creds + MLflow URIs.
@@ -187,6 +188,13 @@ def test_gpu_resources_tolerations_and_selector(training):
     assert pod["tolerations"] == tol
     assert pod["tolerations"] is not tol
     assert pod["nodeSelector"] == {"gpu": "l40"}
+
+
+def test_restart_policy_is_configurable_and_validated(training):
+    spec = training.build_job_spec(name="tj-r", framework="pytorch", image="img", restart_policy="OnFailure")
+    assert spec["spec"]["pytorchReplicaSpecs"]["Master"]["restartPolicy"] == "OnFailure"
+    with pytest.raises(exc_mod.CogflowValidationError, match="restart_policy"):
+        training.build_job_spec(name="tj-r", framework="pytorch", image="img", restart_policy="Sometimes")
 
 
 def test_ttl_none_omits_key_and_custom_policy(training):

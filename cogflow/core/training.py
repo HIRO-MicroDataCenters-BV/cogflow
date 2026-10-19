@@ -77,6 +77,9 @@ TERMINAL_STATES: frozenset[str] = frozenset({"succeeded", "failed"})
 
 GPU_RESOURCE = "nvidia.com/gpu"
 
+# Replica restart policies the Training Operator accepts.
+RESTART_POLICIES: frozenset[str] = frozenset({"Never", "OnFailure", "Always", "ExitCode"})
+
 # Kubernetes DNS-1035 label (the operator derives Service names from the job name).
 DNS1035_NAME_RE = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
 
@@ -285,6 +288,7 @@ class TrainingManager:
         backoff_limit: int = 0,
         image_pull_policy: str | None = None,
         service_account_name: str | None = None,
+        restart_policy: str = "Never",
     ) -> dict[str, Any]:
         """Build a ``PyTorchJob`` or ``TFJob`` manifest as a plain dict.
 
@@ -314,6 +318,10 @@ class TrainingManager:
             clean_pod_policy: ``"None"`` (keep pods for logs), ``"Running"``
                 or ``"All"``.
             backoff_limit: Restart budget before the job is marked failed.
+            restart_policy: Replica restart policy. ``"Never"`` (default) keeps a
+                failed pod around for its logs — under ``"OnFailure"`` the
+                operator deletes the failed pod to restart it, and once the
+                backoff limit is hit the only evidence of the failure is gone.
 
         Returns:
             dict: the manifest, ready for :meth:`create_job`.
@@ -345,6 +353,11 @@ class TrainingManager:
         if gpus < 0:
             CogflowErrorHandler.log_and_raise(
                 f"gpus must be >= 0 (got {gpus}).",
+                raise_as=CogflowValidationError,
+            )
+        if restart_policy not in RESTART_POLICIES:
+            CogflowErrorHandler.log_and_raise(
+                f"restart_policy must be one of {sorted(RESTART_POLICIES)} (got {restart_policy!r}).",
                 raise_as=CogflowValidationError,
             )
 
@@ -394,7 +407,7 @@ class TrainingManager:
         def _replica(count: int) -> dict[str, Any]:
             return {
                 "replicas": count,
-                "restartPolicy": "OnFailure",
+                "restartPolicy": restart_policy,
                 "template": copy.deepcopy(template),
             }
 

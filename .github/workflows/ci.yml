@@ -72,3 +72,41 @@ jobs:
       # deps brought in by the ``[full]`` extra above.
       - name: Run tests
         run: pytest
+
+  # TensorFlow lane: the base install has no TensorFlow (the ``[dev,full]``
+  # extras stay framework-agnostic), so the TensorFlow trainer tests skip in
+  # the job above. This lane installs the image's TensorFlow line (2.17, the
+  # last one compatible with the vendored kfp's protobuf 3.20 pin — see
+  # docker_image_variants/tensor/Dockerfile) and REQUIRES the import so a
+  # missing runtime fails the job instead of silently skipping the suite.
+  tensorflow-trainers:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: uv-tf-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            uv-tf-${{ runner.os }}-
+
+      - name: Install package + TensorFlow runtime
+        run: uv pip install --system -e ".[dev]" "tensorflow-cpu==2.17.*"
+
+      - name: Verify the TensorFlow runtime imports
+        run: python -c "import tensorflow as tf, keras; print('tensorflow', tf.__version__, 'keras', keras.__version__)"
+
+      - name: Run the TensorFlow trainer tests
+        run: pytest tests/test_trainers_tensorflow.py tests/test_trainers_distributed.py -k tensorflow -p no:cacheprovider --no-cov -q

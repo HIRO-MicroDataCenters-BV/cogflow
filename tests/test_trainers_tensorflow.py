@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -124,13 +126,22 @@ def test_non_chief_trains_without_tracking(tmp_path, monkeypatch, tracking):
     assert tracking["start"] == [] and tracking["models"] == []
 
 
-def test_detach_from_strategy_copies_weights(tmp_path):
-    df = pd.DataFrame({"x1": np.arange(20.0), "x2": np.arange(20.0) * 2, "label": np.arange(20.0)})
-    data = _common.prepare_frame(df, "label", "regression", test_split=0.2)
-    hp = dict(tabular.DEFAULT_HYPERPARAMS, hidden_sizes="8")
-    model = tabular.build_model(data.n_features, 1, [8], 0.0, "regression", 1e-3)
-    plain = tabular.detach_from_strategy(model, data, hp)
-    assert plain is not model
-    for a, b in zip(model.get_weights(), plain.get_weights(), strict=True):
-        np.testing.assert_array_equal(a, b)
-    np.testing.assert_allclose(model.predict(data.x_val, verbose=0), plain.predict(data.x_val, verbose=0))
+def test_multi_worker_tf_config_is_refused_before_training(tmp_path, monkeypatch, tracking):
+    """Keras 3 cannot fit under MultiWorkerMirroredStrategy: refuse early, clearly, every replica."""
+    csv_path = _write_csv(tmp_path, "regression")
+    called = {"materialise": 0}
+
+    def _materialise(ds, work):
+        called["materialise"] += 1
+        return csv_path
+
+    monkeypatch.setattr(_common, "materialise_tabular_dataset", _materialise)
+    cfg = {"cluster": {"chief": ["a:1"], "worker": ["b:1"]}, "task": {"type": "worker", "index": 0}}
+    monkeypatch.setenv("TF_CONFIG", json.dumps(cfg))
+    with pytest.raises(RuntimeError, match="workers=1"):
+        tabular.main(["--dataset-id", "d", "--output-name", "m", "--task", "regression", "--target-column", "label"])
+    assert called["materialise"] == 0, "refusal must happen before any download"
+    assert tracking["start"] == []
+    assert tabular.cluster_size({}) == 0 and tabular.cluster_size(cfg) == 2
+    # A single-task cluster (chief only) is fine.
+    tabular.refuse_multi_worker({"cluster": {"chief": ["a:1"]}, "task": {"type": "chief", "index": 0}})
