@@ -45,6 +45,12 @@ def _base_env(tmp_path: Path, csv: Path) -> dict[str, str]:
         {
             "COG_TRAINING_LOCAL_DATASET": str(csv),
             "MLFLOW_TRACKING_URI": (tmp_path / "mlruns").as_uri(),
+            # The registry too: a developer's remote MLFLOW_REGISTRY_URI must
+            # never receive the test's registered model.
+            "MLFLOW_REGISTRY_URI": (tmp_path / "mlruns").as_uri(),
+            # CPU only: on a CUDA host DDP would pick NCCL and both ranks the
+            # same default GPU; the test exercises the gloo/CPU path.
+            "CUDA_VISIBLE_DEVICES": "",
             # Unreachable on purpose: the catalog POST is best-effort and must only warn.
             "API_PATH": "http://127.0.0.1:1",
             "PYTHONUNBUFFERED": "1",
