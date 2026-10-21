@@ -361,6 +361,47 @@ def test_log_model_pyfunc_branch(manager):
     assert result == "PYFUNC_RESULT"
 
 
+def test_log_model_pyfunc_passes_registration_and_requirements(manager):
+    """A custom Python model is registered under its name and keeps the
+    caller's requirements, in either list or file form."""
+
+    class DummyPyModel(manager.pyfunc.PythonModel):
+        """Dummy PyFunc model."""
+
+    manager.log_model(
+        DummyPyModel(),
+        artifact_path="pyfunc_model",
+        registered_model_name="custom-model",
+        extra_pip_requirements=["tabulate==0.10.0"],
+    )
+    kwargs = manager.mlflow.pyfunc.log_model.call_args.kwargs
+    assert kwargs["registered_model_name"] == "custom-model"
+    assert kwargs["extra_pip_requirements"] == ["tabulate==0.10.0"]
+
+
+@pytest.mark.parametrize(
+    "extra, expect_warning",
+    [
+        ({}, True),
+        ({"input_example": [[1.0]]}, False),
+        ({"pip_requirements": ["scipy"]}, False),
+        ({"extra_pip_requirements": "requirements.txt"}, False),
+        ({"conda_env": "env.yaml"}, False),
+    ],
+)
+def test_log_model_pyfunc_warns_when_requirements_cannot_be_inferred(manager, caplog, extra, expect_warning):
+    """Without an input example or explicit requirements, the inferred list
+    misses predict()'s imports; log_model says so instead of staying silent."""
+
+    class DummyPyModel(manager.pyfunc.PythonModel):
+        """Dummy PyFunc model."""
+
+    with caplog.at_level("WARNING"):
+        manager.log_model(DummyPyModel(), artifact_path="pyfunc_model", **extra)
+    warned = any("predict()" in r.getMessage() for r in caplog.records if r.levelname == "WARNING")
+    assert warned is expect_warning
+
+
 @pytest.mark.skipif("torch" not in globals(), reason="torch not installed")
 def test_log_model_pytorch_branch(manager):
     """Test log_model with PyTorch model."""

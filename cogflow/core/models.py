@@ -623,8 +623,8 @@ class ModelManager:
         input_example: Union["pd.DataFrame", "np.ndarray", dict, list, "csr_matrix", "csc_matrix", str, bytes, tuple]
         | None = None,
         await_registration_for: int = config.AWAIT_REGISTRATION_FOR,
-        pip_requirements: str | None = None,
-        extra_pip_requirements: str | None = None,
+        pip_requirements: str | list[str] | None = None,
+        extra_pip_requirements: str | list[str] | None = None,
         pyfunc_predict_fn: str = config.PYFUNC_PREDICT_FN,
         metadata: dict[str, Any] | None = None,
         model_type: str | None = None,
@@ -652,8 +652,15 @@ class ModelManager:
             signature (Optional[ModelSignature]): Schema of model inputs/outputs.
             input_example (Optional[Any]): Example input for schema inference.
             await_registration_for (int): Timeout for registration completion.
-            pip_requirements (Optional[str]): Path to pip requirements file.
-            extra_pip_requirements (Optional[str]): Additional pip dependencies.
+            pip_requirements (Optional[str | list[str]]): The model's full pip
+                requirements, as a list of specifiers or a path to a requirements
+                file. Replaces the inferred list. Model serving installs these
+                when its image does not already provide them.
+            extra_pip_requirements (Optional[str | list[str]]): Specifiers (or a
+                file path) added to the inferred requirements. For a custom
+                Python model, list here every package ``predict`` imports unless
+                an ``input_example`` is given: without one, the inference only
+                sees the model's own module.
             pyfunc_predict_fn (str): Name of the prediction function (default: "predict").
             metadata (Optional[Dict[str, Any]]): Custom metadata to attach to the model.
             model_type (Optional[str]): ``type`` recorded on the CogFlow catalog
@@ -722,9 +729,22 @@ class ModelManager:
 
             if is_pyfunc:
                 logger.info("Logging custom PyFunc model using MLflow.pyfunc.log_model()")
+                if input_example is None and not (pip_requirements or extra_pip_requirements or conda_env):
+                    # Requirement inference runs ``predict`` on the input
+                    # example to see what it imports; without one it records
+                    # only the model's own module, and serving will lack every
+                    # package ``predict`` needs.
+                    logger.warning(
+                        "Custom Python model %r logged without input_example or "
+                        "pip/extra_pip requirements: packages imported inside predict() "
+                        "will be missing from its requirements.txt. Pass input_example, "
+                        "or list them in extra_pip_requirements.",
+                        registered_model_name or artifact_path,
+                    )
                 result = self.mlflow.pyfunc.log_model(
                     artifact_path=artifact_path,
                     python_model=model,
+                    registered_model_name=registered_model_name,
                     code_path=code_paths,
                     conda_env=conda_env,
                     signature=signature,
