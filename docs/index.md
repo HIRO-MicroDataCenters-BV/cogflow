@@ -8,6 +8,10 @@ The Agent SDK (`cogflow.agent`). The pipeline/ML side of cogflow is
 documented from docstrings in the source for now; that may join this
 site later.
 
+The platform the SDK talks to, Cog-Engine, has its own documentation at
+[hiro-microdatacenters-bv.github.io/Cog-Engine](https://hiro-microdatacenters-bv.github.io/Cog-Engine/),
+including the interactive API reference.
+
 - **[Agent SDK Overview](agent/index.md)** — what it is, why it exists
 - **[Getting started](agent/getting-started.md)** — Python-first walkthrough + Flowise import in five minutes
 - **[Architecture](agent/architecture.md)** — IR-centred design, three emit targets

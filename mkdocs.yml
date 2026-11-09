@@ -2,9 +2,10 @@ site_name: cogflow
 site_description: Cognitive Framework — ML workflow + agent SDK.
 repo_url: https://github.com/HIRO-MicroDataCenters-BV/cogflow
 repo_name: HIRO-MicroDataCenters-BV/cogflow
-# ``edit_uri`` intentionally omitted until a publish flow + canonical
-# branch for docs are decided. When that lands, set this to
-# e.g. ``edit/main/docs/`` so the "Edit on GitHub" links resolve.
+site_url: https://hiro-microdatacenters-bv.github.io/cogflow/
+# Published from ``develop`` by .github/workflows/docs.yml, so the
+# "Edit on GitHub" links point at that branch.
+edit_uri: edit/develop/docs/
 
 theme:
   name: material
@@ -14,6 +15,7 @@ theme:
     - navigation.indexes
     - navigation.top
     - content.code.copy
+    - content.action.edit
     - content.tabs.link
     - search.suggest
     - search.highlight

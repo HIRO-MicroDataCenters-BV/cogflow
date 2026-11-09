@@ -1,0 +1,68 @@
+name: Docs
+
+# Builds the mkdocs site (docs/ + mkdocs.yml) in strict mode on every PR so a
+# dead link fails the check, and deploys it to GitHub Pages on pushes to
+# develop — the branch that carries the docs. Kept separate from ci.yml, which
+# has no push trigger and should not start the full test matrix on every push.
+
+on:
+  pull_request:
+    branches:
+      - develop
+  push:
+    branches:
+      - develop
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.10'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # Only the site generator is needed — not cogflow itself or its
+      # runtime deps. The ``[docs]`` extra in pyproject.toml declares the
+      # supported ranges; these are the pins CI builds with (mkdocs-material
+      # 9.8+ needs Python 3.11, so stay on 9.7.x while this job runs 3.10).
+      - name: Install docs dependencies
+        run: uv pip install --system "mkdocs==1.6.1" "mkdocs-material==9.7.7"
+
+      - name: Build documentation
+        run: mkdocs build --strict --site-dir site/
+
+      - name: Upload GitHub Pages artifact
+        if: github.event_name == 'push'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+  deploy:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
